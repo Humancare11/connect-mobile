@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_config.dart';
 import '../models/api_result.dart';
@@ -16,9 +17,18 @@ class ApiClient {
     Map<String, dynamic> body,
   ) async {
     try {
+      // Attach auth token if available
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+
+      final headers = {
+        'Content-Type': 'application/json',
+        if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+      };
+
       final response = await _client.post(
         Uri.parse('${ApiConfig.baseUrl}$path'),
-        headers: {'Content-Type': 'application/json'},
+        headers: headers,
         body: jsonEncode(body),
       );
 
@@ -46,6 +56,45 @@ class ApiClient {
       );
     } catch (error) {
       debugPrint('POST $path failed: $error');
+      return const ApiResult<Map<String, dynamic>>(
+        success: false,
+        message: 'Unable to connect. Please try again.',
+      );
+    }
+  }
+
+  Future<ApiResult<Map<String, dynamic>>> get(String path, [Map<String, String>? params]) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+
+      final headers = <String, String>{
+        if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+      };
+
+      var uri = Uri.parse('${ApiConfig.baseUrl}$path');
+      if (params != null && params.isNotEmpty) {
+        uri = uri.replace(queryParameters: params);
+      }
+
+      final response = await _client.get(uri, headers: headers);
+
+      debugPrint('GET $path status: ${response.statusCode}');
+      debugPrint('GET $path raw response: ${response.body}');
+
+      final decoded = response.body.isNotEmpty ? jsonDecode(response.body) : <String, dynamic>{};
+      final data = _asMap(decoded);
+      final message = _messageFrom(data, 'Request failed.');
+
+      return ApiResult<Map<String, dynamic>>(
+        success: response.statusCode >= 200 && response.statusCode < 300,
+        message: message,
+        data: data,
+        raw: data,
+        statusCode: response.statusCode,
+      );
+    } catch (error) {
+      debugPrint('GET $path failed: $error');
       return const ApiResult<Map<String, dynamic>>(
         success: false,
         message: 'Unable to connect. Please try again.',

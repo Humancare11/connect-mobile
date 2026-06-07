@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'screens/login_screen.dart';
+import 'home_page.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart' as dot;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +17,8 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final loginRequired = (dot.dotenv.env['LOGIN_REQUIRED'] ?? 'true').toLowerCase() == 'true';
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Humancare Connect',
@@ -22,7 +26,7 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
         useMaterial3: true,
       ),
-      home: const LoginScreen(),
+      home: loginRequired ? const LoginScreen() : const HomePage(),
     );
   }
 }

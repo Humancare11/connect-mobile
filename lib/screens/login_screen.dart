@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
+import '../models/auth_response.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../home_page.dart';
 import '../services/auth_service.dart';
@@ -25,6 +29,29 @@ class _LoginScreenState extends State<LoginScreen> {
   String _error = '';
 
   Future<void> _login() async {
+    // Development bypass: if DEV_BYPASS=true in .env, skip real auth
+    final devBypass = (dotenv.env['DEV_BYPASS'] ?? 'false').toLowerCase() == 'true';
+    if (devBypass) {
+      // create a fake user and token and save session
+      final fakeUser = UserModel(
+        id: 'dev-user-1',
+        name: 'Dev User',
+        email: 'dev@local',
+        role: 'patient',
+        mobile: '0000000000',
+        dob: '1990-01-01',
+        gender: 'Other',
+        country: 'Devland',
+      );
+
+      final fakeAuth = AuthResponse(token: 'dev-token', user: fakeUser);
+      await _authService.saveSession(fakeAuth);
+      if (!mounted) return;
+      showAuthSnackBar(context, 'Bypassed login (dev)');
+      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const HomePage()));
+      return;
+    }
+
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {
@@ -75,7 +102,7 @@ class _LoginScreenState extends State<LoginScreen> {
     await _authService.saveSession(result.data!);
     if (!mounted) return;
 
-    showAuthSnackBar(context, 'Login Successful');
+    showAuthSnackBar(context, 'Login Successfulhii');
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(builder: (_) => const HomePage()),
     );
