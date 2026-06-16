@@ -2,14 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../models/auth_response.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
-import '../home_page.dart';
+import 'home_page.dart';
 import '../services/auth_service.dart';
 import '../services/auth_validators.dart';
-import 'auth_widgets.dart';
-import 'forgot_password_screen.dart';
-import 'signup_screen.dart';
+import '../widgets/auth_widgets.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -155,19 +151,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 return null;
               },
             ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: _loading || _googleLoading
-                    ? null
-                    : () => Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const ForgotPasswordScreen(),
-                          ),
-                        ),
-                child: const Text('Forgot Password?'),
-              ),
-            ),
             if (_error.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -196,15 +179,6 @@ class _LoginScreenState extends State<LoginScreen> {
               label: Text(
                 _googleLoading ? 'Connecting...' : 'Continue with Google',
               ),
-            ),
-            const SizedBox(height: 14),
-            TextButton(
-              onPressed: _loading || _googleLoading
-                  ? null
-                  : () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const SignUpScreen()),
-                      ),
-              child: const Text('Create Account'),
             ),
           ],
         ),
