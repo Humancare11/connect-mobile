@@ -1,27 +1,27 @@
 import 'package:flutter/material.dart';
 
-import '../widgets/footer/app_footer.dart';
 
-void main() {
-  runApp(const MyApp());
-}
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+// void main() {
+//   runApp(const MyApp());
+// }
 
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Teleconsultation',
-      theme: ThemeData(
-        primarySwatch: Colors.teal,
-        scaffoldBackgroundColor: const Color(0xFFF6F8FB),
-      ),
-      home: const HomePage(),
-    );
-  }
-}
+// class MyApp extends StatelessWidget {
+//   const MyApp({super.key});
+
+//   @override
+//   Widget build(BuildContext context) {
+//     return MaterialApp(
+//       debugShowCheckedModeBanner: false,
+//       title: 'Teleconsultation',
+//       theme: ThemeData(
+//         primarySwatch: Colors.teal,
+//         scaffoldBackgroundColor: const Color(0xFFF6F8FB),
+//       ),
+//       home: const HomePage(),
+//     );
+//   }
+// }
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -29,7 +29,6 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      bottomNavigationBar: const AppFooter(),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
