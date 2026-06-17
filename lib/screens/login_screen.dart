@@ -44,7 +44,7 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
       showAuthSnackBar(context, 'Bypassed login (dev)');
       Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
+      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
       return;
     }
 
@@ -100,7 +100,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     showAuthSnackBar(context, 'Login Successfulhii');
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
+      MaterialPageRoute(builder: (_) => const MainScreen()),
     );
   }
 
