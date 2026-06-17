@@ -44,7 +44,7 @@ class _LoginScreenState extends State<LoginScreen> {
       await _authService.saveSession(fakeAuth);
       if (!mounted) return;
       showAuthSnackBar(context, 'Bypassed login (dev)');
-      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const HomePage()));
+      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
       return;
     }
 
@@ -74,7 +74,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     showAuthSnackBar(context, 'Login Successful');
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const HomePage()),
+      MaterialPageRoute(builder: (_) => const HomeScreen()),
     );
   }
 
@@ -100,7 +100,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     showAuthSnackBar(context, 'Login Successfulhii');
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const HomePage()),
+      MaterialPageRoute(builder: (_) => const HomeScreen()),
     );
   }
 
