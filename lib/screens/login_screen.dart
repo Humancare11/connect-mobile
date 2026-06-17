@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-
-import '../models/auth_response.dart';
+import 'main_screen.dart';import '../models/auth_response.dart';
 import 'home_page.dart';
 import '../services/auth_service.dart';
 import '../services/auth_validators.dart';
@@ -44,6 +43,7 @@ class _LoginScreenState extends State<LoginScreen> {
       await _authService.saveSession(fakeAuth);
       if (!mounted) return;
       showAuthSnackBar(context, 'Bypassed login (dev)');
+      Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
       Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
       return;
     }
@@ -74,7 +74,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     showAuthSnackBar(context, 'Login Successful');
     Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const HomeScreen()),
+      MaterialPageRoute(builder: (_) => const MainScreen()),
     );
   }
 
