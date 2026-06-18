@@ -17,10 +17,10 @@ class _MainScreenState extends State<MainScreen> {
   int selectedIndex = 0;
 
   final List<Widget> pages = const [
-    HomeScreen(),
-    AppointmentsScreen(),
-    QuestionsScreen(),
-    ProfileSettingsScreen(),
+    HomeScreen(),             // 0
+    AppointmentsScreen(),     // 1
+    QuestionsScreen(),        // 2 (Book Button)
+    ProfileSettingsScreen(),  // 3
   ];
 
   @override
@@ -28,10 +28,34 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       body: pages[selectedIndex],
       bottomNavigationBar: AppFooter(
-        currentIndex: selectedIndex,
+        selectedIndex: selectedIndex,
         onTap: (index) {
+          int pageIndex = 0;
+
+          switch (index) {
+            case 0: // Home
+              pageIndex = 0;
+              break;
+
+            case 1: // Services
+              pageIndex = 1;
+              break;
+
+            case 2: // Center Book Button
+              pageIndex = 2;
+              break;
+
+            case 3: // Appointments
+              pageIndex = 1;
+              break;
+
+            case 4: // Account
+              pageIndex = 3;
+              break;
+          }
+
           setState(() {
-            selectedIndex = index;
+            selectedIndex = pageIndex;
           });
         },
       ),
