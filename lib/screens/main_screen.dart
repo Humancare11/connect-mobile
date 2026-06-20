@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'home_page.dart';
 import 'appointments_screen.dart';
-import 'questions_screen.dart';
+import 'book_appointment_screen.dart';
 import 'profile_settings_screen.dart';
 import '../widgets/footer/app_footer.dart';
 
@@ -19,7 +19,7 @@ class _MainScreenState extends State<MainScreen> {
   final List<Widget> pages = const [
     HomeScreen(),             // 0
     AppointmentsScreen(),     // 1
-    QuestionsScreen(),        // 2 (Book Button)
+    BookAppointmentScreen(),        // 2 (Book Button)
     ProfileSettingsScreen(),  // 3
   ];
 
