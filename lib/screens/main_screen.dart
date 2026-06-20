@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'home_page.dart';
 import 'appointments_screen.dart';
 import 'book_appointment_screen.dart';
-import 'profile_settings_screen.dart';
+import 'account_screen.dart';
 import '../widgets/footer/app_footer.dart';
 
 class MainScreen extends StatefulWidget {
@@ -19,8 +19,8 @@ class _MainScreenState extends State<MainScreen> {
   final List<Widget> pages = const [
     HomeScreen(),             // 0
     AppointmentsScreen(),     // 1
-    BookAppointmentScreen(),        // 2 (Book Button)
-    ProfileSettingsScreen(),  // 3
+    AppointmentBookingPage(),   // 2 (Book Button)
+    AccountScreen(),  // 3
   ];
 
   @override
