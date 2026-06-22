@@ -6,6 +6,7 @@
 
 import 'package:flutter/material.dart';
 import '../../config/app_design_system.dart';
+import '../../screens/book_appointment_screen.dart';
 
 class BookAppointmentCard extends StatefulWidget {
   const BookAppointmentCard({super.key});
@@ -20,15 +21,73 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
   // FIX 1: Use final (non-const) Map list — avoids null type error caused by
   // static const referencing abstract class constants from another file.
   final List<Map<String, dynamic>> _categories = [
-    {'icon': Icons.favorite_border_rounded,   'title': 'Heart & Vascular',  'color': const Color(0xFFFF6B81)},
-    {'icon': Icons.psychology_outlined,        'title': 'Brain & Nerves',    'color': const Color(0xFFB18CFF)},
-    {'icon': Icons.self_improvement_outlined,  'title': 'Mental Wellness',   'color': const Color(0xFF7AD7F0)},
-    {'icon': Icons.child_care_outlined,        'title': 'Child Health',      'color': const Color(0xFFFFC371)},
-    {'icon': Icons.accessibility_new_outlined, 'title': 'Bones & Joints',   'color': const Color(0xFFB0C4FF)},
-    {'icon': Icons.air_rounded,                'title': 'Respiratory',       'color': const Color(0xFF6FE3C5)},
-    {'icon': Icons.female_rounded,             'title': "Women's Health",    'color': const Color(0xFFFF9ECF)},
-    {'icon': Icons.science_outlined,           'title': 'Genetics & Labs',   'color': const Color(0xFFA0F0A8)},
+    {
+      'icon': Icons.favorite_border_rounded,
+      'title': 'General & Everyday Care',
+      'color': const Color(0xFFFF6B81),
+    },
+    {
+      'icon': Icons.psychology_outlined,
+      'title': 'Mental Health',
+      'color': const Color(0xFFB18CFF),
+    },
+    {
+      'icon': Icons.self_improvement_outlined,
+      'title': 'Skin & Hair',
+      'color': const Color(0xFF7AD7F0),
+    },
+    {
+      'icon': Icons.child_care_outlined,
+      'title': "Women's Health",
+      'color': const Color(0xFFFFC371),
+    },
+    {
+      'icon': Icons.accessibility_new_outlined,
+      'title': "Men's Health",
+      'color': const Color(0xFFB0C4FF),
+    },
+    {
+      'icon': Icons.air_rounded,
+      'title': 'Children & Family',
+      'color': const Color(0xFF6FE3C5),
+    },
+    {
+      'icon': Icons.female_rounded,
+      'title': "Weight & Nutrition",
+      'color': const Color(0xFFFF9ECF),
+    },
+    {
+      'icon': Icons.science_outlined,
+      'title': 'Chronic Care & Expert Opinion',
+      'color': const Color(0xFFA0F0A8),
+    },
+    {
+      'icon': Icons.science_outlined,
+      'title': 'Eye, Ear & Bone',
+      'color': const Color(0xFFA0F0A8),
+    },
+    {
+      'icon': Icons.science_outlined,
+      'title': 'Sexual Health',
+      'color': const Color(0xFFA0F0A8),
+    },
+    {
+      'icon': Icons.science_outlined,
+      'title': 'Travel & Global Care',
+      'color': const Color(0xFFA0F0A8),
+    },
   ];
+
+  void _openAppointmentPage({String? categoryTitle}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AppointmentBookingPage(
+          initialCategoryLabel: categoryTitle,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -240,7 +299,7 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
                 child: InkWell(
                   borderRadius: BorderRadius.circular(AppRadius.sm),
                   splashColor:  accent.withOpacity(0.18),
-                  onTap:        () {},
+                  onTap:        () => _openAppointmentPage(categoryTitle: title),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 11),
                     decoration: BoxDecoration(
@@ -285,7 +344,7 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
 
           // View all categories button
           GestureDetector(
-            onTap: () {},
+            onTap: () => _openAppointmentPage(),
             child: Container(
               height: 46,
               width:  double.infinity,
