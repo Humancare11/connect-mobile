@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'main_screen.dart';
-import '../models/auth_response.dart';
 import '../services/auth_service.dart';
 import '../services/auth_validators.dart';
 import '../widgets/auth_widgets.dart';
@@ -25,32 +23,6 @@ class _LoginScreenState extends State<LoginScreen> {
   String _error = '';
 
   Future<void> _login() async {
-    final devBypass =
-        (dotenv.env['DEV_BYPASS'] ?? 'false').toLowerCase() == 'true';
-
-    if (devBypass) {
-      final fakeUser = UserModel(
-        id: 'dev-user-1',
-        name: 'Dev User',
-        email: 'dev@local',
-        role: 'patient',
-        mobile: '0000000000',
-        dob: '1990-01-01',
-        gender: 'Other',
-        country: 'Devland',
-      );
-
-      final fakeAuth = AuthResponse(token: 'dev-token', user: fakeUser);
-      await _authService.saveSession(fakeAuth);
-
-      if (!mounted) return;
-      showAuthSnackBar(context, 'Bypassed login dev');
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const MainScreen()),
-      );
-      return;
-    }
-
     if (!_formKey.currentState!.validate()) return;
 
     setState(() {

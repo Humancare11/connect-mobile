@@ -207,13 +207,42 @@ class AuthService {
   ) {
     final data = result.data ?? <String, dynamic>{};
     final responseData = _asMap(data['data']);
+    final nestedData = _asMap(responseData['data']);
     final token = _firstNonEmptyString([
       data['token'],
       data['accessToken'],
       data['access_token'],
+      data['authToken'],
+      data['auth_token'],
+      data['jwt'],
+      data['jwtToken'],
+      data['bearerToken'],
       responseData['token'],
       responseData['accessToken'],
       responseData['access_token'],
+      responseData['authToken'],
+      responseData['auth_token'],
+      responseData['jwt'],
+      responseData['jwtToken'],
+      responseData['bearerToken'],
+      nestedData['token'],
+      nestedData['accessToken'],
+      nestedData['access_token'],
+      nestedData['authToken'],
+      nestedData['auth_token'],
+      nestedData['jwt'],
+      nestedData['jwtToken'],
+      nestedData['bearerToken'],
+      _findFirstStringByKeys(data, const {
+        'token',
+        'accessToken',
+        'access_token',
+        'authToken',
+        'auth_token',
+        'jwt',
+        'jwtToken',
+        'bearerToken',
+      }),
     ]);
 
     if (!result.success) {
@@ -261,6 +290,33 @@ String _firstNonEmptyString(List<dynamic> values) {
 
     if (text.isNotEmpty) {
       return text;
+    }
+  }
+
+  return '';
+}
+
+String _findFirstStringByKeys(dynamic value, Set<String> keys) {
+  if (value is Map) {
+    for (final entry in value.entries) {
+      final key = entry.key.toString();
+      if (keys.contains(key)) {
+        final entryValue = entry.value;
+        if (entryValue is String || entryValue is num || entryValue is bool) {
+          final text = entryValue.toString().trim();
+          if (text.isNotEmpty) return text;
+        }
+      }
+
+      final nested = _findFirstStringByKeys(entry.value, keys);
+      if (nested.isNotEmpty) return nested;
+    }
+  }
+
+  if (value is List) {
+    for (final item in value) {
+      final nested = _findFirstStringByKeys(item, keys);
+      if (nested.isNotEmpty) return nested;
     }
   }
 

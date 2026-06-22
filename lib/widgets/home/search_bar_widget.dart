@@ -54,31 +54,24 @@ class SearchBarWidget extends StatelessWidget {
           ),
 
           // ── Filter pill button ─────────────────────────────────────────
-          Container(
-            margin: const EdgeInsets.only(right: 8),
-            height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color:        AppColors.primary,
-              borderRadius: BorderRadius.circular(AppRadius.xs + 2),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: const [
-                Icon(Icons.tune_rounded, color: Colors.white, size: 15),
-                SizedBox(width: 5),
-                Text(
-                  'Filter',
-                  style: TextStyle(
-                    fontFamily: AppFonts.family,
-                    color:       Colors.white,
-                    fontSize:    12.5,
-                    fontWeight:  FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
+         
+            // child: Row(
+            //   mainAxisSize: MainAxisSize.min,
+            //   children: const [
+            //     Icon(Icons.tune_rounded, color: Colors.white, size: 15),
+            //     SizedBox(width: 5),
+            //     Text(
+            //       'Filter',
+            //       style: TextStyle(
+            //         fontFamily: AppFonts.family,
+            //         color:       Colors.white,
+            //         fontSize:    12.5,
+            //         fontWeight:  FontWeight.w600,
+            //       ),
+            //     ),
+            //   ],
+            // ),
+          
         ],
       ),
     );

@@ -1,7 +1,16 @@
 import 'package:flutter/material.dart';
 
 class AppointmentBookingPage extends StatefulWidget {
-  const AppointmentBookingPage({super.key});
+  final String? initialCategoryLabel;
+  final String? initialSpecialtyName;
+  final String initialTab;
+
+  const AppointmentBookingPage({
+    super.key,
+    this.initialCategoryLabel,
+    this.initialSpecialtyName,
+    this.initialTab = "cat",
+  });
 
   @override
   State<AppointmentBookingPage> createState() => _AppointmentBookingPageState();
@@ -489,6 +498,56 @@ final List<Map<String, dynamic>> hccTree = [
     ],
   },
 ];
+
+  @override
+  void initState() {
+    super.initState();
+
+    if (widget.initialTab == "spec" || widget.initialTab == "cond") {
+      tab = widget.initialTab;
+    }
+
+    final initialSpecialty = widget.initialSpecialtyName;
+    if (initialSpecialty != null) {
+      _selectInitialSpecialty(initialSpecialty);
+      return;
+    }
+
+    final initialLabel = widget.initialCategoryLabel;
+    if (initialLabel == null) return;
+
+    for (final cat in hccTree) {
+      if (cat["label"].toString().toLowerCase() == initialLabel.toLowerCase()) {
+        activeCat = cat;
+        tab = "spec";
+        break;
+      }
+    }
+  }
+
+  String _normalizeLabel(String value) {
+    return value.replaceAll(RegExp(r'\s+'), ' ').trim().toLowerCase();
+  }
+
+  void _selectInitialSpecialty(String specialtyName) {
+    final target = _normalizeLabel(specialtyName);
+
+    for (final cat in hccTree) {
+      for (final spec in cat["specs"] as List) {
+        if (_normalizeLabel(spec["name"].toString()) == target) {
+          activeCat = cat;
+          activeSpec = {
+            ...Map<String, dynamic>.from(spec),
+            "catLabel": cat["label"],
+            "catIcon": cat["icon"],
+          };
+          tab = "cond";
+          return;
+        }
+      }
+    }
+  }
+
   String get q => searchCtrl.text.trim().toLowerCase();
 
   List<Map<String, dynamic>> get flatSpecs {

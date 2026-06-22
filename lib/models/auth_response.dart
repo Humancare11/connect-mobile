@@ -35,7 +35,27 @@ class UserModel {
     Map<String, dynamic> data,
     Map<String, dynamic> responseData,
   ) {
-    final user = _asMap(data['user'] ?? responseData['user']);
+    final nestedData = _asMap(responseData['data']);
+    final user = _firstNonEmptyMap([
+      data['user'],
+      data['patient'],
+      data['profile'],
+      data['account'],
+      responseData['user'],
+      responseData['patient'],
+      responseData['profile'],
+      responseData['account'],
+      nestedData['user'],
+      nestedData['patient'],
+      nestedData['profile'],
+      nestedData['account'],
+      _findFirstMapByKeys(data, const {
+        'user',
+        'patient',
+        'profile',
+        'account',
+      }),
+    ]);
 
     return UserModel(
       id: _firstNonEmptyString([
@@ -96,6 +116,15 @@ Map<String, dynamic> _asMap(dynamic value) {
   return <String, dynamic>{};
 }
 
+Map<String, dynamic> _firstNonEmptyMap(List<dynamic> values) {
+  for (final value in values) {
+    final map = _asMap(value);
+    if (map.isNotEmpty) return map;
+  }
+
+  return <String, dynamic>{};
+}
+
 String _firstNonEmptyString(List<dynamic> values) {
   for (final value in values) {
     final text = value?.toString().trim() ?? '';
@@ -106,4 +135,26 @@ String _firstNonEmptyString(List<dynamic> values) {
   }
 
   return '';
+}
+
+Map<String, dynamic> _findFirstMapByKeys(dynamic value, Set<String> keys) {
+  if (value is Map) {
+    for (final entry in value.entries) {
+      final key = entry.key.toString();
+      final map = _asMap(entry.value);
+      if (keys.contains(key) && map.isNotEmpty) return map;
+
+      final nested = _findFirstMapByKeys(entry.value, keys);
+      if (nested.isNotEmpty) return nested;
+    }
+  }
+
+  if (value is List) {
+    for (final item in value) {
+      final nested = _findFirstMapByKeys(item, keys);
+      if (nested.isNotEmpty) return nested;
+    }
+  }
+
+  return <String, dynamic>{};
 }
