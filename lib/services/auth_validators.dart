@@ -83,4 +83,50 @@ class AuthValidators {
   static bool isValidEmail(String value) {
     return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value.trim());
   }
+
+  static String countryCodeError(String value) {
+    final code = value.trim();
+
+    if (code.isEmpty) {
+      return 'Select a country code';
+    }
+
+    if (!code.startsWith('+')) {
+      return 'Country code must start with +';
+    }
+
+    if (!RegExp(r'^\+\d{1,3}$').hasMatch(code)) {
+      return 'Enter a valid country code';
+    }
+
+    return '';
+  }
+
+  static String stateError(String value) {
+    final state = value.trim();
+
+    if (state.isEmpty) {
+      return 'Enter your state or province';
+    }
+
+    if (state.length < 2) {
+      return 'State must be at least 2 characters';
+    }
+
+    return '';
+  }
+
+  static String cityError(String value) {
+    final city = value.trim();
+
+    if (city.isEmpty) {
+      return 'Enter your city';
+    }
+
+    if (city.length < 2) {
+      return 'City must be at least 2 characters';
+    }
+
+    return '';
+  }
 }
