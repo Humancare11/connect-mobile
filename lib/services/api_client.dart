@@ -8,20 +8,23 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_config.dart';
 import '../models/api_result.dart';
+import 'token_storage_service.dart';
 
 class ApiClient {
-  ApiClient({http.Client? client}) : _client = client ?? http.Client();
+  ApiClient({http.Client? client, TokenStorageService? tokenStorage})
+    : _client = client ?? http.Client(),
+      _tokenStorage = tokenStorage ?? const TokenStorageService();
 
   final http.Client _client;
+  final TokenStorageService _tokenStorage;
 
   Future<ApiResult<Map<String, dynamic>>> post(
     String path,
     Map<String, dynamic> body,
   ) async {
     try {
-      // Attach auth token if available
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token') ?? '';
+      // Attach auth token if available (using secure storage)
+      final token = await _tokenStorage.getToken() ?? '';
 
       final headers = {
         'Content-Type': 'application/json',
@@ -42,10 +45,12 @@ class ApiClient {
     }
   }
 
-  Future<ApiResult<Map<String, dynamic>>> get(String path, [Map<String, String>? params]) async {
+  Future<ApiResult<Map<String, dynamic>>> get(
+    String path, [
+    Map<String, String>? params,
+  ]) async {
     try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token') ?? '';
+      final token = await _tokenStorage.getToken() ?? '';
 
       final headers = <String, String>{
         'Accept': 'application/json',
@@ -96,7 +101,8 @@ class ApiClient {
       debugPrint('$method $path invalid JSON: $error');
       return ApiResult<Map<String, dynamic>>(
         success: false,
-        message: 'Unexpected response from the server (${response.statusCode}).',
+        message:
+            'Unexpected response from the server (${response.statusCode}).',
         statusCode: response.statusCode,
       );
     }
@@ -127,8 +133,8 @@ class ApiClient {
     }
 
     if (error is SocketException) {
-      final detail =
-          '${error.message} ${error.osError?.message ?? ''}'.toLowerCase();
+      final detail = '${error.message} ${error.osError?.message ?? ''}'
+          .toLowerCase();
       if (error.osError?.errorCode == 7 ||
           detail.contains('failed host lookup') ||
           detail.contains('no address associated with hostname')) {
@@ -220,5 +226,4 @@ class ApiClient {
 
     return fallback;
   }
-
 }

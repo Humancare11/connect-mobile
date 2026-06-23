@@ -1,14 +1,17 @@
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/api_result.dart';
 import '../models/auth_response.dart';
 import 'api_client.dart';
+import 'token_storage_service.dart';
 
 class AuthService {
-  AuthService({ApiClient? apiClient}) : _apiClient = apiClient ?? ApiClient();
+  AuthService({ApiClient? apiClient, TokenStorageService? tokenStorage})
+    : _apiClient = apiClient ?? ApiClient(),
+      _tokenStorage = tokenStorage ?? const TokenStorageService();
 
   final ApiClient _apiClient;
+  final TokenStorageService _tokenStorage;
   static bool _googleInitialized = false;
 
   Future<ApiResult<AuthResponse>> login({
@@ -71,7 +74,10 @@ class AuthService {
       'otp': otp,
     });
 
-    return _authResult(result, 'Registration response did not include a token.');
+    return _authResult(
+      result,
+      'Registration response did not include a token.',
+    );
   }
 
   Future<ApiResult<void>> sendForgotOtp(String email) async {
@@ -165,7 +171,7 @@ class AuthService {
       final account = await googleSignIn.authenticate(scopeHint: scopes);
       final authorization =
           await account.authorizationClient.authorizationForScopes(scopes) ??
-              await account.authorizationClient.authorizeScopes(scopes);
+          await account.authorizationClient.authorizeScopes(scopes);
       final accessToken = authorization.accessToken;
 
       if (accessToken.isEmpty) {
@@ -189,16 +195,17 @@ class AuthService {
   }
 
   Future<void> saveSession(AuthResponse authResponse) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('token', authResponse.token);
-    await prefs.setString('userId', authResponse.user.id);
-    await prefs.setString('name', authResponse.user.name);
-    await prefs.setString('email', authResponse.user.email);
-    await prefs.setString('role', authResponse.user.role);
-    await prefs.setString('mobile', authResponse.user.mobile);
-    await prefs.setString('dob', authResponse.user.dob);
-    await prefs.setString('gender', authResponse.user.gender);
-    await prefs.setString('country', authResponse.user.country);
+    await _tokenStorage.saveToken(authResponse.token);
+    await _tokenStorage.saveUserProfile(
+      userId: authResponse.user.id,
+      name: authResponse.user.name,
+      email: authResponse.user.email,
+      role: authResponse.user.role,
+      mobile: authResponse.user.mobile,
+      dob: authResponse.user.dob,
+      gender: authResponse.user.gender,
+      country: authResponse.user.country,
+    );
   }
 
   ApiResult<AuthResponse> _authResult(

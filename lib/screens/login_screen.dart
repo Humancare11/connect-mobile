@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'main_screen.dart';
+import 'register_screen.dart';
 import '../services/auth_service.dart';
 import '../services/auth_validators.dart';
 import '../widgets/auth_widgets.dart';
@@ -48,9 +49,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (!mounted) return;
     showAuthSnackBar(context, 'Login Successful');
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const MainScreen()),
-    );
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
   }
 
   Future<void> _googleLogin() async {
@@ -74,9 +75,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (!mounted) return;
     showAuthSnackBar(context, 'Login Successful');
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const MainScreen()),
-    );
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
   }
 
   @override
@@ -231,14 +232,49 @@ class _LoginScreenState extends State<LoginScreen> {
                     onPressed: _googleLoading ? null : _login,
                   ),
 
+                  const SizedBox(height: 16),
+
+                  // Sign Up Link
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text(
+                        "Don't have an account? ",
+                        style: TextStyle(color: Colors.black54, fontSize: 14),
+                      ),
+                      GestureDetector(
+                        onTap: _loading || _googleLoading
+                            ? null
+                            : () {
+                                Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => const RegisterScreen(),
+                                  ),
+                                );
+                              },
+                        child: Text(
+                          'Sign Up',
+                          style: TextStyle(
+                            color: const Color(0xff1a3a5c),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                            decoration: TextDecoration.underline,
+                            decorationColor: const Color(0xff1a3a5c),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
                   const SizedBox(height: 12),
 
                   SizedBox(
                     width: double.infinity,
                     height: 50,
                     child: OutlinedButton.icon(
-                      onPressed:
-                          _loading || _googleLoading ? null : _googleLogin,
+                      onPressed: _loading || _googleLoading
+                          ? null
+                          : _googleLogin,
                       icon: _googleLoading
                           ? const SizedBox(
                               width: 16,

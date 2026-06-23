@@ -3,6 +3,7 @@
 
 import 'package:flutter/material.dart';
 import '../../config/app_design_system.dart';
+import '../../screens/account_screen.dart';
 
 class HomeHeader extends StatelessWidget {
   const HomeHeader({super.key});
@@ -146,32 +147,38 @@ class HomeHeader extends StatelessWidget {
         const SizedBox(width: 10),
 
         // ── Avatar ────────────────────────────────────────────────────────
-        Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            gradient: const LinearGradient(
-              colors: [AppColors.primary, AppColors.accent],
-              begin:  Alignment.topLeft,
-              end:    Alignment.bottomRight,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color:      AppColors.primary.withOpacity(0.35),
-                blurRadius: 10,
-                offset:     const Offset(0, 4),
-              ),
-            ],
+        GestureDetector(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const AccountScreen()),
           ),
-          child: const CircleAvatar(
-            radius:          22,
-            backgroundColor: Colors.transparent,
-            child: Text(
-              'S',
-              style: TextStyle(
-                fontFamily: AppFonts.family,
-                color:       Colors.white,
-                fontWeight:  FontWeight.w700,
-                fontSize:    16,
+          child: Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(
+                colors: [AppColors.primary, AppColors.accent],
+                begin:  Alignment.topLeft,
+                end:    Alignment.bottomRight,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color:      AppColors.primary.withOpacity(0.35),
+                  blurRadius: 10,
+                  offset:     const Offset(0, 4),
+                ),
+              ],
+            ),
+            child: const CircleAvatar(
+              radius:          22,
+              backgroundColor: Colors.transparent,
+              child: Text(
+                'S',
+                style: TextStyle(
+                  fontFamily: AppFonts.family,
+                  color:       Colors.white,
+                  fontWeight:  FontWeight.w700,
+                  fontSize:    16,
+                ),
               ),
             ),
           ),
