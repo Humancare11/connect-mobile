@@ -359,24 +359,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Widget _buildRegistrationStep() {
-    return Column(
-      children: [
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(22),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.05),
-                blurRadius: 18,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Form(
-            key: _formKey,
-            child: Column(
+    return Form(
+      key: _formKey,
+      child: SingleChildScrollView(
+        child: Column(
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -740,10 +726,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ],
             ),
           ),
-        ),
-      ],
-    );
-  }
+        );
+    }
 
   Widget _buildOtpVerificationStep() {
     final canResendOtp = _otpTimeoutSeconds == 0;
