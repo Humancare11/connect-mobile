@@ -2,11 +2,13 @@ class AuthResponse {
   const AuthResponse({
     required this.token,
     required this.user,
+    this.refreshToken = '',
     this.resetToken = '',
   });
 
   final String token;
   final UserModel user;
+  final String refreshToken;
   final String resetToken;
 }
 
@@ -20,6 +22,9 @@ class UserModel {
     required this.dob,
     required this.gender,
     required this.country,
+    required this.state,
+    required this.city,
+    required this.location,
   });
 
   final String id;
@@ -30,6 +35,9 @@ class UserModel {
   final String dob;
   final String gender;
   final String country;
+  final String state;
+  final String city;
+  final String location;
 
   factory UserModel.fromMaps(
     Map<String, dynamic> data,
@@ -103,6 +111,22 @@ class UserModel {
         user['country'],
         data['country'],
         responseData['country'],
+      ]),
+      state: _firstNonEmptyString([
+        user['state'],
+        user['province'],
+        data['state'],
+        responseData['state'],
+      ]),
+      city: _firstNonEmptyString([
+        user['city'],
+        data['city'],
+        responseData['city'],
+      ]),
+      location: _firstNonEmptyString([
+        user['location'],
+        data['location'],
+        responseData['location'],
       ]),
     );
   }

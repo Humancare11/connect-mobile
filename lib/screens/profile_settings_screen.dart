@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../services/auth_service.dart';
+import '../services/auth_validators.dart';
+import '../services/token_storage_service.dart';
+
 class EditProfilePage extends StatefulWidget {
   const EditProfilePage({super.key});
 
@@ -8,28 +12,65 @@ class EditProfilePage extends StatefulWidget {
 }
 
 class _EditProfilePageState extends State<EditProfilePage> {
+  final _authService = AuthService();
+  final _tokenStorage = const TokenStorageService();
+
+  bool loadingProfile = true;
   bool saving = false;
   bool saved = false;
 
-  final nameCtrl = TextEditingController(text: "Satish Dalvi");
-  final emailCtrl = TextEditingController(text: "tech@humancareconnect.co");
-  final mobileCtrl = TextEditingController(text: "+91 98765 43210");
-  final countryCtrl = TextEditingController(text: "India");
+  final nameCtrl = TextEditingController();
+  final emailCtrl = TextEditingController();
+  final mobileCtrl = TextEditingController();
+  final countryCtrl = TextEditingController();
 
   String gender = "";
   DateTime? dob;
+  String userId = '';
+  String role = 'patient';
+  String state = '';
+  String city = '';
+  String location = '';
 
-  final originalData = {
-    "name": "Satish Dalvi",
-    "email": "tech@humancareconnect.co",
-    "mobile": "+91 98765 43210",
-    "gender": "",
-    "country": "India",
+  Map<String, String> originalData = {
+    'userId': '',
+    'name': '',
+    'email': '',
+    'role': 'patient',
+    'mobile': '',
+    'dob': '',
+    'gender': '',
+    'country': '',
+    'state': '',
+    'city': '',
+    'location': '',
   };
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserProfile();
+  }
+
+  @override
+  void dispose() {
+    nameCtrl.dispose();
+    emailCtrl.dispose();
+    mobileCtrl.dispose();
+    countryCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final age = _getAge();
+
+    if (loadingProfile) {
+      return const Scaffold(
+        backgroundColor: Color(0xfff6f8fb),
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xfff6f8fb),
@@ -42,19 +83,16 @@ class _EditProfilePageState extends State<EditProfilePage> {
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
-          children: [
-            _avatarCard(age),
-            const SizedBox(height: 16),
-            _formCard(),
-          ],
+          children: [_avatarCard(age), const SizedBox(height: 16), _formCard()],
         ),
       ),
     );
   }
 
   Widget _avatarCard(int? age) {
-    final initial =
-        nameCtrl.text.trim().isNotEmpty ? nameCtrl.text.trim()[0].toUpperCase() : "U";
+    final initial = nameCtrl.text.trim().isNotEmpty
+        ? nameCtrl.text.trim()[0].toUpperCase()
+        : "U";
 
     return Container(
       padding: const EdgeInsets.all(22),
@@ -98,9 +136,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
               color: const Color(0xffeaf2ff),
               borderRadius: BorderRadius.circular(30),
             ),
-            child: const Text(
-              "PATIENT",
-              style: TextStyle(
+            child: Text(
+              role.trim().isNotEmpty ? role.toUpperCase() : 'PATIENT',
+              style: const TextStyle(
                 color: Color(0xff1d4ed8),
                 fontWeight: FontWeight.w900,
                 fontSize: 11,
@@ -108,11 +146,13 @@ class _EditProfilePageState extends State<EditProfilePage> {
             ),
           ),
           const SizedBox(height: 18),
-          _metaRow("🆔", "Patient ID", "00001"),
+          if (userId.isNotEmpty) _metaRow("🆔", "Patient ID", userId),
           if (gender.isNotEmpty) _metaRow("👤", "Gender", gender),
           if (age != null) _metaRow("🎂", "Age", "$age years old"),
-          if (mobileCtrl.text.isNotEmpty) _metaRow("📞", "Mobile", mobileCtrl.text),
-          if (countryCtrl.text.isNotEmpty) _metaRow("🌍", "Country", countryCtrl.text),
+          if (mobileCtrl.text.isNotEmpty)
+            _metaRow("📞", "Mobile", mobileCtrl.text),
+          if (countryCtrl.text.isNotEmpty)
+            _metaRow("🌍", "Country", countryCtrl.text),
         ],
       ),
     );
@@ -176,7 +216,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
                     children: [
                       Text(
                         "Personal Information",
-                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
                       Text(
                         "Update your details below and save",
@@ -358,7 +401,13 @@ class _EditProfilePageState extends State<EditProfilePage> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.save),
-            label: Text(saving ? "Saving..." : saved ? "Saved!" : "Save Changes"),
+            label: Text(
+              saving
+                  ? "Saving..."
+                  : saved
+                  ? "Saved!"
+                  : "Save Changes",
+            ),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xff1d4ed8),
               foregroundColor: Colors.white,
@@ -432,27 +481,93 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   void _reset() {
     setState(() {
-      nameCtrl.text = originalData["name"]!;
-      emailCtrl.text = originalData["email"]!;
-      mobileCtrl.text = originalData["mobile"]!;
-      countryCtrl.text = originalData["country"]!;
-      gender = originalData["gender"]!;
-      dob = null;
+      userId = originalData['userId'] ?? '';
+      nameCtrl.text = originalData['name'] ?? '';
+      emailCtrl.text = originalData['email'] ?? '';
+      role = originalData['role'] ?? 'patient';
+      mobileCtrl.text = originalData['mobile'] ?? '';
+      gender = originalData['gender'] ?? '';
+      countryCtrl.text = originalData['country'] ?? '';
+      state = originalData['state'] ?? '';
+      city = originalData['city'] ?? '';
+      location = originalData['location'] ?? '';
+      dob = _parseDob(originalData['dob'] ?? '');
       saved = false;
     });
   }
 
   void _save() async {
-    if (nameCtrl.text.trim().isEmpty || emailCtrl.text.trim().isEmpty) {
+    final trimmedName = nameCtrl.text.trim();
+    final trimmedEmail = emailCtrl.text.trim();
+
+    if (trimmedName.isEmpty || trimmedEmail.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Name and email are required")),
       );
       return;
     }
 
+    if (!AuthValidators.isValidEmail(trimmedEmail)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid email address')),
+      );
+      return;
+    }
+
     setState(() => saving = true);
 
-    await Future.delayed(const Duration(seconds: 1));
+    final updateResult = await _authService.updateProfile(
+      userId: userId,
+      name: trimmedName,
+      email: trimmedEmail,
+      role: role,
+      mobile: mobileCtrl.text.trim(),
+      dob: _formatDob(dob),
+      gender: gender,
+      country: countryCtrl.text.trim(),
+      state: state,
+      city: city,
+      location: location,
+    );
+
+    if (!mounted) return;
+
+    if (!updateResult.success || updateResult.data == null) {
+      setState(() {
+        saving = false;
+        saved = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            updateResult.message.isNotEmpty
+                ? updateResult.message
+                : 'Unable to save profile to server.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final profile = updateResult.data!;
+    await _tokenStorage.saveUserProfile(
+      userId: profile['userId'] ?? userId,
+      name: profile['name'] ?? trimmedName,
+      email: profile['email'] ?? trimmedEmail,
+      role: profile['role'] ?? role,
+      mobile: profile['mobile'] ?? mobileCtrl.text.trim(),
+      dob: profile['dob'] ?? _formatDob(dob),
+      gender: profile['gender'] ?? gender,
+      country: profile['country'] ?? countryCtrl.text.trim(),
+      state: profile['state'] ?? state,
+      city: profile['city'] ?? city,
+      location: profile['location'] ?? location,
+    );
+
+    if (!mounted) return;
+
+    _applyProfile(profile);
 
     setState(() {
       saving = false;
@@ -462,6 +577,89 @@ class _EditProfilePageState extends State<EditProfilePage> {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text("Profile updated successfully!")),
     );
+  }
+
+  Future<void> _loadUserProfile() async {
+    final profile = await _tokenStorage.getUserProfile();
+
+    if (!mounted) return;
+
+    setState(() {
+      _applyProfile(profile);
+      loadingProfile = false;
+    });
+
+    final remoteResult = await _authService.fetchCurrentProfile();
+
+    if (!mounted || !remoteResult.success || remoteResult.data == null) return;
+
+    final remoteProfile = remoteResult.data!;
+    await _tokenStorage.saveUserProfile(
+      userId: remoteProfile['userId'] ?? userId,
+      name: remoteProfile['name'] ?? nameCtrl.text,
+      email: remoteProfile['email'] ?? emailCtrl.text,
+      role: remoteProfile['role'] ?? role,
+      mobile: remoteProfile['mobile'] ?? mobileCtrl.text,
+      dob: remoteProfile['dob'] ?? _formatDob(dob),
+      gender: remoteProfile['gender'] ?? gender,
+      country: remoteProfile['country'] ?? countryCtrl.text,
+      state: remoteProfile['state'] ?? state,
+      city: remoteProfile['city'] ?? city,
+      location: remoteProfile['location'] ?? location,
+    );
+
+    setState(() {
+      _applyProfile(remoteProfile);
+    });
+  }
+
+  void _applyProfile(Map<String, String> profile) {
+    userId = profile['userId'] ?? '';
+    nameCtrl.text = profile['name'] ?? '';
+    emailCtrl.text = profile['email'] ?? '';
+    role = (profile['role']?.trim().isNotEmpty ?? false)
+        ? profile['role']!
+        : 'patient';
+    mobileCtrl.text = profile['mobile'] ?? '';
+    gender = profile['gender'] ?? '';
+    countryCtrl.text = profile['country'] ?? '';
+    state = profile['state'] ?? '';
+    city = profile['city'] ?? '';
+    location = profile['location'] ?? '';
+    dob = _parseDob(profile['dob'] ?? '');
+
+    originalData = {
+      'userId': userId,
+      'name': nameCtrl.text,
+      'email': emailCtrl.text,
+      'role': role,
+      'mobile': mobileCtrl.text,
+      'dob': _formatDob(dob),
+      'gender': gender,
+      'country': countryCtrl.text,
+      'state': state,
+      'city': city,
+      'location': location,
+    };
+  }
+
+  DateTime? _parseDob(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return null;
+
+    final parsed = DateTime.tryParse(trimmed);
+    if (parsed != null) return parsed;
+
+    final dateOnly = trimmed.length >= 10 ? trimmed.substring(0, 10) : trimmed;
+    return DateTime.tryParse(dateOnly);
+  }
+
+  String _formatDob(DateTime? value) {
+    if (value == null) return '';
+
+    final month = value.month.toString().padLeft(2, '0');
+    final day = value.day.toString().padLeft(2, '0');
+    return '${value.year}-$month-$day';
   }
 
   int? _getAge() {

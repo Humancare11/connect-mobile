@@ -13,6 +13,16 @@ class AuthService {
   final ApiClient _apiClient;
   final TokenStorageService _tokenStorage;
   static bool _googleInitialized = false;
+  static const String _updateProfileEndpoint = '/auth/update-profile';
+  static const List<String> _profileEndpoints = [
+    '/auth/profile',
+    '/auth/me',
+    '/user/profile',
+    '/user/me',
+    '/patient/profile',
+    '/profile',
+    '/me',
+  ];
 
   Future<ApiResult<AuthResponse>> login({
     required String email,
@@ -62,16 +72,16 @@ class AuthService {
     required String otp,
   }) async {
     final result = await _apiClient.post('/auth/register', {
-      'name': name,
-      'email': email,
-      'mobile': mobile,
-      'dob': dob,
-      'gender': gender,
-      'country': country,
+      'name': name.trim(),
+      'email': email.trim().toLowerCase(),
       'password': password,
+      'otp': otp.trim(),
       'privacyConsent': privacyConsent,
       'hipaaConsent': hipaaConsent,
-      'otp': otp,
+      'dob': dob.trim(),
+      if (mobile.trim().isNotEmpty) 'mobile': mobile.trim(),
+      if (gender.trim().isNotEmpty) 'gender': gender.trim(),
+      if (country.trim().isNotEmpty) 'country': country.trim(),
     });
 
     return _authResult(
@@ -159,6 +169,23 @@ class AuthService {
     );
   }
 
+  Future<ApiResult<void>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    final result = await _apiClient.put('/auth/change-password', {
+      'currentPassword': currentPassword,
+      'newPassword': newPassword,
+    });
+
+    return ApiResult<void>(
+      success: result.success,
+      message: result.message,
+      raw: result.raw,
+      statusCode: result.statusCode,
+    );
+  }
+
   Future<ApiResult<AuthResponse>> googleLogin() async {
     try {
       final googleSignIn = GoogleSignIn.instance;
@@ -196,6 +223,9 @@ class AuthService {
 
   Future<void> saveSession(AuthResponse authResponse) async {
     await _tokenStorage.saveToken(authResponse.token);
+    if (authResponse.refreshToken.isNotEmpty) {
+      await _tokenStorage.saveRefreshToken(authResponse.refreshToken);
+    }
     await _tokenStorage.saveUserProfile(
       userId: authResponse.user.id,
       name: authResponse.user.name,
@@ -205,7 +235,164 @@ class AuthService {
       dob: authResponse.user.dob,
       gender: authResponse.user.gender,
       country: authResponse.user.country,
+      state: authResponse.user.state,
+      city: authResponse.user.city,
+      location: authResponse.user.location,
     );
+  }
+
+  Future<ApiResult<Map<String, String>>> fetchCurrentProfile() async {
+    ApiResult<Map<String, dynamic>>? lastFailure;
+
+    for (final endpoint in _profileEndpoints) {
+      final result = await _apiClient.get(endpoint);
+
+      if (result.success) {
+        final profile = _normalizeProfile(
+          result.data ?? <String, dynamic>{},
+          const <String, String>{},
+        );
+
+        if (_hasMeaningfulProfile(profile)) {
+          return ApiResult<Map<String, String>>(
+            success: true,
+            message: result.message,
+            data: profile,
+            raw: result.raw,
+            statusCode: result.statusCode,
+          );
+        }
+      }
+
+      lastFailure = result;
+      if (result.statusCode != 404 && result.statusCode != 405) {
+        break;
+      }
+    }
+
+    return ApiResult<Map<String, String>>(
+      success: false,
+      message: lastFailure?.message.isNotEmpty == true
+          ? lastFailure!.message
+          : 'Unable to fetch profile from server.',
+      raw: lastFailure?.raw ?? const <String, dynamic>{},
+      statusCode: lastFailure?.statusCode ?? 0,
+    );
+  }
+
+  Future<ApiResult<Map<String, String>>> updateProfile({
+    required String userId,
+    required String name,
+    required String email,
+    required String role,
+    required String mobile,
+    required String dob,
+    required String gender,
+    required String country,
+    String state = '',
+    String city = '',
+    String location = '',
+  }) async {
+    final current = await _tokenStorage.getUserProfile();
+    final requestData = <String, String>{
+      'userId': userId,
+      'name': name,
+      'email': email,
+      'role': role,
+      'mobile': mobile,
+      'dob': dob,
+      'gender': gender,
+      'country': country,
+      'state': state,
+      'city': city,
+      'location': location,
+    };
+
+    final mergedFallback = <String, String>{...current, ...requestData};
+    final payload = <String, dynamic>{
+      'name': name.trim(),
+      'email': email.trim().toLowerCase(),
+      if (mobile.trim().isNotEmpty) 'mobile': mobile.trim(),
+      if (dob.trim().isNotEmpty) 'dob': dob.trim(),
+      if (gender.trim().isNotEmpty) 'gender': gender.trim(),
+      if (country.trim().isNotEmpty) 'country': country.trim(),
+    };
+
+    final result = await _apiClient.put(_updateProfileEndpoint, payload);
+    if (!result.success) {
+      return ApiResult<Map<String, String>>(
+        success: false,
+        message: result.message.isNotEmpty
+            ? result.message
+            : 'Unable to update profile on server.',
+        raw: result.raw,
+        statusCode: result.statusCode,
+      );
+    }
+
+    return _profileUpdateResult(result, mergedFallback);
+  }
+
+  ApiResult<Map<String, String>> _profileUpdateResult(
+    ApiResult<Map<String, dynamic>> response,
+    Map<String, String> fallback,
+  ) {
+    final profile = _normalizeProfile(
+      response.data ?? <String, dynamic>{},
+      fallback,
+    );
+
+    return ApiResult<Map<String, String>>(
+      success: true,
+      message: response.message,
+      data: profile,
+      raw: response.raw,
+      statusCode: response.statusCode,
+    );
+  }
+
+  Map<String, String> _normalizeProfile(
+    Map<String, dynamic> data,
+    Map<String, String> fallback,
+  ) {
+    final responseData = _asMap(data['data']);
+    final user = UserModel.fromMaps(data, responseData);
+    final responseUser = _firstNonEmptyMap([
+      data['user'],
+      responseData['user'],
+      _findFirstMapByKeys(data, const {'user'}),
+    ]);
+    final patientId = _firstNonEmptyString([
+      responseUser['patientId'],
+      data['patientId'],
+      responseData['patientId'],
+    ]);
+
+    String pick(String key, String candidate) {
+      final text = candidate.trim();
+      if (text.isNotEmpty) return text;
+      return (fallback[key] ?? '').trim();
+    }
+
+    return {
+      'userId': pick('userId', patientId.isNotEmpty ? patientId : user.id),
+      'name': pick('name', user.name),
+      'email': pick('email', user.email),
+      'role': pick('role', user.role),
+      'mobile': pick('mobile', user.mobile),
+      'dob': pick('dob', user.dob),
+      'gender': pick('gender', user.gender),
+      'country': pick('country', user.country),
+      'state': pick('state', user.state),
+      'city': pick('city', user.city),
+      'location': pick('location', user.location),
+    };
+  }
+
+  bool _hasMeaningfulProfile(Map<String, String> profile) {
+    return (profile['name'] ?? '').trim().isNotEmpty ||
+        (profile['email'] ?? '').trim().isNotEmpty ||
+        (profile['userId'] ?? '').trim().isNotEmpty;
   }
 
   ApiResult<AuthResponse> _authResult(
@@ -251,6 +438,18 @@ class AuthService {
         'bearerToken',
       }),
     ]);
+    final refreshToken = _firstNonEmptyString([
+      data['refreshToken'],
+      data['refresh_token'],
+      responseData['refreshToken'],
+      responseData['refresh_token'],
+      nestedData['refreshToken'],
+      nestedData['refresh_token'],
+      _findFirstStringByKeys(data, const {
+        'refreshToken',
+        'refresh_token',
+      }),
+    ]);
 
     if (!result.success) {
       return ApiResult<AuthResponse>(
@@ -275,6 +474,7 @@ class AuthService {
       message: result.message,
       data: AuthResponse(
         token: token,
+        refreshToken: refreshToken,
         user: UserModel.fromMaps(data, responseData),
       ),
       raw: result.raw,
@@ -286,6 +486,37 @@ class AuthService {
 Map<String, dynamic> _asMap(dynamic value) {
   if (value is Map) {
     return value.map((key, value) => MapEntry(key.toString(), value));
+  }
+
+  return <String, dynamic>{};
+}
+
+Map<String, dynamic> _firstNonEmptyMap(List<dynamic> values) {
+  for (final value in values) {
+    final map = _asMap(value);
+    if (map.isNotEmpty) return map;
+  }
+
+  return <String, dynamic>{};
+}
+
+Map<String, dynamic> _findFirstMapByKeys(dynamic value, Set<String> keys) {
+  if (value is Map) {
+    for (final entry in value.entries) {
+      final key = entry.key.toString();
+      final map = _asMap(entry.value);
+      if (keys.contains(key) && map.isNotEmpty) return map;
+
+      final nested = _findFirstMapByKeys(entry.value, keys);
+      if (nested.isNotEmpty) return nested;
+    }
+  }
+
+  if (value is List) {
+    for (final item in value) {
+      final nested = _findFirstMapByKeys(item, keys);
+      if (nested.isNotEmpty) return nested;
+    }
   }
 
   return <String, dynamic>{};

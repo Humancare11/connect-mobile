@@ -179,7 +179,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     setState(() { _loading = true; _error = ''; });
 
-    final result = await _authRepository.sendRegisterOtp(_emailController.text.trim());
+    final result = await _authRepository.sendRegisterOtp(
+      email: _emailController.text.trim().toLowerCase(),
+      password: _passwordController.text,
+      dob: _dobController.text.trim(),
+      privacyConsent: _privacyConsent,
+      hipaaConsent: _hipaaConsent,
+    );
 
     if (!mounted) return;
     setState(() => _loading = false);
@@ -205,9 +211,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     final formData = RegisterFormData(
       name: _nameController.text.trim(),
-      email: _emailController.text.trim(),
+      email: _emailController.text.trim().toLowerCase(),
       password: _passwordController.text,
-      mobile: '$_selectedDialCode${_mobileController.text.trim()}',
+      mobile: _mobileController.text.trim().isEmpty
+          ? ''
+          : '$_selectedDialCode${_mobileController.text.trim()}',
       countryCode: _selectedDialCode,
       dob: _dobController.text.trim(),
       gender: _selectedGender,
@@ -238,7 +246,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // ── Resend OTP ────────────────────────────────────────────────────────────
   Future<void> _handleResendOtp() async {
     setState(() => _error = '');
-    final result = await _authRepository.sendRegisterOtp(_emailController.text.trim());
+    final result = await _authRepository.sendRegisterOtp(
+      email: _emailController.text.trim().toLowerCase(),
+      password: _passwordController.text,
+      dob: _dobController.text.trim(),
+      privacyConsent: _privacyConsent,
+      hipaaConsent: _hipaaConsent,
+    );
     if (!mounted) return;
     if (result.success) {
       _startTimer();
@@ -470,7 +484,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         .map((g) => DropdownMenuItem(value: g, child: Text(g, style: const TextStyle(fontSize: 14))))
                         .toList(),
                     onChanged: (v) => setState(() => _selectedGender = v ?? ''),
-                    validator: (v) => (v ?? '').isEmpty ? 'Select Gender' : null,
                   ),
                 ),
               ],
@@ -494,7 +507,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   _selectedDialCode = _countryDialCodes[_selectedCountry] ?? '+1';
                 });
               },
-              validator: (v) => (v ?? '').isEmpty ? 'Select your country' : null,
             ),
             const SizedBox(height: 14),
 
@@ -510,11 +522,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       icon: Icons.location_on_outlined,
                     ),
                     enabled: _selectedCountry.isNotEmpty,
-                    validator: (v) {
-                      if (_selectedCountry.isEmpty) return null;
-                      if ((v?.trim() ?? '').isEmpty) return 'Enter state / province';
-                      return null;
-                    },
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -526,11 +533,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       icon: Icons.location_city_outlined,
                     ),
                     enabled: _stateController.text.isNotEmpty,
-                    validator: (v) {
-                      if (_stateController.text.isEmpty) return null;
-                      if ((v?.trim() ?? '').isEmpty) return 'Enter your city';
-                      return null;
-                    },
                   ),
                 ),
               ],
@@ -572,7 +574,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     keyboardType: TextInputType.phone,
                     decoration: _dec(label: 'Mobile Number', icon: Icons.phone_outlined),
                     validator: (v) {
-                      if ((v?.trim() ?? '').isEmpty) return 'Enter mobile number';
+                      if ((v?.trim() ?? '').isEmpty) return null;
                       if (!RegExp(r'^[\d\-\+\s\(\)]{7,}$').hasMatch(v!)) {
                         return 'Enter a valid mobile number';
                       }

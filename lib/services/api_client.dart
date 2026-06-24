@@ -4,7 +4,6 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/api_config.dart';
 import '../models/api_result.dart';
@@ -73,6 +72,58 @@ class ApiClient {
     }
   }
 
+  Future<ApiResult<Map<String, dynamic>>> put(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final token = await _tokenStorage.getToken() ?? '';
+
+      final headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+      };
+
+      final uri = Uri.parse('${ApiConfig.baseUrl}$path');
+      debugPrint('PUT $uri');
+
+      final response = await _client
+          .put(uri, headers: headers, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 30));
+
+      return _handleResponse('PUT', path, response);
+    } catch (error, stackTrace) {
+      return _handleError('PUT', path, error, stackTrace);
+    }
+  }
+
+  Future<ApiResult<Map<String, dynamic>>> patch(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    try {
+      final token = await _tokenStorage.getToken() ?? '';
+
+      final headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+      };
+
+      final uri = Uri.parse('${ApiConfig.baseUrl}$path');
+      debugPrint('PATCH $uri');
+
+      final response = await _client
+          .patch(uri, headers: headers, body: jsonEncode(body))
+          .timeout(const Duration(seconds: 30));
+
+      return _handleResponse('PATCH', path, response);
+    } catch (error, stackTrace) {
+      return _handleError('PATCH', path, error, stackTrace);
+    }
+  }
+
   /// Parses a successful HTTP exchange (any status code) into an [ApiResult].
   ApiResult<Map<String, dynamic>> _handleResponse(
     String method,
@@ -101,11 +152,24 @@ class ApiClient {
       debugPrint('$method $path invalid JSON: $error');
       return ApiResult<Map<String, dynamic>>(
         success: false,
-        message:
-            'Unexpected response from the server (${response.statusCode}).',
+        message: _unexpectedResponseMessage(response),
         statusCode: response.statusCode,
       );
     }
+  }
+
+  String _unexpectedResponseMessage(http.Response response) {
+    final contentType = response.headers['content-type']?.toLowerCase() ?? '';
+    final body = response.body.toLowerCase();
+
+    if (response.statusCode == 405 ||
+        contentType.contains('text/html') ||
+        body.contains('<html')) {
+      return 'UAT API is not returning backend JSON. Please check server '
+          'routing for /api on ${ApiConfig.baseUrl}.';
+    }
+
+    return 'Unexpected response from the server (${response.statusCode}).';
   }
 
   /// Maps a thrown exception (connectivity, timeout, TLS, etc.) into a
@@ -142,14 +206,15 @@ class ApiClient {
             'connection (DNS lookup failed).';
       }
       if (detail.contains('connection refused')) {
-        return 'The server refused the connection. Please try again later.';
+        return 'The API server refused the connection at ${ApiConfig.baseUrl}.';
       }
       if (detail.contains('network is unreachable') ||
           detail.contains('no route to host')) {
-        return 'No internet connection. Please check your network and '
-            'try again.';
+        return 'Cannot reach the API server at ${ApiConfig.baseUrl}. Please '
+            'check network access to this UAT host.';
       }
-      return 'Unable to connect. Please check your internet connection.';
+      return 'Unable to connect to ${ApiConfig.baseUrl}. Please check that '
+          'the UAT API host is reachable from this device.';
     }
 
     if (error is HandshakeException || error is TlsException) {
@@ -168,7 +233,8 @@ class ApiClient {
         return 'The connection to the server was interrupted. Please try '
             'again.';
       }
-      return 'Unable to connect. Please check your internet connection.';
+      return 'Unable to connect to ${ApiConfig.baseUrl}. Please check that '
+          'the UAT API host is reachable from this device.';
     }
 
     if (error is StateError) {
@@ -182,6 +248,10 @@ class ApiClient {
   Map<String, dynamic> _asMap(dynamic value) {
     if (value is Map) {
       return value.map((key, value) => MapEntry(key.toString(), value));
+    }
+
+    if (value is List) {
+      return {'data': value};
     }
 
     return <String, dynamic>{};

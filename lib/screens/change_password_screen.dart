@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../services/api_client.dart';
+import '../services/auth_service.dart';
+import '../services/auth_validators.dart';
 
-class ChangePasswordScreen extends StatefulWidget {
+class ChangePasswordScreen extends StatefulWidget { 
   const ChangePasswordScreen({super.key});
 
   @override
@@ -20,23 +21,24 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   bool _showConfirm = false;
   bool _loading = false;
 
-  final _api = ApiClient();
+  final _authService = AuthService();
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _loading = true);
 
-    final res = await _api.post('/auth/change-password', {
-      'currentPassword': _currentCtrl.text,
-      'newPassword': _newCtrl.text,
-    });
+    final res = await _authService.changePassword(
+      currentPassword: _currentCtrl.text.trim(),
+      newPassword: _newCtrl.text.trim(),
+    );
 
     if (!mounted) return;
     setState(() => _loading = false);
 
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(res.message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(res.message)));
 
     if (res.success) {
       Navigator.pop(context);
@@ -102,9 +104,17 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                   if (v == null || v.isEmpty) {
                     return 'Please enter a new password';
                   }
-                  if (v.length < 6) {
-                    return 'Password must be at least 6 characters';
+
+                  final newPassword = v.trim();
+                  if (newPassword == _currentCtrl.text.trim()) {
+                    return 'New password must be different from current password';
                   }
+
+                  final error = AuthValidators.passwordError(newPassword);
+                  if (error.isNotEmpty) {
+                    return error;
+                  }
+
                   return null;
                 },
               ),

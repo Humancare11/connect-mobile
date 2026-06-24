@@ -31,3 +31,5 @@ flutter:
 
   assets:
     - .env
+    - .env.uat
+    - .env.production

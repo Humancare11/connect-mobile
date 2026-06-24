@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/ticket_service.dart';
+
 class RaiseTicketPage extends StatefulWidget {
   const RaiseTicketPage({super.key});
 
@@ -8,6 +10,7 @@ class RaiseTicketPage extends StatefulWidget {
 }
 
 class _RaiseTicketPageState extends State<RaiseTicketPage> {
+  final _ticketService = TicketService();
   final titleCtrl = TextEditingController();
   final descCtrl = TextEditingController();
 
@@ -15,6 +18,8 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
   String filter = "all";
   String? expandedId;
   bool loading = false;
+  bool loadingTickets = true;
+  String ticketLoadError = "";
 
   final categories = const [
     {"value": "appointment", "label": "Appointment Issue"},
@@ -24,31 +29,26 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
     {"value": "other", "label": "Other"},
   ];
 
-  final List<Map<String, dynamic>> tickets = [
-    {
-      "_id": "1",
-      "title": "Unable to join video call",
-      "description": "Doctor video call link is not opening.",
-      "category": "technical",
-      "status": "open",
-      "createdAt": DateTime.now(),
-    },
-    {
-      "_id": "2",
-      "title": "Payment deducted twice",
-      "description": "Amount deducted two times during appointment booking.",
-      "category": "billing",
-      "status": "resolved",
-      "resolution": "Refund has been processed successfully.",
-      "createdAt": DateTime.now().subtract(const Duration(days: 2)),
-    },
-  ];
+  final List<Map<String, dynamic>> tickets = [];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _restoreAndLoadTickets();
+    });
+  }
+
+  @override
+  void dispose() {
+    titleCtrl.dispose();
+    descCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final displayed = filter == "all"
-        ? tickets
-        : tickets.where((t) => t["status"] == filter).toList();
+    final displayed = _ticketsForFilter(filter);
 
     return Scaffold(
       backgroundColor: const Color(0xfff6f8fb),
@@ -59,15 +59,18 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
         elevation: 0,
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            _header(),
-            const SizedBox(height: 16),
-            _newTicketForm(),
-            const SizedBox(height: 18),
-            _ticketList(displayed),
-          ],
+        child: RefreshIndicator(
+          onRefresh: _loadTickets,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              _header(),
+              const SizedBox(height: 16),
+              _newTicketForm(),
+              const SizedBox(height: 18),
+              _ticketList(displayed),
+            ],
+          ),
         ),
       ),
     );
@@ -250,23 +253,62 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            "Your Tickets",
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-          ),
-          const SizedBox(height: 12),
-
           Row(
             children: [
-              _filterChip("All", "all"),
-              _filterChip("Open", "open"),
-              _filterChip("Resolved", "resolved"),
+              const Expanded(
+                child: Text(
+                  "Your Tickets",
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                ),
+              ),
+              IconButton(
+                onPressed: loadingTickets ? null : _loadTickets,
+                icon: const Icon(Icons.refresh),
+                tooltip: "Refresh tickets",
+              ),
             ],
+          ),
+          const SizedBox(height: 4),
+
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _filterOptions().map((option) {
+              return _filterChip(option["label"]!, option["value"]!);
+            }).toList(),
           ),
 
           const SizedBox(height: 16),
 
-          if (displayed.isEmpty)
+          if (loadingTickets)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(),
+              ),
+            )
+          else if (ticketLoadError.isNotEmpty && tickets.isEmpty)
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  children: [
+                    Text(
+                      ticketLoadError,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.black54),
+                    ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _loadTickets,
+                      icon: const Icon(Icons.refresh),
+                      label: const Text("Retry"),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else if (displayed.isEmpty)
             const Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
@@ -286,38 +328,116 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
 
   Widget _filterChip(String label, String value) {
     final active = filter == value;
-    final count = value == "all"
-        ? tickets.length
-        : tickets.where((t) => t["status"] == value).length;
+    final count = _ticketsForFilter(value).length;
 
-    return Expanded(
-      child: GestureDetector(
-        onTap: () => setState(() => filter = value),
-        child: Container(
-          margin: const EdgeInsets.only(right: 8),
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: active ? const Color(0xff1a3a5c) : const Color(0xfff3f4f6),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Center(
-            child: Text(
-              "$label  $count",
-              style: TextStyle(
-                color: active ? Colors.white : Colors.black87,
-                fontWeight: FontWeight.w800,
-                fontSize: 12,
-              ),
-            ),
+    return GestureDetector(
+      onTap: () => setState(() => filter = value),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: active ? const Color(0xff1a3a5c) : const Color(0xfff3f4f6),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          "$label  $count",
+          style: TextStyle(
+            color: active ? Colors.white : Colors.black87,
+            fontWeight: FontWeight.w800,
+            fontSize: 12,
           ),
         ),
       ),
     );
   }
 
+  List<Map<String, String>> _filterOptions() {
+    final options = <Map<String, String>>[
+      {"value": "all", "label": "All"},
+      {"value": "open", "label": "Open"},
+      {"value": "resolved", "label": "Resolved"},
+    ];
+    final known = options.map((option) => option["value"]).toSet();
+
+    for (final ticket in tickets) {
+      final status = _statusKey(ticket["status"]);
+      if (known.contains(status)) continue;
+
+      known.add(status);
+      options.add({
+        "value": status,
+        "label": _statusLabel(status),
+      });
+    }
+
+    return options;
+  }
+
+  List<Map<String, dynamic>> _ticketsForFilter(String value) {
+    if (value == "all") return tickets;
+
+    return tickets.where((ticket) {
+      return _statusKey(ticket["status"]) == value;
+    }).toList();
+  }
+
+  String _statusKey(dynamic value) {
+    final text = value?.toString().trim().toLowerCase() ?? "";
+    final normalized = text
+        .replaceAll(RegExp(r"[\s-]+"), "_")
+        .replaceAll(RegExp(r"_+"), "_");
+
+    switch (normalized) {
+      case "":
+      case "new":
+      case "opened":
+        return "open";
+      case "resolve":
+      case "solved":
+      case "closed":
+      case "complete":
+      case "completed":
+        return "resolved";
+      default:
+        return normalized;
+    }
+  }
+
+  String _statusLabel(dynamic value) {
+    final key = _statusKey(value);
+    switch (key) {
+      case "open":
+        return "Open";
+      case "resolved":
+        return "Resolved";
+      case "in_progress":
+        return "In Progress";
+      default:
+        return key
+            .split("_")
+            .where((part) => part.isNotEmpty)
+            .map((part) {
+              return "${part[0].toUpperCase()}${part.substring(1)}";
+            })
+            .join(" ");
+    }
+  }
+
+  MaterialColor _statusColor(String status) {
+    switch (_statusKey(status)) {
+      case "resolved":
+        return Colors.green;
+      case "open":
+        return Colors.orange;
+      case "in_progress":
+        return Colors.blue;
+      default:
+        return Colors.blueGrey;
+    }
+  }
+
   Widget _ticketCard(Map<String, dynamic> ticket, int index) {
     final isOpen = expandedId == ticket["_id"];
-    final status = ticket["status"] ?? "open";
+    final status = _statusKey(ticket["status"]);
     final isResolved = status == "resolved";
     final catLabel = _categoryLabel(ticket["category"]);
 
@@ -399,7 +519,7 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
                   ),
                   const SizedBox(height: 6),
                   Text(ticket["description"] ?? ""),
-                  if (isResolved && ticket["resolution"] != null) ...[
+                  if (isResolved && _hasResolution(ticket)) ...[
                     const SizedBox(height: 12),
                     Container(
                       width: double.infinity,
@@ -409,7 +529,7 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Text(
-                        "✅ Resolution\n${ticket["resolution"]}",
+                        "Resolution\n${_resolutionText(ticket)}",
                         style: TextStyle(color: Colors.green.shade800),
                       ),
                     ),
@@ -423,19 +543,19 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
   }
 
   Widget _statusBadge(String status) {
-    final resolved = status == "resolved";
+    final color = _statusColor(status);
 
     return Container(
       margin: const EdgeInsets.only(right: 8),
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: resolved ? Colors.green.shade50 : Colors.orange.shade50,
+        color: color.shade50,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        resolved ? "Resolved" : "Open",
+        _statusLabel(status),
         style: TextStyle(
-          color: resolved ? Colors.green.shade700 : Colors.orange.shade700,
+          color: color.shade700,
           fontSize: 11,
           fontWeight: FontWeight.w900,
         ),
@@ -443,8 +563,70 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
     );
   }
 
+  Future<void> _restoreAndLoadTickets() async {
+    final cachedTickets = await _ticketService.loadCachedTickets();
+    if (!mounted) return;
+
+    if (cachedTickets.isNotEmpty) {
+      setState(() {
+        tickets
+          ..clear()
+          ..addAll(cachedTickets.map(_ticketFromResponse));
+        loadingTickets = false;
+        ticketLoadError = "";
+      });
+    }
+
+    await _loadTickets();
+  }
+
+  Future<void> _loadTickets() async {
+    setState(() {
+      loadingTickets = tickets.isEmpty;
+      ticketLoadError = "";
+    });
+
+    final result = await _ticketService.fetchTickets();
+
+    if (!mounted) return;
+
+    if (!result.success) {
+      setState(() {
+        loadingTickets = false;
+        ticketLoadError = tickets.isEmpty
+            ? (result.message.isNotEmpty
+                  ? result.message
+                  : "Unable to load tickets.")
+            : "";
+      });
+      return;
+    }
+
+    final loadedTickets = (result.data ?? const <Map<String, dynamic>>[])
+        .map(_ticketFromResponse)
+        .toList();
+
+    setState(() {
+      if (loadedTickets.isNotEmpty || tickets.isEmpty) {
+        final mergedTickets = loadedTickets.isEmpty
+            ? tickets
+            : _mergeTickets(loadedTickets, tickets);
+        tickets
+          ..clear()
+          ..addAll(mergedTickets);
+      }
+      loadingTickets = false;
+      ticketLoadError = "";
+    });
+
+    await _saveTickets();
+  }
+
   void _submitTicket() async {
-    if (titleCtrl.text.trim().isEmpty || descCtrl.text.trim().isEmpty) {
+    final title = titleCtrl.text.trim();
+    final description = descCtrl.text.trim();
+
+    if (title.isEmpty || description.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Please fill title and description")),
       );
@@ -453,17 +635,37 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
 
     setState(() => loading = true);
 
-    await Future.delayed(const Duration(seconds: 1));
+    final result = await _ticketService.createTicket(
+      title: title,
+      description: description,
+      category: category,
+    );
+
+    if (!mounted) return;
+
+    if (!result.success) {
+      setState(() => loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            result.message.isNotEmpty
+                ? result.message
+                : "Unable to submit ticket. Please try again.",
+          ),
+        ),
+      );
+      return;
+    }
+
+    final ticket = result.data ?? <String, dynamic>{};
+    final createdTicket = _ticketFromResponse(ticket)
+      ..["status"] = "open"
+      ..remove("resolution")
+      ..remove("resolvedBy")
+      ..remove("resolvedAt");
 
     setState(() {
-      tickets.insert(0, {
-        "_id": DateTime.now().millisecondsSinceEpoch.toString(),
-        "title": titleCtrl.text.trim(),
-        "description": descCtrl.text.trim(),
-        "category": category,
-        "status": "open",
-        "createdAt": DateTime.now(),
-      });
+      tickets.insert(0, createdTicket);
 
       titleCtrl.clear();
       descCtrl.clear();
@@ -472,9 +674,128 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
       filter = "all";
     });
 
+    await _saveTickets();
+
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Ticket submitted successfully!")),
+      SnackBar(
+        content: Text(
+          result.message.isNotEmpty
+              ? result.message
+              : "Ticket submitted successfully.",
+        ),
+      ),
     );
+  }
+
+  Map<String, dynamic> _ticketFromResponse(Map<String, dynamic> ticket) {
+    final status = _statusFromTicket(ticket);
+    final ticketCategory = ticket["category"]?.toString().trim();
+
+    return {
+      "_id":
+          ticket["_id"]?.toString() ??
+          ticket["id"]?.toString() ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
+      "title": ticket["title"]?.toString() ?? titleCtrl.text.trim(),
+      "description":
+          ticket["description"]?.toString() ?? descCtrl.text.trim(),
+      "category":
+          ticketCategory?.isNotEmpty == true ? ticketCategory : category,
+      "status": status,
+      if ((ticket["resolution"]?.toString().trim() ?? "").isNotEmpty)
+        "resolution": ticket["resolution"].toString().trim(),
+      if ((ticket["resolvedBy"]?.toString().trim() ?? "").isNotEmpty)
+        "resolvedBy": ticket["resolvedBy"].toString().trim(),
+      if ((ticket["resolvedAt"]?.toString().trim() ?? "").isNotEmpty)
+        "resolvedAt": ticket["resolvedAt"].toString().trim(),
+      "createdAt": _parseDate(ticket["createdAt"]) ?? DateTime.now(),
+    };
+  }
+
+  String _statusFromTicket(Map<String, dynamic> ticket) {
+    final isResolved = ticket["isResolved"];
+    if (isResolved is bool && isResolved) return "resolved";
+
+    for (final value in [
+      ticket["status"],
+      ticket["ticketStatus"],
+      ticket["state"],
+    ]) {
+      if (value?.toString().trim().isEmpty ?? true) continue;
+      final status = _statusKey(value);
+      if (status.isNotEmpty) return status;
+    }
+
+    if (_hasResolution(ticket)) return "resolved";
+
+    return "open";
+  }
+
+  bool _hasResolution(Map<String, dynamic> ticket) {
+    final resolution = ticket["resolution"]?.toString().trim() ?? "";
+    final resolvedBy = ticket["resolvedBy"]?.toString().trim() ?? "";
+    final resolvedAt = ticket["resolvedAt"]?.toString().trim() ?? "";
+
+    return resolution.isNotEmpty ||
+        resolvedBy.isNotEmpty ||
+        resolvedAt.isNotEmpty;
+  }
+
+  String _resolutionText(Map<String, dynamic> ticket) {
+    final resolution = ticket["resolution"]?.toString().trim() ?? "";
+    if (resolution.isNotEmpty) return resolution;
+
+    return "Resolved by support.";
+  }
+
+  List<Map<String, dynamic>> _mergeTickets(
+    List<Map<String, dynamic>> serverTickets,
+    List<Map<String, dynamic>> cachedTickets,
+  ) {
+    final merged = <Map<String, dynamic>>[];
+    final seen = <String>{};
+
+    void addTicket(Map<String, dynamic> ticket) {
+      final key = _ticketIdentity(ticket);
+      if (seen.contains(key)) return;
+      seen.add(key);
+      merged.add(ticket);
+    }
+
+    for (final ticket in serverTickets) {
+      addTicket(ticket);
+    }
+    for (final ticket in cachedTickets) {
+      addTicket(ticket);
+    }
+
+    return merged;
+  }
+
+  String _ticketIdentity(Map<String, dynamic> ticket) {
+    final id = ticket["_id"]?.toString().trim();
+    if (id != null && id.isNotEmpty) return id;
+
+    return [
+      ticket["title"]?.toString().trim() ?? "",
+      ticket["description"]?.toString().trim() ?? "",
+      ticket["createdAt"]?.toString().trim() ?? "",
+    ].join("|");
+  }
+
+  Future<void> _saveTickets() async {
+    await _ticketService.saveCachedTickets(
+      tickets.map(_ticketForCache).toList(),
+    );
+  }
+
+  Map<String, dynamic> _ticketForCache(Map<String, dynamic> ticket) {
+    return ticket.map((key, value) {
+      if (value is DateTime) {
+        return MapEntry(key, value.toIso8601String());
+      }
+      return MapEntry(key, value);
+    });
   }
 
   String _categoryLabel(String? value) {
@@ -483,11 +804,18 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
   }
 
   String _formatDate(dynamic date) {
-    if (date is DateTime) {
-      return "${date.day.toString().padLeft(2, "0")} "
-          "${_month(date.month)} ${date.year}";
+    final parsed = _parseDate(date);
+    if (parsed != null) {
+      return "${parsed.day.toString().padLeft(2, "0")} "
+          "${_month(parsed.month)} ${parsed.year}";
     }
     return "";
+  }
+
+  DateTime? _parseDate(dynamic date) {
+    if (date is DateTime) return date;
+    if (date is String) return DateTime.tryParse(date)?.toLocal();
+    return null;
   }
 
   String _month(int m) {

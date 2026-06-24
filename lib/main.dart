@@ -5,7 +5,9 @@ import 'screens/book_appointment_form_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load();
+  const appEnv = String.fromEnvironment('APP_ENV', defaultValue: 'uat');
+  final envFile = appEnv == 'production' ? '.env.production' : '.env.uat';
+  await dotenv.load(fileName: envFile);
   runApp(const MyApp());
 }
 
