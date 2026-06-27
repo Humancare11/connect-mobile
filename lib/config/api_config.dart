@@ -3,7 +3,8 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 class ApiConfig {
   const ApiConfig._();
 
-  static const String _defaultUatApiUrl = 'https://uat.humancareconnect.co/api';
+  static const String _defaultUatApiUrl =
+      'https://uat-api.humancareconnect.co/api';
 
   static String get baseUrl {
     final configuredBaseUrl =
@@ -27,7 +28,7 @@ class ApiConfig {
         !host.startsWith('uat.')) {
       throw StateError(
         'Production API is disabled for this development build. '
-        'Use https://uat.humancareconnect.co/api or set '
+        'Use https://uat-api.humancareconnect.co/api or set '
         'ALLOW_PRODUCTION_API=true intentionally.',
       );
     }

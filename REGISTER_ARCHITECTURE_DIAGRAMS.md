@@ -147,11 +147,11 @@ START
 │  │ • Refresh token      │    │ • User name          │  │
 │  │ • Reset token        │    │ • User email         │  │
 │  └──────────────────────┘    │ • User role          │  │
-│         ▲                     │ • User mobile        │  │
-│         │                     │ • User DOB           │  │
-│    Platform-specific           │ • User gender        │  │
-│    encryption:                 │ • User country       │  │
-│    • iOS: Keychain             └──────────────────────┘  │
+│         ▲                    │ • User mobile        │  │
+│         │                    │ • User DOB           │  │
+│    Platform-specific         │ • User gender        │  │
+│    encryption:               │ • User country       │  │
+│    • iOS: Keychain           └──────────────────────┘  │
 │    • Android: Keystore                                  │
 └─────────────────────────────────────────────────────────┘
         ▲

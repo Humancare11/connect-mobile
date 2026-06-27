@@ -1,0 +1,438 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
+
+import '../services/payment_service.dart';
+
+class AppointmentPaymentPage extends StatefulWidget {
+  const AppointmentPaymentPage({super.key});
+
+  @override
+  State<AppointmentPaymentPage> createState() => _AppointmentPaymentPageState();
+}
+
+class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
+  final _paymentService = PaymentService();
+  bool _processing = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final args =
+        ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>? ??
+        <String, dynamic>{};
+    final amount = _amount(args['cost']);
+
+    return Scaffold(
+      backgroundColor: const Color(0xfff6f8fb),
+      appBar: AppBar(
+        title: const Text('Payment'),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            _progress(),
+            const SizedBox(height: 18),
+            _summary(args, amount),
+            const SizedBox(height: 18),
+            _paymentCard(),
+            const SizedBox(height: 22),
+            SizedBox(
+              height: 54,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xff1a3a5c),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                onPressed: _processing ? null : () => _payAndCreate(args),
+                child: _processing
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Text(
+                        'Pay \$${_displayAmount(amount)}',
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _summary(Map<String, dynamic> args, num amount) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: _box(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Appointment Summary',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 14),
+          _line('Category', args['catLabel']),
+          _line('Specialty', args['specName']),
+          _line('Condition', args['condName']),
+          _line('Date', _formatDate(_parseDate(args['date']))),
+          _line('Time', args['time']),
+          const Divider(height: 26),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Total',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              Text(
+                '\$${_displayAmount(amount)}',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xff1a3a5c),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _paymentCard() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: _box(),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Card Payment',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'Secure checkout is processed by Stripe. Your card details are not stored in this app.',
+            style: TextStyle(color: Colors.black54, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _line(String label, Object? value) {
+    final text = value?.toString().trim() ?? '';
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 9),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 92,
+            child: Text(label, style: const TextStyle(color: Colors.black54)),
+          ),
+          Expanded(
+            child: Text(
+              text.isEmpty ? '-' : text,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _progress() {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: _box(),
+      child: Row(
+        children: const [
+          _StepDot(text: '1', label: 'Details', active: true),
+          Expanded(child: Divider(thickness: 2)),
+          _StepDot(text: '2', label: 'Payment', active: true),
+          Expanded(child: Divider(thickness: 2)),
+          _StepDot(text: '3', label: 'Confirmed'),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _payAndCreate(Map<String, dynamic> args) async {
+    if (!_supportsStripePaymentSheet) {
+      _snack('Stripe card payment is available on Android and iOS builds.');
+      return;
+    }
+
+    final stripeKey = _stripePublishableKey;
+    if (stripeKey.isEmpty) {
+      debugPrint('[PaymentSheet] Missing Stripe publishable key.');
+      _snack('Payment is not configured. Missing Stripe publishable key.');
+      return;
+    }
+
+    setState(() => _processing = true);
+
+    try {
+      debugPrint(
+        '[PaymentSheet] Starting payment. '
+        'amount=${_amount(args['cost'])} '
+        'key=${_redactPublishableKey(stripeKey)}',
+      );
+
+      if (!_hasStripePublishableKey) {
+        debugPrint('[PaymentSheet] Applying Stripe publishable key.');
+        Stripe.publishableKey = stripeKey;
+        await Stripe.instance.applySettings();
+        debugPrint('[PaymentSheet] Stripe settings applied.');
+      }
+
+      final amount = _amount(args['cost']);
+      final intentResult =
+          await _paymentService.createStripeIntentByAmount(amount);
+      if (!mounted) return;
+
+      final intent = intentResult.data;
+      if (!intentResult.success || intent == null) {
+        debugPrint(
+          '[PaymentSheet] create-intent failed: ${intentResult.message}',
+        );
+        _snack(intentResult.message);
+        return;
+      }
+
+      debugPrint(
+        '[PaymentSheet] initPaymentSheet() with '
+        'clientSecret=${_redactClientSecret(intent.clientSecret)} '
+        'paymentIntentId=${intent.paymentIntentId} '
+        'amountCents=${intent.amountCents}',
+      );
+      await Stripe.instance.initPaymentSheet(
+        paymentSheetParameters: SetupPaymentSheetParameters(
+          customFlow: false,
+          paymentIntentClientSecret: intent.clientSecret,
+          merchantDisplayName: 'Humancare Connect',
+          primaryButtonLabel: 'Pay \$${_displayAmount(amount)}',
+          style: ThemeMode.system,
+          allowsDelayedPaymentMethods: false,
+          paymentMethodOrder: const ['card'],
+          returnURL: 'humancareconnect://stripe-redirect',
+        ),
+      );
+      debugPrint('[PaymentSheet] initPaymentSheet() completed.');
+
+      debugPrint('[PaymentSheet] presentPaymentSheet() starting.');
+      await Stripe.instance.presentPaymentSheet();
+      debugPrint('[PaymentSheet] presentPaymentSheet() completed.');
+
+      final appointmentPayload = _appointmentPayload(
+        args,
+        amount,
+        intent.paymentIntentId,
+      );
+      final appointmentResult =
+          await _paymentService.createPaidAppointment(appointmentPayload);
+      if (!mounted) return;
+
+      if (!appointmentResult.success) {
+        _snack(appointmentResult.message);
+        return;
+      }
+
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/appointment-confirmation',
+        (route) => route.isFirst,
+        arguments: {
+          ...args,
+          'amount': amount,
+          'paymentIntentId': intent.paymentIntentId,
+          'appointment': appointmentResult.data ?? <String, dynamic>{},
+        },
+      );
+    } on StripeException catch (error) {
+      if (!mounted) return;
+      debugPrint(
+        '[PaymentSheet] StripeException code=${error.error.code} '
+        'message=${error.error.message} localized=${error.error.localizedMessage}',
+      );
+      final message = error.error.localizedMessage ?? 'Payment was cancelled.';
+      _snack(message);
+    } catch (error, stackTrace) {
+      if (!mounted) return;
+      debugPrint('Payment failed: $error');
+      debugPrint('$stackTrace');
+      _snack('Payment failed. Please try again.');
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
+  }
+
+  Map<String, dynamic> _appointmentPayload(
+    Map<String, dynamic> args,
+    num amount,
+    String paymentIntentId,
+  ) {
+    final date = _parseDate(args['date']) ?? DateTime.now();
+    final time = args['time']?.toString() ?? '';
+    final appointmentDateTime = _combineDateAndTime(date, time);
+
+    return {
+      'category': args['catLabel']?.toString() ?? '',
+      'specialty': args['specName']?.toString() ?? '',
+      'condition': args['condName']?.toString() ?? '',
+      'consultationPrice': amount,
+      'date': _apiDate(date),
+      'time': time,
+      'appointmentDateTimeUtc': appointmentDateTime.toUtc().toIso8601String(),
+      'patientTimezone': DateTime.now().timeZoneName,
+      'problem': args['problem']?.toString() ?? '',
+      'medicalReports': const <dynamic>[],
+      'paymentIntentId': paymentIntentId,
+    };
+  }
+
+  DateTime _combineDateAndTime(DateTime date, String time) {
+    final match = RegExp(r'^(\d{1,2}):(\d{2})\s*(AM|PM)$', caseSensitive: false)
+        .firstMatch(time.trim());
+    if (match == null) return date;
+
+    var hour = int.tryParse(match.group(1) ?? '') ?? 0;
+    final minute = int.tryParse(match.group(2) ?? '') ?? 0;
+    final period = (match.group(3) ?? '').toUpperCase();
+    if (period == 'PM' && hour < 12) hour += 12;
+    if (period == 'AM' && hour == 12) hour = 0;
+
+    return DateTime(date.year, date.month, date.day, hour, minute);
+  }
+
+  DateTime? _parseDate(Object? value) {
+    if (value is DateTime) return value;
+    return DateTime.tryParse(value?.toString() ?? '');
+  }
+
+  String _apiDate(DateTime date) {
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '${date.year}-$month-$day';
+  }
+
+  String _formatDate(DateTime? date) {
+    if (date == null) return '-';
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '$day-$month-${date.year}';
+  }
+
+  num _amount(Object? value) {
+    if (value is num) return value;
+    return num.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  String _displayAmount(num amount) {
+    if (amount == amount.roundToDouble()) return amount.round().toString();
+    return amount.toStringAsFixed(2);
+  }
+
+  void _snack(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg.isEmpty ? 'Something went wrong.' : msg)),
+    );
+  }
+
+  BoxDecoration _box() {
+    return BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.04),
+          blurRadius: 12,
+          offset: const Offset(0, 6),
+        ),
+      ],
+    );
+  }
+}
+
+bool get _supportsStripePaymentSheet {
+  if (kIsWeb) return false;
+
+  return defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+}
+
+String get _stripePublishableKey {
+  return (dotenv.env['STRIPE_PUBLISHABLE_KEY'] ??
+          dotenv.env['VITE_STRIPE_PUBLISHABLE_KEY'] ??
+          '')
+      .trim();
+}
+
+bool get _hasStripePublishableKey {
+  try {
+    return Stripe.publishableKey.trim().isNotEmpty;
+  } on StripeConfigException {
+    return false;
+  }
+}
+
+String _redactClientSecret(String value) {
+  if (value.isEmpty) return '(missing)';
+  final marker = value.indexOf('_secret_');
+  if (marker > 0) return '${value.substring(0, marker)}_secret_...';
+  if (value.length <= 12) return '...';
+  return '${value.substring(0, 8)}...${value.substring(value.length - 4)}';
+}
+
+String _redactPublishableKey(String value) {
+  if (value.length <= 12) return value.isEmpty ? '(missing)' : '...';
+  return '${value.substring(0, 7)}...${value.substring(value.length - 4)}';
+}
+
+class _StepDot extends StatelessWidget {
+  const _StepDot({
+    required this.text,
+    required this.label,
+    this.active = false,
+  });
+
+  final String text;
+  final String label;
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        CircleAvatar(
+          radius: 15,
+          backgroundColor: active ? const Color(0xff1a3a5c) : Colors.black12,
+          child: Text(
+            text,
+            style: TextStyle(
+              color: active ? Colors.white : Colors.black54,
+              fontSize: 12,
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(label, style: const TextStyle(fontSize: 11)),
+      ],
+    );
+  }
+}
