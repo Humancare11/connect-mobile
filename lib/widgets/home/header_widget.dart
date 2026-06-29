@@ -19,28 +19,26 @@ class HomeHeader extends StatelessWidget {
         final profile = snapshot.data ?? const <String, String>{};
         final displayName = _resolveName(profile);
         final displayLocation = _resolveLocation(profile);
-        final avatarInitial =
-            displayName.isNotEmpty ? displayName[0].toUpperCase() : 'U';
+        final avatarInitial = displayName.isNotEmpty
+            ? displayName[0].toUpperCase()
+            : 'U';
 
         return Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             // ── Logo container ────────────────────────────────────────────────
             Container(
-              width: 48,
-              height: 48,
-              padding: const EdgeInsets.all(7),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(AppRadius.md),
-                boxShadow: AppShadows.card,
-              ),
+              width: 110,
+              // height: 100,
+              // padding: const EdgeInsets.all(7),
+              // decoration: BoxDecoration(
+              //   color: AppColors.surface,
+              //   borderRadius: BorderRadius.circular(AppRadius.md),
+              //   boxShadow: AppShadows.card,
+              // ),
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(AppRadius.xs),
-                child: Image.asset(
-                  'assets/images/logo.png',
-                  fit: BoxFit.contain,
-                ),
+                child: Image.asset('assets/Logo.png', fit: BoxFit.contain),
               ),
             ),
 
@@ -60,10 +58,10 @@ class HomeHeader extends StatelessWidget {
                           text: 'Hello, $displayName ',
                           style: const TextStyle(
                             fontFamily: AppFonts.family,
-                            fontSize: 20,
+                            fontSize: 15,
                             fontWeight: FontWeight.w700,
                             color: AppColors.textPrimary,
-                            letterSpacing: -0.4,
+                            letterSpacing: 0,
                           ),
                         ),
                         const TextSpan(
@@ -146,10 +144,7 @@ class HomeHeader extends StatelessWidget {
                     decoration: BoxDecoration(
                       color: AppColors.error,
                       shape: BoxShape.circle,
-                      border: Border.all(
-                        color: AppColors.surface,
-                        width: 1.5,
-                      ),
+                      border: Border.all(color: AppColors.surface, width: 1.5),
                     ),
                   ),
                 ),
@@ -221,9 +216,11 @@ class HomeHeader extends StatelessWidget {
     final state = (profile['state'] ?? '').trim();
     final country = (profile['country'] ?? '').trim();
 
-    final parts = [city, state, country]
-        .where((value) => value.isNotEmpty)
-        .toList();
+    final parts = [
+      city,
+      state,
+      country,
+    ].where((value) => value.isNotEmpty).toList();
 
     if (parts.isEmpty) return 'Location not set';
     return parts.join(', ');

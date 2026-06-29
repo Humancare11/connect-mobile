@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../widgets/home/header_widget.dart';
 import '../widgets/home/search_bar_widget.dart';
 import '../widgets/home/book_appointment_card.dart';
-import '../widgets/home/bookbyservice.dart';
+// import '../widgets/home/bookbyservice.dart'; // Remove this import
 import '../widgets/home/explore_specialties_section.dart';
 import '../widgets/home/medical_services_section.dart';
 
@@ -27,18 +27,16 @@ class HomeScreen extends StatelessWidget {
             SizedBox(height: 18),
 
             BookAppointmentCard(),
+            
+const SizedBox(height: 18),
 
-             BookByService(),
+            ExploreSpecialtiesSection(),
 
-              ExploreSpecialtiesSection(),
+            SizedBox(height: 18),
 
-              SizedBox(height: 18),
+            MedicalServicesSection(),
 
-              MedicalServicesSection(),
-               
-              SizedBox(height: 18),
-
-
+            SizedBox(height: 18),
           ],
         ),
       ),
