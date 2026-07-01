@@ -9,11 +9,15 @@ class StripeIntent {
   const StripeIntent({
     required this.clientSecret,
     required this.amountCents,
+    required this.currency,
+    required this.livemode,
     this.id = '',
   });
 
   final String clientSecret;
   final int amountCents;
+  final String currency;
+  final bool? livemode;
   final String id;
 
   String get paymentIntentId {
@@ -33,6 +37,12 @@ class PaymentService {
   Future<ApiResult<StripeIntent>> createStripeIntentByAmount(
     num amountUsd,
   ) async {
+    final amountCents = (amountUsd * 100).round();
+    debugPrint(
+      '[PaymentService] create-intent request '
+      'amountUsd=$amountUsd amountCents=$amountCents currency=usd',
+    );
+
     final result = await _apiClient.post('/payments/create-intent-by-amount', {
       'amountUsd': amountUsd,
     });
@@ -102,7 +112,7 @@ class PaymentService {
         'payment_intent_id',
       }),
     ]);
-    final amountCents = _firstNonZeroInt([
+    final parsedAmountCents = _firstNonZeroInt([
       data['amountCents'],
       data['amount_cents'],
       data['amount'],
@@ -116,10 +126,28 @@ class PaymentService {
       intentData['amount_cents'],
       intentData['amount'],
     ]);
+    final currency = _firstNonEmptyString([
+      data['currency'],
+      responseData['currency'],
+      nestedData['currency'],
+      intentData['currency'],
+      _findFirstStringByKeys(data, const {'currency'}),
+      'usd',
+    ]).toLowerCase();
+    final livemode = _firstBoolOrNull([
+      data['livemode'],
+      data['liveMode'],
+      responseData['livemode'],
+      responseData['liveMode'],
+      nestedData['livemode'],
+      nestedData['liveMode'],
+      intentData['livemode'],
+      intentData['liveMode'],
+    ]);
     debugPrint(
       '[PaymentService] parsed clientSecret=${_redactClientSecret(clientSecret)} '
       'paymentIntentId=${paymentIntentId.isEmpty ? "(missing)" : paymentIntentId} '
-      'amountCents=$amountCents',
+      'amountCents=$parsedAmountCents currency=$currency livemode=$livemode',
     );
 
     if (clientSecret.isEmpty) {
@@ -131,12 +159,23 @@ class PaymentService {
       );
     }
 
+    if (!clientSecret.contains('_secret_')) {
+      return ApiResult<StripeIntent>(
+        success: false,
+        message: 'Payment setup failed. Invalid Stripe client secret.',
+        raw: result.raw,
+        statusCode: result.statusCode,
+      );
+    }
+
     return ApiResult<StripeIntent>(
       success: true,
       message: result.message,
       data: StripeIntent(
         clientSecret: clientSecret,
-        amountCents: amountCents,
+        amountCents: parsedAmountCents,
+        currency: currency,
+        livemode: livemode,
         id: paymentIntentId,
       ),
       raw: result.raw,
@@ -163,6 +202,17 @@ class PaymentService {
     }
 
     return 0;
+  }
+
+  bool? _firstBoolOrNull(List<dynamic> values) {
+    for (final value in values) {
+      if (value is bool) return value;
+      final text = value?.toString().trim().toLowerCase() ?? '';
+      if (text == 'true') return true;
+      if (text == 'false') return false;
+    }
+
+    return null;
   }
 }
 

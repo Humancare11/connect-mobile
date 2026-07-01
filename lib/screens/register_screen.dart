@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
+import '../models/location_model.dart';
 import '../models/register_model.dart';
 import '../services/auth_repository.dart';
 import '../services/auth_validators.dart';
+import '../services/location_service.dart';
 import '../widgets/auth_widgets.dart';
 import 'main_screen.dart';
 
-// ─── Password strength helper (mirrors web getPasswordError) ─────────────────
+// ─── Password strength helper ─────────────────────────────────────────────────
 const _commonPasswords = {
   'password', 'password1', 'password123', '12345678', '123456789',
   'qwerty123', 'admin123', 'admin1234', 'welcome1', 'welcome123',
@@ -37,59 +39,52 @@ String _getDobError(String dob) {
   return '';
 }
 
-// ─── Countries list (matches web) ────────────────────────────────────────────
-const List<String> _countries = [
-  'Afghanistan', 'Albania', 'Algeria', 'Argentina', 'Australia', 'Austria',
-  'Azerbaijan', 'Bahrain', 'Bangladesh', 'Belgium', 'Bolivia', 'Brazil',
-  'Canada', 'Chile', 'China', 'Colombia', 'Croatia', 'Czech Republic',
-  'Denmark', 'Ecuador', 'Egypt', 'Ethiopia', 'Finland', 'France', 'Germany',
-  'Ghana', 'Greece', 'Guatemala', 'Hungary', 'India', 'Indonesia', 'Iran',
-  'Iraq', 'Ireland', 'Israel', 'Italy', 'Japan', 'Jordan', 'Kazakhstan',
-  'Kenya', 'Kuwait', 'Lebanon', 'Libya', 'Malaysia', 'Mexico', 'Morocco',
-  'Myanmar', 'Nepal', 'Netherlands', 'New Zealand', 'Nigeria', 'Norway',
-  'Oman', 'Pakistan', 'Peru', 'Philippines', 'Poland', 'Portugal', 'Qatar',
-  'Romania', 'Russia', 'Saudi Arabia', 'Serbia', 'Singapore', 'South Africa',
-  'South Korea', 'Spain', 'Sri Lanka', 'Sudan', 'Sweden', 'Switzerland',
-  'Syria', 'Taiwan', 'Tanzania', 'Thailand', 'Tunisia', 'Turkey', 'Uganda',
-  'Ukraine', 'United Arab Emirates', 'United Kingdom', 'United States',
-  'Uruguay', 'Uzbekistan', 'Venezuela', 'Vietnam', 'Yemen', 'Zambia', 'Zimbabwe',
-];
-
 const List<String> _genders = ['Male', 'Female', 'Other', 'Prefer Not to Say'];
 
-// ─── Country code map ─────────────────────────────────────────────────────────
-const Map<String, String> _countryDialCodes = {
-  'Afghanistan': '+93', 'Albania': '+355', 'Algeria': '+213',
-  'Argentina': '+54', 'Australia': '+61', 'Austria': '+43',
-  'Azerbaijan': '+994', 'Bahrain': '+973', 'Bangladesh': '+880',
-  'Belgium': '+32', 'Bolivia': '+591', 'Brazil': '+55',
-  'Canada': '+1', 'Chile': '+56', 'China': '+86',
-  'Colombia': '+57', 'Croatia': '+385', 'Czech Republic': '+420',
-  'Denmark': '+45', 'Ecuador': '+593', 'Egypt': '+20',
-  'Ethiopia': '+251', 'Finland': '+358', 'France': '+33',
-  'Germany': '+49', 'Ghana': '+233', 'Greece': '+30',
-  'Guatemala': '+502', 'Hungary': '+36', 'India': '+91',
-  'Indonesia': '+62', 'Iran': '+98', 'Iraq': '+964',
-  'Ireland': '+353', 'Israel': '+972', 'Italy': '+39',
-  'Japan': '+81', 'Jordan': '+962', 'Kazakhstan': '+7',
-  'Kenya': '+254', 'Kuwait': '+965', 'Lebanon': '+961',
-  'Libya': '+218', 'Malaysia': '+60', 'Mexico': '+52',
-  'Morocco': '+212', 'Myanmar': '+95', 'Nepal': '+977',
-  'Netherlands': '+31', 'New Zealand': '+64', 'Nigeria': '+234',
-  'Norway': '+47', 'Oman': '+968', 'Pakistan': '+92',
-  'Peru': '+51', 'Philippines': '+63', 'Poland': '+48',
-  'Portugal': '+351', 'Qatar': '+974', 'Romania': '+40',
-  'Russia': '+7', 'Saudi Arabia': '+966', 'Serbia': '+381',
-  'Singapore': '+65', 'South Africa': '+27', 'South Korea': '+82',
-  'Spain': '+34', 'Sri Lanka': '+94', 'Sudan': '+249',
-  'Sweden': '+46', 'Switzerland': '+41', 'Syria': '+963',
-  'Taiwan': '+886', 'Tanzania': '+255', 'Thailand': '+66',
-  'Tunisia': '+216', 'Turkey': '+90', 'Uganda': '+256',
-  'Ukraine': '+380', 'United Arab Emirates': '+971',
-  'United Kingdom': '+44', 'United States': '+1',
-  'Uruguay': '+598', 'Uzbekistan': '+998', 'Venezuela': '+58',
-  'Vietnam': '+84', 'Yemen': '+967', 'Zambia': '+260', 'Zimbabwe': '+263',
-};
+String _normalizeLocationName(String value) {
+  const diacritics = <String, String>{
+    'À': 'A', 'Á': 'A', 'Â': 'A', 'Ã': 'A', 'Ä': 'A', 'Å': 'A', 'Ā': 'A', 'Ă': 'A', 'Ą': 'A', 'Ǎ': 'A',
+    'à': 'a', 'á': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a', 'å': 'a', 'ā': 'a', 'ă': 'a', 'ą': 'a', 'ǎ': 'a',
+    'Ç': 'C', 'Ć': 'C', 'Č': 'C', 'Ĉ': 'C', 'Ċ': 'C',
+    'ç': 'c', 'ć': 'c', 'č': 'c', 'ĉ': 'c', 'ċ': 'c',
+    'Ð': 'D', 'Ď': 'D', 'Đ': 'D',
+    'ð': 'd', 'ď': 'd', 'đ': 'd',
+    'È': 'E', 'É': 'E', 'Ê': 'E', 'Ë': 'E', 'Ē': 'E', 'Ĕ': 'E', 'Ė': 'E', 'Ę': 'E', 'Ě': 'E',
+    'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e', 'ē': 'e', 'ĕ': 'e', 'ė': 'e', 'ę': 'e', 'ě': 'e',
+    'Ì': 'I', 'Í': 'I', 'Î': 'I', 'Ï': 'I', 'Ĩ': 'I', 'Ī': 'I', 'Ĭ': 'I', 'Į': 'I', 'İ': 'I',
+    'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i', 'ĩ': 'i', 'ī': 'i', 'ĭ': 'i', 'į': 'i', 'ı': 'i',
+    'Ñ': 'N', 'Ń': 'N', 'Ň': 'N', 'Ņ': 'N',
+    'ñ': 'n', 'ń': 'n', 'ň': 'n', 'ņ': 'n',
+    'Ò': 'O', 'Ó': 'O', 'Ô': 'O', 'Õ': 'O', 'Ö': 'O', 'Ø': 'O', 'Ō': 'O', 'Ŏ': 'O', 'Ő': 'O',
+    'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o', 'ø': 'o', 'ō': 'o', 'ŏ': 'o', 'ő': 'o',
+    'Ś': 'S', 'Š': 'S', 'Ş': 'S', 'Ŝ': 'S', 'Ș': 'S',
+    'ś': 's', 'š': 's', 'ş': 's', 'ŝ': 's', 'ș': 's',
+    'Ù': 'U', 'Ú': 'U', 'Û': 'U', 'Ü': 'U', 'Ũ': 'U', 'Ū': 'U', 'Ŭ': 'U', 'Ů': 'U', 'Ű': 'U', 'Ų': 'U',
+    'ù': 'u', 'ú': 'u', 'û': 'u', 'ü': 'u', 'ũ': 'u', 'ū': 'u', 'ŭ': 'u', 'ů': 'u', 'ű': 'u', 'ų': 'u',
+    'Ý': 'Y', 'Ÿ': 'Y',
+    'ý': 'y', 'ÿ': 'y',
+    'Ž': 'Z', 'Ź': 'Z', 'Ż': 'Z',
+    'ž': 'z', 'ź': 'z', 'ż': 'z',
+  };
+
+  final buffer = StringBuffer();
+  for (final rune in value.runes) {
+    if (rune >= 0x0300 && rune <= 0x036F) continue;
+    if (rune >= 0x1AB0 && rune <= 0x1AFF) continue;
+    if (rune >= 0x1DC0 && rune <= 0x1DFF) continue;
+    if (rune >= 0x20D0 && rune <= 0x20FF) continue;
+    if (rune >= 0xFE20 && rune <= 0xFE2F) continue;
+
+    final char = String.fromCharCode(rune);
+    buffer.write(diacritics[char] ?? char);
+  }
+
+  return buffer
+      .toString()
+      .replaceAll(RegExp(r"[^A-Za-z0-9\s\-']"), ' ')
+      .replaceAll(RegExp(r"\s+"), ' ')
+      .trim();
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 class RegisterScreen extends StatefulWidget {
@@ -100,7 +95,6 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
-  // Steps: 0 = registration form, 1 = OTP verification
   static const int _stepForm = 0;
   static const int _stepOtp = 1;
 
@@ -116,27 +110,43 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _confirmPasswordController = TextEditingController();
   final _mobileController = TextEditingController();
   final _dobController = TextEditingController();
-  final _stateController = TextEditingController();
-  final _cityController = TextEditingController();
 
   String _selectedGender = '';
   String _selectedCountry = '';
-  String _selectedDialCode = '+1';
+  String? _selectedState;
+  String? _selectedCity;
+  String _selectedDialCode = '';
   bool _obscurePassword = true;
   bool _obscureConfirmPassword = true;
   bool _termsConsent = false;
   bool _privacyConsent = false;
   bool _hipaaConsent = false;
 
+  // Location data — all loaded from API
+  List<String> _countries = [];
+  List<String> _states = [];
+  List<String> _cities = [];
+  Map<String, Country> _countryLookup = {};
+  bool _loadingCountries = false;
+  bool _loadingStates = false;
+  bool _loadingCities = false;
+
   // OTP
   final _otpController = TextEditingController();
   int _otpTimer = 0;
 
-  final _authRepository = AuthRepository();
+  final GlobalKey<FormFieldState<String>> _countryFieldKey = GlobalKey<FormFieldState<String>>();
+  final GlobalKey<FormFieldState<String>> _stateFieldKey = GlobalKey<FormFieldState<String>>();
+  final GlobalKey<FormFieldState<String>> _cityFieldKey = GlobalKey<FormFieldState<String>>();
 
-  // Password error (live, mirrors web hc-pw-requirements--error)
-  String get _passwordLiveError =>
-      _passwordController.text.isEmpty ? '' : _getPasswordError(_passwordController.text);
+  final _authRepository = AuthRepository();
+  final LocationService _locationService = LocationService();
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchCountries();
+  }
 
   @override
   void dispose() {
@@ -146,10 +156,193 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _confirmPasswordController.dispose();
     _mobileController.dispose();
     _dobController.dispose();
-    _stateController.dispose();
-    _cityController.dispose();
     _otpController.dispose();
     super.dispose();
+  }
+
+  // ── Location API ──────────────────────────────────────────────────────────
+  Future<void> _fetchCountries() async {
+    setState(() => _loadingCountries = true);
+    final result = await _locationService.getCountries();
+    if (!mounted) return;
+    if (result.success) {
+      final countries = result.data ?? [];
+      final countryNames = countries
+          .map((c) => _normalizeLocationName(c.name))
+          .where((name) => name.isNotEmpty)
+          .toSet()
+          .toList();
+      setState(() {
+        _countries = countryNames;
+        _countryLookup = {
+          for (final country in countries)
+            _normalizeLocationName(country.name): country,
+        };
+      });
+    } else {
+      _setError(result.message);
+    }
+    setState(() => _loadingCountries = false);
+  }
+
+  Future<void> _fetchStates(String country) async {
+    setState(() {
+      _loadingStates = true;
+      _states = [];
+      _selectedState = null;
+      _cities = [];
+      _selectedCity = null;
+    });
+    final result = await _locationService.getStates(country);
+    if (!mounted) return;
+    if (result.success) {
+      setState(() {
+        _states = (result.data ?? [])
+            .map((s) => _normalizeLocationName(s.name))
+            .where((name) => name.isNotEmpty)
+            .toSet()
+            .toList();
+      });
+    } else {
+      _setError(result.message);
+    }
+    setState(() => _loadingStates = false);
+  }
+
+  Future<void> _fetchCities(String country, String state) async {
+    setState(() {
+      _loadingCities = true;
+      _cities = [];
+      _selectedCity = null;
+    });
+    final result = await _locationService.getCities(country, state);
+    if (!mounted) return;
+    if (result.success) {
+      setState(() {
+        _cities = (result.data ?? [])
+            .map((city) => _normalizeLocationName(city))
+            .where((name) => name.isNotEmpty)
+            .toSet()
+            .toList();
+      });
+    } else {
+      _setError(result.message);
+    }
+    setState(() => _loadingCities = false);
+  }
+
+  Future<void> _updateDialCodeForSelectedCountry(String countryName, {String? iso2}) async {
+    final result = await _locationService.getDialCode(countryName, iso2: iso2);
+    if (!mounted) return;
+    if (result.success && (result.data ?? '').isNotEmpty) {
+      setState(() => _selectedDialCode = result.data!);
+    } else {
+      setState(() => _selectedDialCode = '');
+    }
+  }
+
+  // ── Searchable bottom-sheet picker ────────────────────────────────────────
+  Future<String?> _showSearchSheet(String title, List<String> options) {
+    String filter = '';
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => StatefulBuilder(
+        builder: (ctx, setModal) {
+          final filtered = filter.isEmpty
+              ? options
+              : options
+                  .where((o) => o.toLowerCase().contains(filter.toLowerCase()))
+                  .toList();
+          return Container(
+            height: MediaQuery.of(ctx).size.height * 0.75,
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            ),
+            child: Column(
+              children: [
+                // Handle bar
+                const SizedBox(height: 12),
+                Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                // Title
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  child: Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xff1a3a5c),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                // Search field
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: TextField(
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      hintText: 'Search...',
+                      hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
+                      prefixIcon: const Icon(Icons.search, color: Color(0xff1a3a5c), size: 20),
+                      filled: true,
+                      fillColor: const Color(0xfff9fafb),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.09)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(color: Color(0xff1a3a5c), width: 1.5),
+                      ),
+                    ),
+                    onChanged: (v) => setModal(() => filter = v),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Divider(height: 1),
+                // Options list
+                Expanded(
+                  child: filtered.isEmpty
+                      ? Center(
+                          child: Text(
+                            'No results found',
+                            style: TextStyle(color: Colors.grey[500], fontSize: 14),
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount: filtered.length,
+                          itemBuilder: (_, i) => ListTile(
+                            title: Text(
+                              filtered[i],
+                              style: const TextStyle(fontSize: 14, color: Colors.black87),
+                            ),
+                            onTap: () => Navigator.pop(ctx, filtered[i]),
+                            dense: true,
+                          ),
+                        ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   // ── Timer ─────────────────────────────────────────────────────────────────
@@ -171,7 +364,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _handleRegisterSubmit() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // Consent check (matches web logic)
     if (!_termsConsent || !_privacyConsent || !_hipaaConsent) {
       _setError('Accept Terms, Privacy Policy, and HIPAA consent requirements');
       return;
@@ -220,8 +412,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       dob: _dobController.text.trim(),
       gender: _selectedGender,
       country: _selectedCountry,
-      state: _stateController.text.trim(),
-      city: _cityController.text.trim(),
+      state: _selectedState ?? '',
+      city: _selectedCity ?? '',
       privacyConsent: _privacyConsent,
       hipaaConsent: _hipaaConsent,
     );
@@ -324,6 +516,66 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  // ── Searchable picker field (replaces DropdownButtonFormField) ────────────
+  // Uses FormField so it integrates with Form validation.
+  Widget _locationField({
+    required Key fieldKey,
+    required String label,
+    required IconData icon,
+    required String? selectedValue,
+    required bool loading,
+    required bool enabled,
+    required String? Function(String?) validator,
+    required Future<String?> Function() onTap,
+  }) {
+    return FormField<String>(
+      key: fieldKey,
+      initialValue: selectedValue,
+      validator: validator,
+      builder: (state) {
+        // Keep form field value in sync when parent clears it via key rebuild.
+        return GestureDetector(
+          onTap: (enabled && !loading)
+              ? () async {
+                  final picked = await onTap();
+                  state.didChange(picked ?? selectedValue);
+                }
+              : null,
+          child: InputDecorator(
+            decoration: _dec(
+              label: label,
+              icon: icon,
+              suffix: loading
+                  ? const Padding(
+                      padding: EdgeInsets.all(14),
+                      child: SizedBox(
+                        width: 18, height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xff1a3a5c),
+                        ),
+                      ),
+                    )
+                  : Icon(
+                      enabled ? Icons.arrow_drop_down : Icons.lock_outline,
+                      color: enabled
+                          ? const Color(0xff1a3a5c)
+                          : Colors.grey[400],
+                    ),
+            ).copyWith(
+              errorText: state.errorText,
+              enabled: enabled,
+            ),
+            isEmpty: selectedValue == null || selectedValue.isEmpty,
+            child: selectedValue != null && selectedValue.isNotEmpty
+                ? Text(selectedValue, style: const TextStyle(fontSize: 14, color: Colors.black87))
+                : null,
+          ),
+        );
+      },
+    );
+  }
+
   // ── Section header ────────────────────────────────────────────────────────
   Widget _section(String title) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
@@ -354,8 +606,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     ),
   );
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // ── Password strength checklist ──────────────────────────────────────────
+  // ── Password strength checklist ───────────────────────────────────────────
   Widget _buildPasswordChecklist() {
     final pw = _passwordController.text;
     if (pw.isEmpty) {
@@ -398,6 +649,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  // ═══════════════════════════════════════════════════════════════════════════
   // STEP 1 — Registration form
   // ═══════════════════════════════════════════════════════════════════════════
   Widget _buildForm() {
@@ -407,313 +659,351 @@ class _RegisterScreenState extends State<RegisterScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
 
-            // ── Personal Information ──────────────────────────────────────
-            _section('Personal Information'),
+          // ── Personal Information ────────────────────────────────────────
+          _section('Personal Information'),
 
-            // Full Name — only letters + spaces (matches web replace logic)
-            TextFormField(
-              controller: _nameController,
-              decoration: _dec(label: 'Full Name', icon: Icons.person_outline),
-              inputFormatters: [
-                // Allow only letters and spaces
-              ],
-              onChanged: (v) {
-                final cleaned = v.replaceAll(RegExp(r'[^a-zA-Z\s]'), '');
-                if (cleaned != v) {
-                  _nameController.value = _nameController.value.copyWith(
-                    text: cleaned,
-                    selection: TextSelection.collapsed(offset: cleaned.length),
-                  );
-                }
-              },
-              validator: (v) {
-                final val = v?.trim() ?? '';
-                if (val.isEmpty) return 'Enter your full name';
-                if (val.length < 2) return 'Please enter your full name';
-                if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(val)) {
-                  return 'Name must contain only letters';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 14),
+          // Full Name
+          TextFormField(
+            controller: _nameController,
+            decoration: _dec(label: 'Full Name', icon: Icons.person_outline),
+            onChanged: (v) {
+              final cleaned = v.replaceAll(RegExp(r'[^a-zA-Z\s]'), '');
+              if (cleaned != v) {
+                _nameController.value = _nameController.value.copyWith(
+                  text: cleaned,
+                  selection: TextSelection.collapsed(offset: cleaned.length),
+                );
+              }
+            },
+            validator: (v) {
+              final val = v?.trim() ?? '';
+              if (val.isEmpty) return 'Enter your full name';
+              if (val.length < 2) return 'Please enter your full name';
+              if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(val)) return 'Name must contain only letters';
+              return null;
+            },
+          ),
+          const SizedBox(height: 14),
 
-            // Email
-            TextFormField(
-              controller: _emailController,
-              keyboardType: TextInputType.emailAddress,
-              decoration: _dec(label: 'Email Address', icon: Icons.mail_outline),
-              validator: (v) {
-                if ((v?.trim() ?? '').isEmpty) return 'Enter your email address';
-                if (!AuthValidators.isValidEmail(v!)) return 'Enter a valid email address';
-                return null;
-              },
-            ),
-            const SizedBox(height: 14),
+          // Email
+          TextFormField(
+            controller: _emailController,
+            keyboardType: TextInputType.emailAddress,
+            decoration: _dec(label: 'Email Address', icon: Icons.mail_outline),
+            validator: (v) {
+              if ((v?.trim() ?? '').isEmpty) return 'Enter your email address';
+              if (!AuthValidators.isValidEmail(v!)) return 'Enter a valid email address';
+              return null;
+            },
+          ),
+          const SizedBox(height: 14),
 
-            // DOB + Gender row
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Date of Birth — tap to open date picker
-                Expanded(
-                  child: TextFormField(
-                    controller: _dobController,
-                    readOnly: true,
-                    onTap: _pickDob,
-                    decoration: _dec(
-                      label: 'Date of Birth',
-                      icon: Icons.calendar_today_outlined,
-                      suffix: const Icon(Icons.edit_calendar_outlined,
-                          size: 18, color: Color(0xff1a3a5c)),
-                    ),
-                    validator: (v) {
-                      final err = _getDobError(v ?? '');
-                      return err.isEmpty ? null : err;
-                    },
+          // DOB + Gender row
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: _dobController,
+                  readOnly: true,
+                  onTap: _pickDob,
+                  decoration: _dec(
+                    label: 'Date of Birth',
+                    icon: Icons.calendar_today_outlined,
+                    suffix: const Icon(Icons.edit_calendar_outlined, size: 18, color: Color(0xff1a3a5c)),
                   ),
-                ),
-                const SizedBox(width: 12),
-                // Gender
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: _selectedGender.isEmpty ? null : _selectedGender,
-                    decoration: _dec(label: 'Gender', icon: Icons.wc_outlined),
-                    isExpanded: true,
-                    items: _genders
-                        .map((g) => DropdownMenuItem(value: g, child: Text(g, style: const TextStyle(fontSize: 14))))
-                        .toList(),
-                    onChanged: (v) => setState(() => _selectedGender = v ?? ''),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-
-            // ── Address Information ───────────────────────────────────────
-            _section('Address Information'),
-
-            // Country
-            DropdownButtonFormField<String>(
-              value: _selectedCountry.isEmpty ? null : _selectedCountry,
-              decoration: _dec(label: 'Country', icon: Icons.public_outlined),
-              isExpanded: true,
-              items: _countries
-                  .map((c) => DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(fontSize: 14))))
-                  .toList(),
-              onChanged: (v) {
-                setState(() {
-                  _selectedCountry = v ?? '';
-                  _selectedDialCode = _countryDialCodes[_selectedCountry] ?? '+1';
-                });
-              },
-            ),
-            const SizedBox(height: 14),
-
-            // State + City row
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: TextFormField(
-                    controller: _stateController,
-                    decoration: _dec(
-                      label: _selectedCountry.isEmpty ? 'Select country first' : 'State / Province',
-                      icon: Icons.location_on_outlined,
-                    ),
-                    enabled: _selectedCountry.isNotEmpty,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextFormField(
-                    controller: _cityController,
-                    decoration: _dec(
-                      label: _stateController.text.isEmpty ? 'Select state first' : 'City',
-                      icon: Icons.location_city_outlined,
-                    ),
-                    enabled: _stateController.text.isNotEmpty,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-
-            // ── Contact Information ───────────────────────────────────────
-            _section('Contact Information'),
-
-            // Dial code + Mobile number row
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Dial code (auto-updates from country selection)
-                SizedBox(
-                  width: 100,
-                  child: Container(
-                    height: 58,
-                    decoration: BoxDecoration(
-                      color: const Color(0xfff9fafb),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Colors.black.withOpacity(0.09)),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      _selectedDialCode,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xff1a3a5c),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextFormField(
-                    controller: _mobileController,
-                    keyboardType: TextInputType.phone,
-                    decoration: _dec(label: 'Mobile Number', icon: Icons.phone_outlined),
-                    validator: (v) {
-                      if ((v?.trim() ?? '').isEmpty) return null;
-                      if (!RegExp(r'^[\d\-\+\s\(\)]{7,}$').hasMatch(v!)) {
-                        return 'Enter a valid mobile number';
-                      }
-                      return null;
-                    },
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-
-            // ── Security ─────────────────────────────────────────────────
-            _section('Security'),
-
-            // Password with live error (mirrors web hc-pw-requirements)
-            TextFormField(
-              controller: _passwordController,
-              obscureText: _obscurePassword,
-              onChanged: (_) => setState(() {}),
-              decoration: _dec(
-                label: 'Password',
-                icon: Icons.lock_outline,
-                suffix: IconButton(
-                  icon: Icon(
-                    _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                    size: 20,
-                  ),
-                  onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                  validator: (v) {
+                    final err = _getDobError(v ?? '');
+                    return err.isEmpty ? null : err;
+                  },
                 ),
               ),
-              validator: (v) {
-                final err = _getPasswordError(v ?? '');
-                return err.isEmpty ? null : err;
-              },
-            ),
-            const SizedBox(height: 8),
-            // Live password checklist
-            _buildPasswordChecklist(),
-            const SizedBox(height: 14),
-
-            // Confirm password
-            TextFormField(
-              controller: _confirmPasswordController,
-              obscureText: _obscureConfirmPassword,
-              decoration: _dec(
-                label: 'Confirm Password',
-                icon: Icons.lock_outline,
-                suffix: IconButton(
-                  icon: Icon(
-                    _obscureConfirmPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
-                    size: 20,
-                  ),
-                  onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+              const SizedBox(width: 12),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: _selectedGender.isEmpty ? null : _selectedGender,
+                  decoration: _dec(label: 'Gender', icon: Icons.wc_outlined),
+                  isExpanded: true,
+                  items: _genders
+                      .map((g) => DropdownMenuItem(value: g, child: Text(g, style: const TextStyle(fontSize: 14))))
+                      .toList(),
+                  onChanged: (v) => setState(() => _selectedGender = v ?? ''),
                 ),
               ),
-              validator: (v) {
-                if ((v?.trim() ?? '').isEmpty) return 'Confirm your password';
-                if (v != _passwordController.text) return 'Passwords do not match';
-                return null;
-              },
-            ),
-            const SizedBox(height: 24),
-
-            // ── Consent (matches web single-checkbox logic) ───────────────
-            _section('Consent'),
-
-            _ConsentTile(
-              label: 'I agree to the ',
-              links: const ['Terms', 'Privacy Policy'],
-              checked: _termsConsent && _privacyConsent,
-              onChanged: (v) => setState(() {
-                _termsConsent = v;
-                _privacyConsent = v;
-              }),
-            ),
-            const SizedBox(height: 4),
-            _ConsentTile(
-              label: 'I agree to HIPAA Compliance & Health Data Privacy',
-              links: const [],
-              checked: _hipaaConsent,
-              onChanged: (v) => setState(() => _hipaaConsent = v),
-            ),
-
-            if (_error.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              _errorBox(_error),
             ],
-            const SizedBox(height: 20),
+          ),
+          const SizedBox(height: 24),
 
-            // Submit
-            SizedBox(
-              width: double.infinity,
-              height: 52,
-              child: ElevatedButton(
-                onPressed: _loading ? null : _handleRegisterSubmit,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xff1a3a5c),
-                  disabledBackgroundColor: const Color(0xff1a3a5c).withOpacity(0.6),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  elevation: 0,
+          // ── Address Information ─────────────────────────────────────────
+          _section('Address Information'),
+
+          // Country — searchable picker, loaded from API
+          _locationField(
+            fieldKey: _countryFieldKey,
+            label: _loadingCountries ? 'Loading countries...' : 'Country',
+            icon: Icons.public_outlined,
+            selectedValue: _selectedCountry.isEmpty ? null : _selectedCountry,
+            loading: _loadingCountries,
+            enabled: !_loadingCountries,
+            validator: (v) => (v == null || v.isEmpty) ? 'Select your country' : null,
+            onTap: () async {
+              final picked = await _showSearchSheet('Select Country', _countries);
+              if (picked != null && mounted) {
+                final countryMeta = _countryLookup[picked];
+                setState(() {
+                  _selectedCountry = picked;
+                  _selectedDialCode = '';
+                  _selectedState = null;
+                  _selectedCity = null;
+                  _states = [];
+                  _cities = [];
+                });
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  _countryFieldKey.currentState?.didChange(picked);
+                  _stateFieldKey.currentState?.didChange(null);
+                  _cityFieldKey.currentState?.didChange(null);
+                });
+                await _fetchStates(picked);
+                await _updateDialCodeForSelectedCountry(
+                  picked,
+                  iso2: countryMeta?.iso2,
+                );
+              }
+              return picked;
+            },
+          ),
+          const SizedBox(height: 14),
+
+          // State + City row
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // State picker
+              Expanded(
+                child: _locationField(
+                  fieldKey: _stateFieldKey,
+                  label: _selectedCountry.isEmpty
+                      ? 'Select country first'
+                      : (_loadingStates ? 'Loading states...' : 'State / Province'),
+                  icon: Icons.location_on_outlined,
+                  selectedValue: _selectedState,
+                  loading: _loadingStates,
+                  enabled: _selectedCountry.isNotEmpty && !_loadingStates && _states.isNotEmpty,
+                  validator: (v) => (v == null || v.isEmpty) ? 'Select state' : null,
+                  onTap: () async {
+                    final picked = await _showSearchSheet('Select State', _states);
+                    if (picked != null && mounted) {
+                      setState(() {
+                        _selectedState = picked;
+                        _selectedCity = null;
+                        _cities = [];
+                      });
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) return;
+                        _stateFieldKey.currentState?.didChange(picked);
+                        _cityFieldKey.currentState?.didChange(null);
+                      });
+                      await _fetchCities(_selectedCountry, picked);
+                    }
+                    return picked;
+                  },
                 ),
-                child: _loading
-                    ? const SizedBox(
-                        height: 22, width: 22,
-                        child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
-                      )
-                    : const Text(
-                        'Sign Up',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
-                      ),
               ),
-            ),
+              const SizedBox(width: 12),
+              // City picker
+              Expanded(
+                child: _locationField(
+                  fieldKey: _cityFieldKey,
+                  label: _selectedState == null
+                      ? 'Select state first'
+                      : (_loadingCities ? 'Loading cities...' : 'City'),
+                  icon: Icons.location_city_outlined,
+                  selectedValue: _selectedCity,
+                  loading: _loadingCities,
+                  enabled: _selectedState != null && !_loadingCities && _cities.isNotEmpty,
+                  validator: (v) => (v == null || v.isEmpty) ? 'Select city' : null,
+                  onTap: () async {
+                    final picked = await _showSearchSheet('Select City', _cities);
+                    if (picked != null && mounted) {
+                      setState(() => _selectedCity = picked);
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) return;
+                        _cityFieldKey.currentState?.didChange(picked);
+                      });
+                    }
+                    return picked;
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
 
-            const SizedBox(height: 20),
-            // Already have account
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text('Already have an account? ', style: TextStyle(color: Colors.grey[600], fontSize: 14)),
-                GestureDetector(
-                  onTap: () => Navigator.of(context).pop(),
-                  child: const Text(
-                    'Sign In',
-                    style: TextStyle(
+          // ── Contact Information ─────────────────────────────────────────
+          _section('Contact Information'),
+
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Dial code (auto-updates from country selection)
+              SizedBox(
+                width: 100,
+                child: Container(
+                  height: 58,
+                  decoration: BoxDecoration(
+                    color: const Color(0xfff9fafb),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: Colors.black.withValues(alpha: 0.09)),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    _selectedDialCode,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
                       color: Color(0xff1a3a5c),
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
                     ),
                   ),
                 ),
-              ],
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  controller: _mobileController,
+                  keyboardType: TextInputType.phone,
+                  decoration: _dec(label: 'Mobile Number', icon: Icons.phone_outlined),
+                  validator: (v) {
+                    if ((v?.trim() ?? '').isEmpty) return null;
+                    if (!RegExp(r'^[\d\-\+\s\(\)]{7,}$').hasMatch(v!)) {
+                      return 'Enter a valid mobile number';
+                    }
+                    return null;
+                  },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+
+          // ── Security ───────────────────────────────────────────────────
+          _section('Security'),
+
+          TextFormField(
+            controller: _passwordController,
+            obscureText: _obscurePassword,
+            onChanged: (_) => setState(() {}),
+            decoration: _dec(
+              label: 'Password',
+              icon: Icons.lock_outline,
+              suffix: IconButton(
+                icon: Icon(
+                  _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                  size: 20,
+                ),
+                onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+              ),
             ),
+            validator: (v) {
+              final err = _getPasswordError(v ?? '');
+              return err.isEmpty ? null : err;
+            },
+          ),
+          const SizedBox(height: 8),
+          _buildPasswordChecklist(),
+          const SizedBox(height: 14),
+
+          TextFormField(
+            controller: _confirmPasswordController,
+            obscureText: _obscureConfirmPassword,
+            decoration: _dec(
+              label: 'Confirm Password',
+              icon: Icons.lock_outline,
+              suffix: IconButton(
+                icon: Icon(
+                  _obscureConfirmPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                  size: 20,
+                ),
+                onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+              ),
+            ),
+            validator: (v) {
+              if ((v?.trim() ?? '').isEmpty) return 'Confirm your password';
+              if (v != _passwordController.text) return 'Passwords do not match';
+              return null;
+            },
+          ),
+          const SizedBox(height: 24),
+
+          // ── Consent ────────────────────────────────────────────────────
+          _section('Consent'),
+
+          _ConsentTile(
+            label: 'I agree to the ',
+            links: const ['Terms', 'Privacy Policy'],
+            checked: _termsConsent && _privacyConsent,
+            onChanged: (v) => setState(() {
+              _termsConsent = v;
+              _privacyConsent = v;
+            }),
+          ),
+          const SizedBox(height: 4),
+          _ConsentTile(
+            label: 'I agree to HIPAA Compliance & Health Data Privacy',
+            links: const [],
+            checked: _hipaaConsent,
+            onChanged: (v) => setState(() => _hipaaConsent = v),
+          ),
+
+          if (_error.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            _errorBox(_error),
           ],
-        ),
-      );
+          const SizedBox(height: 20),
+
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: ElevatedButton(
+              onPressed: _loading ? null : _handleRegisterSubmit,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xff1a3a5c),
+                disabledBackgroundColor: const Color(0xff1a3a5c).withOpacity(0.6),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                elevation: 0,
+              ),
+              child: _loading
+                  ? const SizedBox(
+                      height: 22, width: 22,
+                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                    )
+                  : const Text(
+                      'Sign Up',
+                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text('Already have an account? ', style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+              GestureDetector(
+                onTap: () => Navigator.of(context).pop(),
+                child: const Text(
+                  'Sign In',
+                  style: TextStyle(color: Color(0xff1a3a5c), fontWeight: FontWeight.w700, fontSize: 14),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STEP 2 — OTP Verification (matches web register-otp view)
+  // STEP 2 — OTP Verification
   // ═══════════════════════════════════════════════════════════════════════════
   Widget _buildOtpStep() {
     return Column(
@@ -729,7 +1019,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           child: Column(
             children: [
-              // Back button row
               Row(
                 children: [
                   IconButton(
@@ -746,8 +1035,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ],
               ),
               const SizedBox(height: 20),
-
-              // Email icon
               Container(
                 width: 64, height: 64,
                 decoration: BoxDecoration(
@@ -757,8 +1044,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 child: const Icon(Icons.email_outlined, color: Color(0xff1a3a5c), size: 34),
               ),
               const SizedBox(height: 16),
-
-              // Subtitle matches web: "We sent a 6-digit security code to <email>"
               RichText(
                 textAlign: TextAlign.center,
                 text: TextSpan(
@@ -767,32 +1052,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     const TextSpan(text: 'We sent a 6-digit security code to\n'),
                     TextSpan(
                       text: _emailController.text,
-                      style: const TextStyle(
-                        color: Color(0xff2563eb),
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: const TextStyle(color: Color(0xff2563eb), fontWeight: FontWeight.w700),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 24),
-
-              // 6-box OTP input
               OtpTextField(
                 controller: _otpController,
                 onChanged: (v) {
                   if (v.length == 6) _handleOtpSubmit();
                 },
               ),
-
               if (_error.isNotEmpty) ...[
                 const SizedBox(height: 14),
                 _errorBox(_error),
               ],
-
               const SizedBox(height: 18),
-
-              // Resend row (matches web otpTimer logic)
               _otpTimer > 0
                   ? Text(
                       'Resend in ${_otpTimer}s',
@@ -806,19 +1082,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           onTap: _loading ? null : _handleResendOtp,
                           child: const Text(
                             'Resend OTP',
-                            style: TextStyle(
-                              color: Color(0xff2563eb),
-                              fontWeight: FontWeight.w700,
-                              fontSize: 13,
-                            ),
+                            style: TextStyle(color: Color(0xff2563eb), fontWeight: FontWeight.w700, fontSize: 13),
                           ),
                         ),
                       ],
                     ),
-
               const SizedBox(height: 20),
-
-              // Verify button
               SizedBox(
                 width: double.infinity,
                 height: 52,

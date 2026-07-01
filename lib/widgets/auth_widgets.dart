@@ -34,12 +34,23 @@ class AuthScaffold extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(
-                    Icons.health_and_safety,
-                    size: 64,
-                    color: Colors.blue,
-                  ),
-                  const SizedBox(height: 14),
+                  // const Icon(
+                  //   Icons.health_and_safety,
+                  //   size: 64,
+                  //   color: Colors.blue,
+                  // ),
+                  //     image.asset(
+                  //   'assets/images/logo.png',
+                  //   width: 64,
+                  //   height: 64,
+                  // ),
+                  // const SizedBox(height: 14),
+                  Image.asset(
+  'assets/Logo.png',
+           width: 150,
+
+),
+const SizedBox(height: 14),
                   Text(
                     title,
                     textAlign: TextAlign.center,
@@ -144,9 +155,7 @@ class OtpTextField extends StatelessWidget {
 void showAuthSnackBar(BuildContext context, String message) {
   if (message.trim().isEmpty) return;
 
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(content: Text(message)),
-  );
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
 }
 
 class CustomBottomNav extends StatelessWidget {
@@ -168,22 +177,13 @@ class CustomBottomNav extends StatelessWidget {
       selectedItemColor: Colors.teal,
       unselectedItemColor: Colors.grey,
       items: const [
-        BottomNavigationBarItem(
-          icon: Icon(Icons.home),
-          label: 'Home',
-        ),
+        BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
         BottomNavigationBarItem(
           icon: Icon(Icons.calendar_month),
           label: 'Appointments',
         ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.chat),
-          label: 'Chat',
-        ),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.person),
-          label: 'Profile',
-        ),
+        BottomNavigationBarItem(icon: Icon(Icons.chat), label: 'Chat'),
+        BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Profile'),
       ],
     );
   }

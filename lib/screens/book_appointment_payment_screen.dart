@@ -40,6 +40,10 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
             _summary(args, amount),
             const SizedBox(height: 18),
             _paymentCard(),
+            if (_isStripeTestMode) ...[
+              const SizedBox(height: 18),
+              _testModeCard(),
+            ],
             const SizedBox(height: 22),
             SizedBox(
               height: 54,
@@ -134,6 +138,32 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     );
   }
 
+  Widget _testModeCard() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: _box().copyWith(color: const Color(0xfffffbeb)),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Stripe Test Mode',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'Use card 4242 4242 4242 4242, any future expiry date, any CVC, and any ZIP.',
+            style: TextStyle(color: Colors.black87, height: 1.4),
+          ),
+          SizedBox(height: 6),
+          Text(
+            'Real cards will not complete while the app is using a test publishable key.',
+            style: TextStyle(color: Colors.black54, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _line(String label, Object? value) {
     final text = value?.toString().trim() ?? '';
     return Padding(
@@ -219,7 +249,16 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
         '[PaymentSheet] initPaymentSheet() with '
         'clientSecret=${_redactClientSecret(intent.clientSecret)} '
         'paymentIntentId=${intent.paymentIntentId} '
-        'amountCents=${intent.amountCents}',
+        'amountCents=${intent.amountCents} '
+        'currency=${intent.currency} '
+        'intentLivemode=${intent.livemode} '
+        'keyMode=${_stripeKeyMode(stripeKey)}',
+      );
+      _validateStripeMode(stripeKey, intent);
+
+      await _logPaymentIntentStatus(
+        intent.clientSecret,
+        phase: 'before initPaymentSheet',
       );
       await Stripe.instance.initPaymentSheet(
         paymentSheetParameters: SetupPaymentSheetParameters(
@@ -239,19 +278,43 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       await Stripe.instance.presentPaymentSheet();
       debugPrint('[PaymentSheet] presentPaymentSheet() completed.');
 
+      final finalIntent = await _logPaymentIntentStatus(
+        intent.clientSecret,
+        phase: 'after presentPaymentSheet',
+      );
+      if (!_isCompletedPayment(finalIntent.status)) {
+        final message = _paymentStatusMessage(finalIntent.status);
+        debugPrint(
+          '[PaymentSheet] Blocking appointment creation because '
+          'PaymentIntent ${finalIntent.id} status=${finalIntent.status.name}',
+        );
+        _snack(message);
+        return;
+      }
+
       final appointmentPayload = _appointmentPayload(
         args,
         amount,
-        intent.paymentIntentId,
+        finalIntent.id.isNotEmpty ? finalIntent.id : intent.paymentIntentId,
+      );
+      debugPrint(
+        '[PaymentSheet] Creating paid appointment for '
+        'paymentIntentId=${appointmentPayload['paymentIntentId']}',
       );
       final appointmentResult =
           await _paymentService.createPaidAppointment(appointmentPayload);
       if (!mounted) return;
 
       if (!appointmentResult.success) {
+        debugPrint(
+          '[PaymentSheet] Appointment creation failed after successful payment: '
+          'status=${appointmentResult.statusCode} '
+          'message="${appointmentResult.message}"',
+        );
         _snack(appointmentResult.message);
         return;
       }
+      debugPrint('[PaymentSheet] Paid appointment created successfully.');
 
       Navigator.pushNamedAndRemoveUntil(
         context,
@@ -260,7 +323,9 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
         arguments: {
           ...args,
           'amount': amount,
-          'paymentIntentId': intent.paymentIntentId,
+          'paymentIntentId': finalIntent.id.isNotEmpty
+              ? finalIntent.id
+              : intent.paymentIntentId,
           'appointment': appointmentResult.data ?? <String, dynamic>{},
         },
       );
@@ -270,7 +335,10 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
         '[PaymentSheet] StripeException code=${error.error.code} '
         'message=${error.error.message} localized=${error.error.localizedMessage}',
       );
-      final message = error.error.localizedMessage ?? 'Payment was cancelled.';
+      final message =
+          error.error.localizedMessage ??
+          error.error.message ??
+          'Payment was cancelled.';
       _snack(message);
     } catch (error, stackTrace) {
       if (!mounted) return;
@@ -279,6 +347,77 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       _snack('Payment failed. Please try again.');
     } finally {
       if (mounted) setState(() => _processing = false);
+    }
+  }
+
+  Future<PaymentIntent> _logPaymentIntentStatus(
+    String clientSecret, {
+    required String phase,
+  }) async {
+    final paymentIntent = await Stripe.instance.retrievePaymentIntent(
+      clientSecret,
+    );
+    debugPrint(
+      '[PaymentSheet] PaymentIntent status $phase: '
+      'id=${paymentIntent.id} '
+      'status=${paymentIntent.status.name} '
+      'amount=${paymentIntent.amount} '
+      'currency=${paymentIntent.currency} '
+      'livemode=${paymentIntent.livemode} '
+      'paymentMethodId=${paymentIntent.paymentMethodId ?? "(none)"} '
+      'captureMethod=${paymentIntent.captureMethod.name} '
+      'confirmationMethod=${paymentIntent.confirmationMethod.name}',
+    );
+    return paymentIntent;
+  }
+
+  void _validateStripeMode(String publishableKey, StripeIntent intent) {
+    final keyMode = _stripeKeyMode(publishableKey);
+    if (keyMode == 'unknown') {
+      debugPrint('[PaymentSheet] Unable to determine Stripe key mode.');
+      return;
+    }
+
+    final intentLivemode = intent.livemode;
+    if (intentLivemode == null) {
+      debugPrint(
+        '[PaymentSheet] Backend response did not include PaymentIntent livemode; '
+        'Stripe retrievePaymentIntent() will log the authoritative mode.',
+      );
+      return;
+    }
+
+    final intentMode = intentLivemode ? 'live' : 'test';
+    if (keyMode != intentMode) {
+      throw StateError(
+        'Stripe key mode mismatch. App is using a $keyMode publishable key, '
+        'but the PaymentIntent is $intentMode.',
+      );
+    }
+  }
+
+  bool _isCompletedPayment(PaymentIntentsStatus status) {
+    return status == PaymentIntentsStatus.Succeeded;
+  }
+
+  String _paymentStatusMessage(PaymentIntentsStatus status) {
+    switch (status) {
+      case PaymentIntentsStatus.RequiresPaymentMethod:
+        return 'Payment was not completed. Please check the card details and try again.';
+      case PaymentIntentsStatus.RequiresConfirmation:
+        return 'Payment is waiting for confirmation. Please try again.';
+      case PaymentIntentsStatus.RequiresAction:
+        return 'Payment requires additional authentication. Please try again.';
+      case PaymentIntentsStatus.Processing:
+        return 'Payment is still processing. Please wait and try again.';
+      case PaymentIntentsStatus.RequiresCapture:
+        return 'Payment was authorized but not captured. Please contact support.';
+      case PaymentIntentsStatus.Canceled:
+        return 'Payment was cancelled.';
+      case PaymentIntentsStatus.Unknown:
+        return 'Payment status could not be confirmed. Please try again.';
+      case PaymentIntentsStatus.Succeeded:
+        return 'Payment successful.';
     }
   }
 
@@ -383,6 +522,8 @@ String get _stripePublishableKey {
       .trim();
 }
 
+bool get _isStripeTestMode => _stripePublishableKey.startsWith('pk_test_');
+
 bool get _hasStripePublishableKey {
   try {
     return Stripe.publishableKey.trim().isNotEmpty;
@@ -402,6 +543,12 @@ String _redactClientSecret(String value) {
 String _redactPublishableKey(String value) {
   if (value.length <= 12) return value.isEmpty ? '(missing)' : '...';
   return '${value.substring(0, 7)}...${value.substring(value.length - 4)}';
+}
+
+String _stripeKeyMode(String value) {
+  if (value.startsWith('pk_live_')) return 'live';
+  if (value.startsWith('pk_test_')) return 'test';
+  return 'unknown';
 }
 
 class _StepDot extends StatelessWidget {

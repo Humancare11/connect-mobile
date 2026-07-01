@@ -49,9 +49,9 @@ class _LoginScreenState extends State<LoginScreen> {
     await _authService.saveSession(result.data!);
     if (!mounted) return;
     showAuthSnackBar(context, 'Login Successful');
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const MainScreen()),
-    );
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
   }
 
   Future<void> _googleLogin() async {
@@ -69,9 +69,9 @@ class _LoginScreenState extends State<LoginScreen> {
     await _authService.saveSession(result.data!);
     if (!mounted) return;
     showAuthSnackBar(context, 'Login Successful');
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const MainScreen()),
-    );
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
   }
 
   @override
@@ -165,54 +165,11 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _buildLogo() {
     return Column(
       children: [
-        Container(
-          width: 80,
-          height: 80,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [_primary, _primaryDeep],
-            ),
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: [
-              BoxShadow(
-                color: _primary.withOpacity(0.3),
-                blurRadius: 24,
-                offset: const Offset(0, 12),
-              ),
-            ],
-          ),
-          child: const Center(
-            child: Icon(
-              Icons.favorite_rounded,
-              color: Colors.white,
-              size: 38,
-            ),
-          ),
+        Image.asset(
+          'assets/logo.png',
+          width: 150,
         ),
-        const SizedBox(height: 16),
-        const Text(
-          'HumanCare Connect',
-          style: TextStyle(
-            fontFamily: 'Satoshi',
-            fontSize: 22,
-            fontWeight: FontWeight.w800,
-            color: _primary,
-            letterSpacing: -0.4,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Your Health, Our Priority',
-          style: TextStyle(
-            fontFamily: 'Satoshi',
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-            color: _textMuted.withOpacity(0.8),
-            letterSpacing: 0.4,
-          ),
-        ),
+        
       ],
     );
   }
@@ -222,7 +179,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return Column(
       children: const [
         Text(
-          'Welcome Back 👋',
+          'Welcome Back ',
           style: TextStyle(
             fontFamily: 'Satoshi',
             fontSize: 28,
@@ -281,10 +238,7 @@ class _LoginScreenState extends State<LoginScreen> {
             _passwordField(),
             const SizedBox(height: 12),
             _forgotPassword(),
-            if (_error.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              _errorBox(),
-            ],
+            if (_error.isNotEmpty) ...[const SizedBox(height: 16), _errorBox()],
             const SizedBox(height: 22),
             _signInButton(),
             const SizedBox(height: 22),
@@ -299,15 +253,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ─── FORM PIECES ───────────────────────────────────────────────
   Widget _label(String text) => Text(
-        text,
-        style: const TextStyle(
-          fontFamily: 'Satoshi',
-          fontSize: 13,
-          fontWeight: FontWeight.w700,
-          color: Color(0xFF374151),
-          letterSpacing: 0.1,
-        ),
-      );
+    text,
+    style: const TextStyle(
+      fontFamily: 'Satoshi',
+      fontSize: 13,
+      fontWeight: FontWeight.w700,
+      color: Color(0xFF374151),
+      letterSpacing: 0.1,
+    ),
+  );
 
   Widget _emailField() {
     return TextFormField(
@@ -446,8 +400,11 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
       child: Row(
         children: [
-          const Icon(Icons.error_outline_rounded,
-              color: Color(0xFFDC2626), size: 18),
+          const Icon(
+            Icons.error_outline_rounded,
+            color: Color(0xFFDC2626),
+            size: 18,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -521,8 +478,11 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
                         SizedBox(width: 8),
-                        Icon(Icons.arrow_forward_rounded,
-                            color: Colors.white, size: 20),
+                        Icon(
+                          Icons.arrow_forward_rounded,
+                          color: Colors.white,
+                          size: 20,
+                        ),
                       ],
                     ),
             ),
@@ -647,9 +607,8 @@ class _LoginScreenState extends State<LoginScreen> {
           onTap: disabled
               ? null
               : () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                        builder: (_) => const RegisterScreen()),
-                  ),
+                  MaterialPageRoute(builder: (_) => const RegisterScreen()),
+                ),
           child: const Text(
             'Sign Up',
             style: TextStyle(

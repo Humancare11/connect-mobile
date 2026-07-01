@@ -32,7 +32,10 @@ class ApiClient {
       };
 
       final uri = Uri.parse('${ApiConfig.baseUrl}$path');
-      debugPrint('POST $uri');
+      debugPrint(
+        'POST $uri authToken=${token.isNotEmpty ? "present" : "missing"} '
+        'body=${jsonEncode(_redactSecrets(body))}',
+      );
 
       final response = await _client
           .post(uri, headers: headers, body: jsonEncode(body))
@@ -131,7 +134,9 @@ class ApiClient {
     http.Response response,
   ) {
     debugPrint('$method $path status: ${response.statusCode}');
-    debugPrint('$method $path raw response: ${response.body}');
+    debugPrint(
+      '$method $path raw response: ${_redactedResponseBody(response.body)}',
+    );
 
     try {
       final decoded = response.body.isNotEmpty
@@ -295,5 +300,45 @@ class ApiClient {
     }
 
     return fallback;
+  }
+
+  String _redactedResponseBody(String body) {
+    if (body.isEmpty) return body;
+
+    try {
+      return jsonEncode(_redactSecrets(jsonDecode(body)));
+    } catch (_) {
+      return body;
+    }
+  }
+
+  dynamic _redactSecrets(dynamic value) {
+    if (value is Map) {
+      return value.map((key, mapValue) {
+        final normalizedKey = key.toString().toLowerCase();
+        if (normalizedKey.contains('token') ||
+            normalizedKey.contains('secret') ||
+            normalizedKey == 'authorization') {
+          return MapEntry(key.toString(), _redactSecretValue(mapValue));
+        }
+
+        return MapEntry(key.toString(), _redactSecrets(mapValue));
+      });
+    }
+
+    if (value is List) {
+      return value.map(_redactSecrets).toList();
+    }
+
+    return value;
+  }
+
+  String _redactSecretValue(Object? value) {
+    final text = value?.toString() ?? '';
+    if (text.isEmpty) return '(empty)';
+    final marker = text.indexOf('_secret_');
+    if (marker > 0) return '${text.substring(0, marker)}_secret_...';
+    if (text.length <= 12) return '...';
+    return '${text.substring(0, 6)}...${text.substring(text.length - 4)}';
   }
 }
