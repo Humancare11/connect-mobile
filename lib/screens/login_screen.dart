@@ -163,15 +163,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ─── LOGO ──────────────────────────────────────────────────────
   Widget _buildLogo() {
-    return Column(
-      children: [
-        Image.asset(
-          'assets/logo.png',
-          width: 150,
-        ),
-        
-      ],
-    );
+    return Column(children: [Image.asset('assets/Logo.png', width: 150)]);
   }
 
   // ─── WELCOME ───────────────────────────────────────────────────
@@ -179,7 +171,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return Column(
       children: const [
         Text(
-          'Welcome Back ',
+          'Welcome Back',
           style: TextStyle(
             fontFamily: 'Satoshi',
             fontSize: 28,

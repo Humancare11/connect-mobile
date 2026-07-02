@@ -9,9 +9,21 @@ import 'main_screen.dart';
 
 // ─── Password strength helper ─────────────────────────────────────────────────
 const _commonPasswords = {
-  'password', 'password1', 'password123', '12345678', '123456789',
-  'qwerty123', 'admin123', 'admin1234', 'welcome1', 'welcome123',
-  'letmein1', 'iloveyou1', 'humancare', 'humancare123', 'doctor123',
+  'password',
+  'password1',
+  'password123',
+  '12345678',
+  '123456789',
+  'qwerty123',
+  'admin123',
+  'admin1234',
+  'welcome1',
+  'welcome123',
+  'letmein1',
+  'iloveyou1',
+  'humancare',
+  'humancare123',
+  'doctor123',
   'patient123',
 };
 
@@ -34,8 +46,10 @@ String _getDobError(String dob) {
   if (dob.isEmpty) return 'Select Date of Birth';
   final parsed = DateTime.tryParse(dob);
   if (parsed == null) return 'Enter a valid Date of Birth';
-  if (parsed.isAfter(DateTime.now())) return 'Date of Birth cannot be in the future';
-  if (parsed.isBefore(DateTime(1900))) return 'Date of Birth must be in or after 1900';
+  if (parsed.isAfter(DateTime.now()))
+    return 'Date of Birth cannot be in the future';
+  if (parsed.isBefore(DateTime(1900)))
+    return 'Date of Birth must be in or after 1900';
   return '';
 }
 
@@ -43,28 +57,144 @@ const List<String> _genders = ['Male', 'Female', 'Other', 'Prefer Not to Say'];
 
 String _normalizeLocationName(String value) {
   const diacritics = <String, String>{
-    'À': 'A', 'Á': 'A', 'Â': 'A', 'Ã': 'A', 'Ä': 'A', 'Å': 'A', 'Ā': 'A', 'Ă': 'A', 'Ą': 'A', 'Ǎ': 'A',
-    'à': 'a', 'á': 'a', 'â': 'a', 'ã': 'a', 'ä': 'a', 'å': 'a', 'ā': 'a', 'ă': 'a', 'ą': 'a', 'ǎ': 'a',
-    'Ç': 'C', 'Ć': 'C', 'Č': 'C', 'Ĉ': 'C', 'Ċ': 'C',
-    'ç': 'c', 'ć': 'c', 'č': 'c', 'ĉ': 'c', 'ċ': 'c',
-    'Ð': 'D', 'Ď': 'D', 'Đ': 'D',
-    'ð': 'd', 'ď': 'd', 'đ': 'd',
-    'È': 'E', 'É': 'E', 'Ê': 'E', 'Ë': 'E', 'Ē': 'E', 'Ĕ': 'E', 'Ė': 'E', 'Ę': 'E', 'Ě': 'E',
-    'è': 'e', 'é': 'e', 'ê': 'e', 'ë': 'e', 'ē': 'e', 'ĕ': 'e', 'ė': 'e', 'ę': 'e', 'ě': 'e',
-    'Ì': 'I', 'Í': 'I', 'Î': 'I', 'Ï': 'I', 'Ĩ': 'I', 'Ī': 'I', 'Ĭ': 'I', 'Į': 'I', 'İ': 'I',
-    'ì': 'i', 'í': 'i', 'î': 'i', 'ï': 'i', 'ĩ': 'i', 'ī': 'i', 'ĭ': 'i', 'į': 'i', 'ı': 'i',
-    'Ñ': 'N', 'Ń': 'N', 'Ň': 'N', 'Ņ': 'N',
-    'ñ': 'n', 'ń': 'n', 'ň': 'n', 'ņ': 'n',
-    'Ò': 'O', 'Ó': 'O', 'Ô': 'O', 'Õ': 'O', 'Ö': 'O', 'Ø': 'O', 'Ō': 'O', 'Ŏ': 'O', 'Ő': 'O',
-    'ò': 'o', 'ó': 'o', 'ô': 'o', 'õ': 'o', 'ö': 'o', 'ø': 'o', 'ō': 'o', 'ŏ': 'o', 'ő': 'o',
-    'Ś': 'S', 'Š': 'S', 'Ş': 'S', 'Ŝ': 'S', 'Ș': 'S',
-    'ś': 's', 'š': 's', 'ş': 's', 'ŝ': 's', 'ș': 's',
-    'Ù': 'U', 'Ú': 'U', 'Û': 'U', 'Ü': 'U', 'Ũ': 'U', 'Ū': 'U', 'Ŭ': 'U', 'Ů': 'U', 'Ű': 'U', 'Ų': 'U',
-    'ù': 'u', 'ú': 'u', 'û': 'u', 'ü': 'u', 'ũ': 'u', 'ū': 'u', 'ŭ': 'u', 'ů': 'u', 'ű': 'u', 'ų': 'u',
-    'Ý': 'Y', 'Ÿ': 'Y',
-    'ý': 'y', 'ÿ': 'y',
-    'Ž': 'Z', 'Ź': 'Z', 'Ż': 'Z',
-    'ž': 'z', 'ź': 'z', 'ż': 'z',
+    'À': 'A',
+    'Á': 'A',
+    'Â': 'A',
+    'Ã': 'A',
+    'Ä': 'A',
+    'Å': 'A',
+    'Ā': 'A',
+    'Ă': 'A',
+    'Ą': 'A',
+    'Ǎ': 'A',
+    'à': 'a',
+    'á': 'a',
+    'â': 'a',
+    'ã': 'a',
+    'ä': 'a',
+    'å': 'a',
+    'ā': 'a',
+    'ă': 'a',
+    'ą': 'a',
+    'ǎ': 'a',
+    'Ç': 'C',
+    'Ć': 'C',
+    'Č': 'C',
+    'Ĉ': 'C',
+    'Ċ': 'C',
+    'ç': 'c',
+    'ć': 'c',
+    'č': 'c',
+    'ĉ': 'c',
+    'ċ': 'c',
+    'Ð': 'D',
+    'Ď': 'D',
+    'Đ': 'D',
+    'ð': 'd',
+    'ď': 'd',
+    'đ': 'd',
+    'È': 'E',
+    'É': 'E',
+    'Ê': 'E',
+    'Ë': 'E',
+    'Ē': 'E',
+    'Ĕ': 'E',
+    'Ė': 'E',
+    'Ę': 'E',
+    'Ě': 'E',
+    'è': 'e',
+    'é': 'e',
+    'ê': 'e',
+    'ë': 'e',
+    'ē': 'e',
+    'ĕ': 'e',
+    'ė': 'e',
+    'ę': 'e',
+    'ě': 'e',
+    'Ì': 'I',
+    'Í': 'I',
+    'Î': 'I',
+    'Ï': 'I',
+    'Ĩ': 'I',
+    'Ī': 'I',
+    'Ĭ': 'I',
+    'Į': 'I',
+    'İ': 'I',
+    'ì': 'i',
+    'í': 'i',
+    'î': 'i',
+    'ï': 'i',
+    'ĩ': 'i',
+    'ī': 'i',
+    'ĭ': 'i',
+    'į': 'i',
+    'ı': 'i',
+    'Ñ': 'N',
+    'Ń': 'N',
+    'Ň': 'N',
+    'Ņ': 'N',
+    'ñ': 'n',
+    'ń': 'n',
+    'ň': 'n',
+    'ņ': 'n',
+    'Ò': 'O',
+    'Ó': 'O',
+    'Ô': 'O',
+    'Õ': 'O',
+    'Ö': 'O',
+    'Ø': 'O',
+    'Ō': 'O',
+    'Ŏ': 'O',
+    'Ő': 'O',
+    'ò': 'o',
+    'ó': 'o',
+    'ô': 'o',
+    'õ': 'o',
+    'ö': 'o',
+    'ø': 'o',
+    'ō': 'o',
+    'ŏ': 'o',
+    'ő': 'o',
+    'Ś': 'S',
+    'Š': 'S',
+    'Ş': 'S',
+    'Ŝ': 'S',
+    'Ș': 'S',
+    'ś': 's',
+    'š': 's',
+    'ş': 's',
+    'ŝ': 's',
+    'ș': 's',
+    'Ù': 'U',
+    'Ú': 'U',
+    'Û': 'U',
+    'Ü': 'U',
+    'Ũ': 'U',
+    'Ū': 'U',
+    'Ŭ': 'U',
+    'Ů': 'U',
+    'Ű': 'U',
+    'Ų': 'U',
+    'ù': 'u',
+    'ú': 'u',
+    'û': 'u',
+    'ü': 'u',
+    'ũ': 'u',
+    'ū': 'u',
+    'ŭ': 'u',
+    'ů': 'u',
+    'ű': 'u',
+    'ų': 'u',
+    'Ý': 'Y',
+    'Ÿ': 'Y',
+    'ý': 'y',
+    'ÿ': 'y',
+    'Ž': 'Z',
+    'Ź': 'Z',
+    'Ż': 'Z',
+    'ž': 'z',
+    'ź': 'z',
+    'ż': 'z',
   };
 
   final buffer = StringBuffer();
@@ -135,9 +265,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _otpController = TextEditingController();
   int _otpTimer = 0;
 
-  final GlobalKey<FormFieldState<String>> _countryFieldKey = GlobalKey<FormFieldState<String>>();
-  final GlobalKey<FormFieldState<String>> _stateFieldKey = GlobalKey<FormFieldState<String>>();
-  final GlobalKey<FormFieldState<String>> _cityFieldKey = GlobalKey<FormFieldState<String>>();
+  final GlobalKey<FormFieldState<String>> _countryFieldKey =
+      GlobalKey<FormFieldState<String>>();
+  final GlobalKey<FormFieldState<String>> _stateFieldKey =
+      GlobalKey<FormFieldState<String>>();
+  final GlobalKey<FormFieldState<String>> _cityFieldKey =
+      GlobalKey<FormFieldState<String>>();
 
   final _authRepository = AuthRepository();
   final LocationService _locationService = LocationService();
@@ -231,7 +364,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _loadingCities = false);
   }
 
-  Future<void> _updateDialCodeForSelectedCountry(String countryName, {String? iso2}) async {
+  Future<void> _updateDialCodeForSelectedCountry(
+    String countryName, {
+    String? iso2,
+  }) async {
     final result = await _locationService.getDialCode(countryName, iso2: iso2);
     if (!mounted) return;
     if (result.success && (result.data ?? '').isNotEmpty) {
@@ -253,8 +389,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
           final filtered = filter.isEmpty
               ? options
               : options
-                  .where((o) => o.toLowerCase().contains(filter.toLowerCase()))
-                  .toList();
+                    .where(
+                      (o) => o.toLowerCase().contains(filter.toLowerCase()),
+                    )
+                    .toList();
           return Container(
             height: MediaQuery.of(ctx).size.height * 0.75,
             decoration: const BoxDecoration(
@@ -266,7 +404,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 // Handle bar
                 const SizedBox(height: 12),
                 Container(
-                  width: 40, height: 4,
+                  width: 40,
+                  height: 4,
                   decoration: BoxDecoration(
                     color: Colors.grey[300],
                     borderRadius: BorderRadius.circular(2),
@@ -293,22 +432,37 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     autofocus: true,
                     decoration: InputDecoration(
                       hintText: 'Search...',
-                      hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
-                      prefixIcon: const Icon(Icons.search, color: Color(0xff1a3a5c), size: 20),
+                      hintStyle: TextStyle(
+                        color: Colors.grey[400],
+                        fontSize: 14,
+                      ),
+                      prefixIcon: const Icon(
+                        Icons.search,
+                        color: Color(0xff1a3a5c),
+                        size: 20,
+                      ),
                       filled: true,
                       fillColor: const Color(0xfff9fafb),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: BorderSide.none,
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.09)),
+                        borderSide: BorderSide(
+                          color: Colors.black.withValues(alpha: 0.09),
+                        ),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(color: Color(0xff1a3a5c), width: 1.5),
+                        borderSide: const BorderSide(
+                          color: Color(0xff1a3a5c),
+                          width: 1.5,
+                        ),
                       ),
                     ),
                     onChanged: (v) => setModal(() => filter = v),
@@ -322,7 +476,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       ? Center(
                           child: Text(
                             'No results found',
-                            style: TextStyle(color: Colors.grey[500], fontSize: 14),
+                            style: TextStyle(
+                              color: Colors.grey[500],
+                              fontSize: 14,
+                            ),
                           ),
                         )
                       : ListView.builder(
@@ -330,7 +487,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           itemBuilder: (_, i) => ListTile(
                             title: Text(
                               filtered[i],
-                              style: const TextStyle(fontSize: 14, color: Colors.black87),
+                              style: const TextStyle(
+                                fontSize: 14,
+                                color: Colors.black87,
+                              ),
                             ),
                             onTap: () => Navigator.pop(ctx, filtered[i]),
                             dense: true,
@@ -369,7 +529,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    setState(() { _loading = true; _error = ''; });
+    setState(() {
+      _loading = true;
+      _error = '';
+    });
 
     final result = await _authRepository.sendRegisterOtp(
       email: _emailController.text.trim().toLowerCase(),
@@ -399,7 +562,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    setState(() { _loading = true; _error = ''; });
+    setState(() {
+      _loading = true;
+      _error = '';
+    });
 
     final formData = RegisterFormData(
       name: _nameController.text.trim(),
@@ -427,9 +593,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (result.success) {
       showAuthSnackBar(context, 'Registration successful!');
       if (!mounted) return;
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const MainScreen()),
-      );
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
     } else {
       _setError(result.message);
     }
@@ -472,7 +638,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
     );
     if (picked != null) {
-      final iso = '${picked.year.toString().padLeft(4, '0')}'
+      final iso =
+          '${picked.year.toString().padLeft(4, '0')}'
           '-${picked.month.toString().padLeft(2, '0')}'
           '-${picked.day.toString().padLeft(2, '0')}';
       setState(() => _dobController.text = iso);
@@ -534,42 +701,62 @@ class _RegisterScreenState extends State<RegisterScreen> {
       validator: validator,
       builder: (state) {
         // Keep form field value in sync when parent clears it via key rebuild.
-        return GestureDetector(
-          onTap: (enabled && !loading)
-              ? () async {
-                  final picked = await onTap();
-                  state.didChange(picked ?? selectedValue);
-                }
-              : null,
-          child: InputDecorator(
-            decoration: _dec(
-              label: label,
-              icon: icon,
-              suffix: loading
-                  ? const Padding(
-                      padding: EdgeInsets.all(14),
-                      child: SizedBox(
-                        width: 18, height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Color(0xff1a3a5c),
-                        ),
-                      ),
-                    )
-                  : Icon(
-                      enabled ? Icons.arrow_drop_down : Icons.lock_outline,
-                      color: enabled
-                          ? const Color(0xff1a3a5c)
-                          : Colors.grey[400],
-                    ),
-            ).copyWith(
-              errorText: state.errorText,
-              enabled: enabled,
-            ),
-            isEmpty: selectedValue == null || selectedValue.isEmpty,
-            child: selectedValue != null && selectedValue.isNotEmpty
-                ? Text(selectedValue, style: const TextStyle(fontSize: 14, color: Colors.black87))
+        return Opacity(
+          opacity: enabled ? 1.0 : 0.6,
+          child: GestureDetector(
+            onTap: (enabled && !loading)
+                ? () async {
+                    final picked = await onTap();
+                    state.didChange(picked ?? selectedValue);
+                  }
                 : null,
+            child: InputDecorator(
+              decoration:
+                  _dec(
+                    label: label,
+                    icon: icon,
+                    suffix: loading
+                        ? const Padding(
+                            padding: EdgeInsets.all(14),
+                            child: SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Color(0xff1a3a5c),
+                              ),
+                            ),
+                          )
+                        : Icon(
+                            enabled
+                                ? Icons.arrow_drop_down
+                                : Icons.lock_outline,
+                            color: enabled
+                                ? const Color(0xff1a3a5c)
+                                : Colors.grey[400],
+                            size: 20,
+                          ),
+                  ).copyWith(
+                    errorText: state.errorText,
+                    enabled: enabled,
+                    fillColor: enabled
+                        ? const Color(0xfff9fafb)
+                        : Colors.grey[100],
+                  ),
+              isEmpty: selectedValue == null || selectedValue.isEmpty,
+              child: selectedValue != null && selectedValue.isNotEmpty
+                  ? Text(
+                      selectedValue,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        color: Colors.black87,
+                        fontWeight: FontWeight.w500,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    )
+                  : null,
+            ),
           ),
         );
       },
@@ -602,7 +789,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
     child: Text(
       msg,
       textAlign: TextAlign.center,
-      style: TextStyle(color: Colors.red.shade700, fontWeight: FontWeight.w600, fontSize: 13),
+      style: TextStyle(
+        color: Colors.red.shade700,
+        fontWeight: FontWeight.w600,
+        fontSize: 13,
+      ),
     ),
   );
 
@@ -620,7 +811,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       (RegExp(r'[A-Z]').hasMatch(pw), 'One uppercase letter'),
       (RegExp(r'[a-z]').hasMatch(pw), 'One lowercase letter'),
       (RegExp(r'[0-9]').hasMatch(pw), 'One number'),
-      (RegExp(r'[^A-Za-z0-9]').hasMatch(pw), 'One special character (!@#\$...)'),
+      (
+        RegExp(r'[^A-Za-z0-9]').hasMatch(pw),
+        'One special character (!@#\$...)',
+      ),
     ];
     return Wrap(
       spacing: 8,
@@ -658,13 +852,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-
           // ── Personal Information ────────────────────────────────────────
           _section('Personal Information'),
 
           // Full Name
           TextFormField(
             controller: _nameController,
+            style: const TextStyle(fontSize: 14, color: Colors.black87),
             decoration: _dec(label: 'Full Name', icon: Icons.person_outline),
             onChanged: (v) {
               final cleaned = v.replaceAll(RegExp(r'[^a-zA-Z\s]'), '');
@@ -679,7 +873,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
               final val = v?.trim() ?? '';
               if (val.isEmpty) return 'Enter your full name';
               if (val.length < 2) return 'Please enter your full name';
-              if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(val)) return 'Name must contain only letters';
+              if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(val))
+                return 'Name must contain only letters';
               return null;
             },
           ),
@@ -689,48 +884,58 @@ class _RegisterScreenState extends State<RegisterScreen> {
           TextFormField(
             controller: _emailController,
             keyboardType: TextInputType.emailAddress,
+            style: const TextStyle(fontSize: 14, color: Colors.black87),
             decoration: _dec(label: 'Email Address', icon: Icons.mail_outline),
             validator: (v) {
               if ((v?.trim() ?? '').isEmpty) return 'Enter your email address';
-              if (!AuthValidators.isValidEmail(v!)) return 'Enter a valid email address';
+              if (!AuthValidators.isValidEmail(v!))
+                return 'Enter a valid email address';
               return null;
             },
           ),
           const SizedBox(height: 14),
 
-          // DOB + Gender row
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: TextFormField(
-                  controller: _dobController,
-                  readOnly: true,
-                  onTap: _pickDob,
-                  decoration: _dec(
-                    label: 'Date of Birth',
-                    icon: Icons.calendar_today_outlined,
-                    suffix: const Icon(Icons.edit_calendar_outlined, size: 18, color: Color(0xff1a3a5c)),
+          // Date of Birth
+          TextFormField(
+            controller: _dobController,
+            readOnly: true,
+            onTap: _pickDob,
+            style: const TextStyle(fontSize: 14, color: Colors.black87),
+            decoration: _dec(
+              label: 'Date of Birth',
+              icon: Icons.calendar_today_outlined,
+              suffix: const Icon(
+                Icons.edit_calendar_outlined,
+                size: 18,
+                color: Color(0xff1a3a5c),
+              ),
+            ),
+            validator: (v) {
+              final err = _getDobError(v ?? '');
+              return err.isEmpty ? null : err;
+            },
+          ),
+          const SizedBox(height: 14),
+
+          // Gender
+          DropdownButtonFormField<String>(
+            initialValue: _selectedGender.isEmpty ? null : _selectedGender,
+            decoration: _dec(label: 'Gender', icon: Icons.wc_outlined),
+            isExpanded: true,
+            style: const TextStyle(fontSize: 14, color: Colors.black87),
+            items: _genders
+                .map(
+                  (g) => DropdownMenuItem(
+                    value: g,
+                    child: Text(
+                      g,
+                      style: const TextStyle(fontSize: 14),
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                  validator: (v) {
-                    final err = _getDobError(v ?? '');
-                    return err.isEmpty ? null : err;
-                  },
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _selectedGender.isEmpty ? null : _selectedGender,
-                  decoration: _dec(label: 'Gender', icon: Icons.wc_outlined),
-                  isExpanded: true,
-                  items: _genders
-                      .map((g) => DropdownMenuItem(value: g, child: Text(g, style: const TextStyle(fontSize: 14))))
-                      .toList(),
-                  onChanged: (v) => setState(() => _selectedGender = v ?? ''),
-                ),
-              ),
-            ],
+                )
+                .toList(),
+            onChanged: (v) => setState(() => _selectedGender = v ?? ''),
           ),
           const SizedBox(height: 24),
 
@@ -745,9 +950,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
             selectedValue: _selectedCountry.isEmpty ? null : _selectedCountry,
             loading: _loadingCountries,
             enabled: !_loadingCountries,
-            validator: (v) => (v == null || v.isEmpty) ? 'Select your country' : null,
+            validator: (v) =>
+                (v == null || v.isEmpty) ? 'Select your country' : null,
             onTap: () async {
-              final picked = await _showSearchSheet('Select Country', _countries);
+              final picked = await _showSearchSheet(
+                'Select Country',
+                _countries,
+              );
               if (picked != null && mounted) {
                 final countryMeta = _countryLookup[picked];
                 setState(() {
@@ -775,68 +984,63 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 14),
 
-          // State + City row
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // State picker
-              Expanded(
-                child: _locationField(
-                  fieldKey: _stateFieldKey,
-                  label: _selectedCountry.isEmpty
-                      ? 'Select country first'
-                      : (_loadingStates ? 'Loading states...' : 'State / Province'),
-                  icon: Icons.location_on_outlined,
-                  selectedValue: _selectedState,
-                  loading: _loadingStates,
-                  enabled: _selectedCountry.isNotEmpty && !_loadingStates && _states.isNotEmpty,
-                  validator: (v) => (v == null || v.isEmpty) ? 'Select state' : null,
-                  onTap: () async {
-                    final picked = await _showSearchSheet('Select State', _states);
-                    if (picked != null && mounted) {
-                      setState(() {
-                        _selectedState = picked;
-                        _selectedCity = null;
-                        _cities = [];
-                      });
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (!mounted) return;
-                        _stateFieldKey.currentState?.didChange(picked);
-                        _cityFieldKey.currentState?.didChange(null);
-                      });
-                      await _fetchCities(_selectedCountry, picked);
-                    }
-                    return picked;
-                  },
-                ),
-              ),
-              const SizedBox(width: 12),
-              // City picker
-              Expanded(
-                child: _locationField(
-                  fieldKey: _cityFieldKey,
-                  label: _selectedState == null
-                      ? 'Select state first'
-                      : (_loadingCities ? 'Loading cities...' : 'City'),
-                  icon: Icons.location_city_outlined,
-                  selectedValue: _selectedCity,
-                  loading: _loadingCities,
-                  enabled: _selectedState != null && !_loadingCities && _cities.isNotEmpty,
-                  validator: (v) => (v == null || v.isEmpty) ? 'Select city' : null,
-                  onTap: () async {
-                    final picked = await _showSearchSheet('Select City', _cities);
-                    if (picked != null && mounted) {
-                      setState(() => _selectedCity = picked);
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        if (!mounted) return;
-                        _cityFieldKey.currentState?.didChange(picked);
-                      });
-                    }
-                    return picked;
-                  },
-                ),
-              ),
-            ],
+          // State picker
+          _locationField(
+            fieldKey: _stateFieldKey,
+            label: _selectedCountry.isEmpty
+                ? 'Select country first'
+                : (_loadingStates ? 'Loading states...' : 'State / Province'),
+            icon: Icons.location_on_outlined,
+            selectedValue: _selectedState,
+            loading: _loadingStates,
+            enabled:
+                _selectedCountry.isNotEmpty &&
+                !_loadingStates &&
+                _states.isNotEmpty,
+            validator: (v) => (v == null || v.isEmpty) ? 'Select state' : null,
+            onTap: () async {
+              final picked = await _showSearchSheet('Select State', _states);
+              if (picked != null && mounted) {
+                setState(() {
+                  _selectedState = picked;
+                  _selectedCity = null;
+                  _cities = [];
+                });
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  _stateFieldKey.currentState?.didChange(picked);
+                  _cityFieldKey.currentState?.didChange(null);
+                });
+                await _fetchCities(_selectedCountry, picked);
+              }
+              return picked;
+            },
+          ),
+          const SizedBox(height: 14),
+
+          // City picker
+          _locationField(
+            fieldKey: _cityFieldKey,
+            label: _selectedState == null
+                ? 'Select state first'
+                : (_loadingCities ? 'Loading cities...' : 'City'),
+            icon: Icons.location_city_outlined,
+            selectedValue: _selectedCity,
+            loading: _loadingCities,
+            enabled:
+                _selectedState != null && !_loadingCities && _cities.isNotEmpty,
+            validator: (v) => (v == null || v.isEmpty) ? 'Select city' : null,
+            onTap: () async {
+              final picked = await _showSearchSheet('Select City', _cities);
+              if (picked != null && mounted) {
+                setState(() => _selectedCity = picked);
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  _cityFieldKey.currentState?.didChange(picked);
+                });
+              }
+              return picked;
+            },
           ),
           const SizedBox(height: 24),
 
@@ -844,42 +1048,65 @@ class _RegisterScreenState extends State<RegisterScreen> {
           _section('Contact Information'),
 
           Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment:
+                CrossAxisAlignment.center, // align both fields evenly
             children: [
               // Dial code (auto-updates from country selection)
               SizedBox(
-                width: 100,
+                width: 64, // decreased from 100
                 child: Container(
                   height: 58,
                   decoration: BoxDecoration(
                     color: const Color(0xfff9fafb),
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: Colors.black.withValues(alpha: 0.09)),
+                    border: Border.all(
+                      color: Colors.black.withValues(alpha: 0.09),
+                    ),
                   ),
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
                   alignment: Alignment.center,
                   child: Text(
-                    _selectedDialCode,
-                    style: const TextStyle(
-                      fontSize: 15,
+                    _selectedDialCode.isEmpty ? '+91' : _selectedDialCode,
+                    style: TextStyle(
+                      fontSize: 14,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xff1a3a5c),
+                      color: _selectedDialCode.isEmpty
+                          ? Colors.grey[400]!
+                          : const Color(0xff1a3a5c),
                     ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10), // slightly tighter gap
               Expanded(
-                child: TextFormField(
-                  controller: _mobileController,
-                  keyboardType: TextInputType.phone,
-                  decoration: _dec(label: 'Mobile Number', icon: Icons.phone_outlined),
-                  validator: (v) {
-                    if ((v?.trim() ?? '').isEmpty) return null;
-                    if (!RegExp(r'^[\d\-\+\s\(\)]{7,}$').hasMatch(v!)) {
-                      return 'Enter a valid mobile number';
-                    }
-                    return null;
-                  },
+                child: SizedBox(
+                  height: 58, // match dial code box height exactly
+                  child: TextFormField(
+                    controller: _mobileController,
+                    keyboardType: TextInputType.phone,
+                    style: const TextStyle(fontSize: 14, color: Colors.black87),
+                    decoration:
+                        _dec(
+                          label: 'Mobile Number',
+                          icon: Icons.phone_outlined,
+                        ).copyWith(
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 0,
+                          ),
+                        ),
+                    validator: (v) {
+                      if ((v?.trim() ?? '').isEmpty) return null;
+                      if (!RegExp(r'^[\d\-\+\s\(\)]{7,}$').hasMatch(v!)) {
+                        return 'Enter a valid mobile number';
+                      }
+                      return null;
+                    },
+                  ),
                 ),
               ),
             ],
@@ -893,15 +1120,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
             controller: _passwordController,
             obscureText: _obscurePassword,
             onChanged: (_) => setState(() {}),
+            style: const TextStyle(fontSize: 14, color: Colors.black87),
             decoration: _dec(
               label: 'Password',
               icon: Icons.lock_outline,
               suffix: IconButton(
                 icon: Icon(
-                  _obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                  _obscurePassword
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
                   size: 20,
                 ),
-                onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                onPressed: () =>
+                    setState(() => _obscurePassword = !_obscurePassword),
               ),
             ),
             validator: (v) {
@@ -916,20 +1147,26 @@ class _RegisterScreenState extends State<RegisterScreen> {
           TextFormField(
             controller: _confirmPasswordController,
             obscureText: _obscureConfirmPassword,
+            style: const TextStyle(fontSize: 14, color: Colors.black87),
             decoration: _dec(
               label: 'Confirm Password',
               icon: Icons.lock_outline,
               suffix: IconButton(
                 icon: Icon(
-                  _obscureConfirmPassword ? Icons.visibility_off_outlined : Icons.visibility_outlined,
+                  _obscureConfirmPassword
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
                   size: 20,
                 ),
-                onPressed: () => setState(() => _obscureConfirmPassword = !_obscureConfirmPassword),
+                onPressed: () => setState(
+                  () => _obscureConfirmPassword = !_obscureConfirmPassword,
+                ),
               ),
             ),
             validator: (v) {
               if ((v?.trim() ?? '').isEmpty) return 'Confirm your password';
-              if (v != _passwordController.text) return 'Passwords do not match';
+              if (v != _passwordController.text)
+                return 'Passwords do not match';
               return null;
             },
           ),
@@ -968,18 +1205,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
               onPressed: _loading ? null : _handleRegisterSubmit,
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xff1a3a5c),
-                disabledBackgroundColor: const Color(0xff1a3a5c).withOpacity(0.6),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                disabledBackgroundColor: const Color(
+                  0xff1a3a5c,
+                ).withOpacity(0.6),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
                 elevation: 0,
               ),
               child: _loading
                   ? const SizedBox(
-                      height: 22, width: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                      height: 22,
+                      width: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.5,
+                        color: Colors.white,
+                      ),
                     )
                   : const Text(
                       'Sign Up',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
                     ),
             ),
           ),
@@ -987,12 +1236,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text('Already have an account? ', style: TextStyle(color: Colors.grey[600], fontSize: 14)),
+              Text(
+                'Already have an account? ',
+                style: TextStyle(color: Colors.grey[600], fontSize: 14),
+              ),
               GestureDetector(
                 onTap: () => Navigator.of(context).pop(),
                 child: const Text(
                   'Sign In',
-                  style: TextStyle(color: Color(0xff1a3a5c), fontWeight: FontWeight.w700, fontSize: 14),
+                  style: TextStyle(
+                    color: Color(0xff1a3a5c),
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
                 ),
               ),
             ],
@@ -1014,7 +1270,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
             color: Colors.white,
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
-              BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 16, offset: const Offset(0, 6)),
+              BoxShadow(
+                color: Colors.black.withOpacity(0.05),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
             ],
           ),
           child: Column(
@@ -1022,8 +1282,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
               Row(
                 children: [
                   IconButton(
-                    onPressed: () => setState(() { _currentStep = _stepForm; _error = ''; }),
-                    icon: const Icon(Icons.arrow_back, color: Color(0xff1a3a5c)),
+                    onPressed: () => setState(() {
+                      _currentStep = _stepForm;
+                      _error = '';
+                    }),
+                    icon: const Icon(
+                      Icons.arrow_back,
+                      color: Color(0xff1a3a5c),
+                    ),
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(),
                   ),
@@ -1036,12 +1302,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               const SizedBox(height: 20),
               Container(
-                width: 64, height: 64,
+                width: 64,
+                height: 64,
                 decoration: BoxDecoration(
                   color: const Color(0xffeaf2ff),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: const Icon(Icons.email_outlined, color: Color(0xff1a3a5c), size: 34),
+                child: const Icon(
+                  Icons.email_outlined,
+                  color: Color(0xff1a3a5c),
+                  size: 34,
+                ),
               ),
               const SizedBox(height: 16),
               RichText(
@@ -1049,10 +1320,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 text: TextSpan(
                   style: const TextStyle(fontSize: 14, color: Colors.black54),
                   children: [
-                    const TextSpan(text: 'We sent a 6-digit security code to\n'),
+                    const TextSpan(
+                      text: 'We sent a 6-digit security code to\n',
+                    ),
                     TextSpan(
                       text: _emailController.text,
-                      style: const TextStyle(color: Color(0xff2563eb), fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        color: Color(0xff2563eb),
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ],
                 ),
@@ -1077,12 +1353,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   : Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Text("Didn't receive it? ", style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                        Text(
+                          "Didn't receive it? ",
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey[600],
+                          ),
+                        ),
                         GestureDetector(
                           onTap: _loading ? null : _handleResendOtp,
                           child: const Text(
                             'Resend OTP',
-                            style: TextStyle(color: Color(0xff2563eb), fontWeight: FontWeight.w700, fontSize: 13),
+                            style: TextStyle(
+                              color: Color(0xff2563eb),
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
+                            ),
                           ),
                         ),
                       ],
@@ -1095,17 +1381,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   onPressed: _loading ? null : _handleOtpSubmit,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xff1a3a5c),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
                     elevation: 0,
                   ),
                   child: _loading
                       ? const SizedBox(
-                          height: 22, width: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                          height: 22,
+                          width: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.5,
+                            color: Colors.white,
+                          ),
                         )
                       : const Text(
                           'Verify & Create Account',
-                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
                         ),
                 ),
               ),
@@ -1151,21 +1447,33 @@ class _ConsentTile extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         SizedBox(
-          width: 24, height: 24,
+          width: 24,
+          height: 24,
           child: Checkbox(
             value: checked,
             onChanged: (v) => onChanged(v ?? false),
             activeColor: const Color(0xff1a3a5c),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: links.isEmpty
-              ? Text(label, style: const TextStyle(fontSize: 13, color: Colors.black87))
+              ? Text(
+                  label,
+                  style: const TextStyle(fontSize: 13, color: Colors.black87),
+                )
               : Wrap(
                   children: [
-                    Text(label, style: const TextStyle(fontSize: 13, color: Colors.black87)),
+                    Text(
+                      label,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Colors.black87,
+                      ),
+                    ),
                     for (int i = 0; i < links.length; i++) ...[
                       Text(
                         links[i],
@@ -1176,9 +1484,15 @@ class _ConsentTile extends StatelessWidget {
                         ),
                       ),
                       if (i < links.length - 1)
-                        const Text(' & ', style: TextStyle(fontSize: 13, color: Colors.black87)),
+                        const Text(
+                          ' & ',
+                          style: TextStyle(fontSize: 13, color: Colors.black87),
+                        ),
                     ],
-                    const Text(' & HIPAA Consent.', style: TextStyle(fontSize: 13, color: Colors.black87)),
+                    const Text(
+                      ' & HIPAA Consent.',
+                      style: TextStyle(fontSize: 13, color: Colors.black87),
+                    ),
                   ],
                 ),
         ),
