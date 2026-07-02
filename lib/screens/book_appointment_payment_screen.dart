@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
+import '../config/api_config.dart';
 import '../services/payment_service.dart';
 
 class AppointmentPaymentPage extends StatefulWidget {
@@ -40,6 +41,10 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
             _summary(args, amount),
             const SizedBox(height: 18),
             _paymentCard(),
+            if (_useLocalPaymentBypass) ...[
+              const SizedBox(height: 18),
+              _localPaymentBypassCard(),
+            ],
             if (_isStripeTestMode) ...[
               const SizedBox(height: 18),
               _testModeCard(),
@@ -66,7 +71,9 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
                         ),
                       )
                     : Text(
-                        'Pay \$${_displayAmount(amount)}',
+                        _useLocalPaymentBypass
+                            ? 'Create Test Appointment'
+                            : 'Pay \$${_displayAmount(amount)}',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
               ),
@@ -121,17 +128,40 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: _box(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Card Payment',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _useLocalPaymentBypass
+                ? 'Local payment bypass is enabled. Stripe will be skipped for this development build.'
+                : 'Secure checkout is processed by Stripe. Your card details are not stored in this app.',
+            style: const TextStyle(color: Colors.black54, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _localPaymentBypassCard() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: _box().copyWith(color: const Color(0xffeefbf3)),
       child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Card Payment',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            'Local Payment Bypass',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
           ),
           SizedBox(height: 8),
           Text(
-            'Secure checkout is processed by Stripe. Your card details are not stored in this app.',
-            style: TextStyle(color: Colors.black54, height: 1.4),
+            'This local build will mark the appointment as paid with a mock payment reference.',
+            style: TextStyle(color: Colors.black87, height: 1.4),
           ),
         ],
       ),
@@ -203,6 +233,11 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
   }
 
   Future<void> _payAndCreate(Map<String, dynamic> args) async {
+    if (_useLocalPaymentBypass) {
+      await _createAppointmentWithLocalPayment(args);
+      return;
+    }
+
     if (!_supportsStripePaymentSheet) {
       _snack('Stripe card payment is available on Android and iOS builds.');
       return;
@@ -268,7 +303,29 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
           primaryButtonLabel: 'Pay \$${_displayAmount(amount)}',
           style: ThemeMode.system,
           allowsDelayedPaymentMethods: false,
-          paymentMethodOrder: const ['card'],
+          billingDetails: const BillingDetails(
+            name: 'Humancare Connect Patient',
+            email: 'patient@example.com',
+            address: Address(
+              city: null,
+              country: 'US',
+              line1: null,
+              line2: null,
+              postalCode: '10001',
+              state: null,
+            ),
+          ),
+          billingDetailsCollectionConfiguration:
+              const BillingDetailsCollectionConfiguration(
+                name: CollectionMode.never,
+                phone: CollectionMode.never,
+                email: CollectionMode.never,
+                address: AddressCollectionMode.never,
+                attachDefaultsToPaymentMethod: true,
+              ),
+          linkDisplayParams: const LinkDisplayParams(
+            linkDisplay: LinkDisplay.never,
+          ),
           returnURL: 'humancareconnect://stripe-redirect',
         ),
       );
@@ -345,6 +402,60 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       debugPrint('Payment failed: $error');
       debugPrint('$stackTrace');
       _snack('Payment failed. Please try again.');
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
+  }
+
+  Future<void> _createAppointmentWithLocalPayment(
+    Map<String, dynamic> args,
+  ) async {
+    setState(() => _processing = true);
+
+    final amount = _amount(args['cost']);
+    final paymentIntentId =
+        'local_payment_${DateTime.now().millisecondsSinceEpoch}';
+    final appointmentPayload = _appointmentPayload(
+      args,
+      amount,
+      paymentIntentId,
+    );
+
+    try {
+      debugPrint(
+        '[LocalPaymentBypass] Creating paid appointment for '
+        'paymentIntentId=$paymentIntentId',
+      );
+      final appointmentResult =
+          await _paymentService.createPaidAppointment(appointmentPayload);
+      if (!mounted) return;
+
+      if (!appointmentResult.success) {
+        debugPrint(
+          '[LocalPaymentBypass] Appointment creation failed: '
+          'status=${appointmentResult.statusCode} '
+          'message="${appointmentResult.message}"',
+        );
+        _snack(appointmentResult.message);
+        return;
+      }
+
+      Navigator.pushNamedAndRemoveUntil(
+        context,
+        '/appointment-confirmation',
+        (route) => route.isFirst,
+        arguments: {
+          ...args,
+          'amount': amount,
+          'paymentIntentId': paymentIntentId,
+          'appointment': appointmentResult.data ?? <String, dynamic>{},
+        },
+      );
+    } catch (error, stackTrace) {
+      if (!mounted) return;
+      debugPrint('[LocalPaymentBypass] Appointment creation failed: $error');
+      debugPrint('$stackTrace');
+      _snack('Appointment booking failed. Please try again.');
     } finally {
       if (mounted) setState(() => _processing = false);
     }
@@ -523,6 +634,23 @@ String get _stripePublishableKey {
 }
 
 bool get _isStripeTestMode => _stripePublishableKey.startsWith('pk_test_');
+
+bool get _useLocalPaymentBypass {
+  const appEnv = String.fromEnvironment('APP_ENV', defaultValue: 'local');
+  final enabled = _envFlag('LOCAL_PAYMENT_BYPASS') || _envFlag('DEV_BYPASS');
+  return appEnv == 'local' && enabled && _isLocalApiBaseUrl;
+}
+
+bool _envFlag(String key) {
+  final value = dotenv.env[key]?.trim().toLowerCase();
+  return value == 'true' || value == '1' || value == 'yes';
+}
+
+bool get _isLocalApiBaseUrl {
+  final uri = Uri.tryParse(ApiConfig.baseUrl);
+  final host = uri?.host.toLowerCase() ?? '';
+  return host == 'localhost' || host == '127.0.0.1' || host == '10.0.2.2';
+}
 
 bool get _hasStripePublishableKey {
   try {
