@@ -1,20 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../services/token_storage_service.dart';
 import '../services/api_client.dart';
 import 'book_appointment_screen.dart';
+import 'video_call_screen.dart';
 
 class DoctorInfo {
-  const DoctorInfo({this.name, this.email});
+  const DoctorInfo({this.id, this.name, this.email});
 
   factory DoctorInfo.fromJson(Map<String, dynamic>? json) {
     if (json == null) return const DoctorInfo();
     return DoctorInfo(
+      id: (json['_id'] ?? json['id'])?.toString(),
       name: json['name']?.toString(),
       email: json['email']?.toString(),
     );
   }
 
+  Map<String, dynamic> toJson() => {
+    if ((id ?? '').isNotEmpty) '_id': id,
+    if ((name ?? '').isNotEmpty) 'name': name,
+    if ((email ?? '').isNotEmpty) 'email': email,
+  };
+
+  final String? id;
   final String? name;
   final String? email;
 }
@@ -45,6 +55,7 @@ class Appointment {
     this.time,
     this.problem,
     this.medicalReports = const [],
+    this.raw = const <String, dynamic>{},
   });
 
   factory Appointment.fromJson(Map<String, dynamic> json) {
@@ -69,6 +80,7 @@ class Appointment {
             ),
           )
           .toList(),
+      raw: json,
     );
   }
 
@@ -80,6 +92,31 @@ class Appointment {
   final String? time;
   final String? problem;
   final List<MedicalReport> medicalReports;
+  final Map<String, dynamic> raw;
+
+  Map<String, dynamic> toVideoCallPayload(Map<String, String> patientProfile) {
+    final patientId = patientProfile['userId'] ?? '';
+    final patient = {
+      if (patientId.isNotEmpty) '_id': patientId,
+      if ((patientProfile['name'] ?? '').isNotEmpty)
+        'name': patientProfile['name'],
+      if ((patientProfile['email'] ?? '').isNotEmpty)
+        'email': patientProfile['email'],
+    };
+
+    return {
+      ...raw,
+      '_id': id,
+      'id': id,
+      'status': status,
+      if ((date ?? '').isNotEmpty) 'date': date,
+      if ((time ?? '').isNotEmpty) 'time': time,
+      if ((problem ?? '').isNotEmpty) 'problem': problem,
+      if (doctor != null && doctor!.toJson().isNotEmpty)
+        'doctorId': doctor!.toJson(),
+      if (patient.isNotEmpty) 'patientId': patient,
+    };
+  }
 }
 
 class AppointmentsScreen extends StatefulWidget {
@@ -93,6 +130,7 @@ class AppointmentsScreen extends StatefulWidget {
 
 class _AppointmentsScreenState extends State<AppointmentsScreen> {
   final _apiClient = ApiClient();
+  final _tokenStorage = const TokenStorageService();
   final _scrollController = ScrollController();
   final Map<String, GlobalKey> _cardKeys = {};
 
@@ -632,14 +670,22 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
       );
     }
 
+    if (appointment.status != 'confirmed') {
+      return const SizedBox.shrink();
+    }
+
     return Wrap(
       spacing: 10,
       runSpacing: 8,
       children: [
-        OutlinedButton.icon(
-          onPressed: _showVideoUnavailable,
-          icon: const Icon(Icons.videocam_outlined, size: 16),
-          label: const Text('Join Video Call'),
+        ElevatedButton.icon(
+          onPressed: () => _openVideoConsultation(appointment),
+          icon: const Icon(Icons.video_call_outlined, size: 18),
+          label: const Text('Join consultation'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.teal.shade600,
+            foregroundColor: Colors.white,
+          ),
         ),
       ],
     );
@@ -664,10 +710,27 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     );
   }
 
-  void _showVideoUnavailable() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Video consultation is not configured in this build.'),
+  Future<void> _openVideoConsultation(Appointment appointment) async {
+    final patientProfile = await _tokenStorage.getUserProfile();
+    if (!mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoCallScreen(
+          appointmentId: appointment.id,
+          initialAppointment: appointment.toVideoCallPayload(patientProfile),
+          initialDoctor: appointment.doctor?.toJson(),
+          initialPatient: {
+            if ((patientProfile['userId'] ?? '').isNotEmpty)
+              '_id': patientProfile['userId'],
+            if ((patientProfile['name'] ?? '').isNotEmpty)
+              'name': patientProfile['name'],
+            if ((patientProfile['email'] ?? '').isNotEmpty)
+              'email': patientProfile['email'],
+          },
+          initialRole: 'user',
+        ),
       ),
     );
   }
