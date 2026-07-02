@@ -1047,58 +1047,80 @@ class _RegisterScreenState extends State<RegisterScreen> {
           // ── Contact Information ─────────────────────────────────────────
           _section('Contact Information'),
 
-          Row(
-            crossAxisAlignment:
-                CrossAxisAlignment.center, // align both fields evenly
-            children: [
-              // Dial code (auto-updates from country selection)
-              SizedBox(
-                width: 64, // decreased from 100
-                child: Container(
-                  height: 58,
-                  decoration: BoxDecoration(
-                    color: const Color(0xfff9fafb),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: Colors.black.withValues(alpha: 0.09),
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment:
+                  CrossAxisAlignment.stretch, // forces equal height
+              children: [
+                // Dial code
+                SizedBox(
+                  width: 64,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xfff9fafb),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: Colors.black.withValues(alpha: 0.09),
+                      ),
                     ),
-                  ),
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  alignment: Alignment.center,
-                  child: Text(
-                    _selectedDialCode.isEmpty ? '+91' : _selectedDialCode,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: _selectedDialCode.isEmpty
-                          ? Colors.grey[400]!
-                          : const Color(0xff1a3a5c),
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    alignment: Alignment.center,
+                    child: Text(
+                      _selectedDialCode.isEmpty ? '+91' : _selectedDialCode,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: _selectedDialCode.isEmpty
+                            ? Colors.grey[400]!
+                            : const Color(0xff1a3a5c),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
                     ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
                   ),
                 ),
-              ),
-              const SizedBox(width: 10), // slightly tighter gap
-              Expanded(
-                child: SizedBox(
-                  height: 58, // match dial code box height exactly
+                const SizedBox(width: 10),
+                Expanded(
                   child: TextFormField(
                     controller: _mobileController,
                     keyboardType: TextInputType.phone,
                     style: const TextStyle(fontSize: 14, color: Colors.black87),
-                    decoration:
-                        _dec(
-                          label: 'Mobile Number',
-                          icon: Icons.phone_outlined,
-                        ).copyWith(
-                          isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 0,
-                          ),
+                    decoration: InputDecoration(
+                      hintText: 'Mobile Number',
+                      hintStyle: TextStyle(
+                        fontSize: 14,
+                        color: Colors.grey[400],
+                      ),
+                      prefixIcon: const Icon(
+                        Icons.phone_outlined,
+                        size: 18,
+                        color: Color(0xff1a3a5c),
+                      ),
+                      filled: true,
+                      fillColor: const Color(0xfff9fafb),
+                      isDense: true,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: Colors.black.withValues(alpha: 0.09),
                         ),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide(
+                          color: Colors.black.withValues(alpha: 0.09),
+                        ),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: const BorderSide(
+                          color: Color(0xff1a3a5c),
+                          width: 1.2,
+                        ),
+                      ),
+                    ),
                     validator: (v) {
                       if ((v?.trim() ?? '').isEmpty) return null;
                       if (!RegExp(r'^[\d\-\+\s\(\)]{7,}$').hasMatch(v!)) {
@@ -1108,8 +1130,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     },
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(height: 24),
 
