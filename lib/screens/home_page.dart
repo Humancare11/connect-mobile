@@ -7,8 +7,15 @@ import '../widgets/home/book_appointment_card.dart';
 import '../widgets/home/explore_specialties_section.dart';
 import '../widgets/home/medical_services_section.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  String _searchQuery = '';
 
   @override
   Widget build(BuildContext context) {
@@ -17,26 +24,28 @@ class HomeScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          children: const [
-            HomeHeader(),
+          children: [
+            const HomeHeader(),
 
-            SizedBox(height: 18),
+            const SizedBox(height: 18),
 
-            SearchBarWidget(),
+            SearchBarWidget(
+              onChanged: (value) => setState(() => _searchQuery = value),
+            ),
 
-            SizedBox(height: 18),
+            const SizedBox(height: 18),
 
-            BookAppointmentCard(),
-            
-const SizedBox(height: 18),
+            BookAppointmentCard(searchQuery: _searchQuery),
 
-            ExploreSpecialtiesSection(),
+            const SizedBox(height: 18),
 
-            SizedBox(height: 18),
+            ExploreSpecialtiesSection(searchQuery: _searchQuery),
 
-            MedicalServicesSection(),
+            const SizedBox(height: 18),
 
-            SizedBox(height: 18),
+            MedicalServicesSection(searchQuery: _searchQuery),
+
+            const SizedBox(height: 18),
           ],
         ),
       ),

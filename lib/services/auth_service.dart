@@ -1,7 +1,10 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../models/api_result.dart';
 import '../models/auth_response.dart';
+import '../models/google_auth_result.dart';
 import 'api_client.dart';
 import 'token_storage_service.dart';
 
@@ -23,6 +26,15 @@ class AuthService {
     '/profile',
     '/me',
   ];
+
+  static String? get _googleServerClientId {
+    final clientId =
+        dotenv.env['ANDROID_GOOGLE_CLIENT_ID'] ??
+        dotenv.env['GOOGLE_CLIENT_ID'] ??
+        dotenv.env['VITE_GOOGLE_CLIENT_ID'];
+    final trimmed = clientId?.trim() ?? '';
+    return trimmed.isEmpty ? null : trimmed;
+  }
 
   Future<ApiResult<AuthResponse>> login({
     required String email,
@@ -186,11 +198,77 @@ class AuthService {
     );
   }
 
-  Future<ApiResult<AuthResponse>> googleLogin() async {
+  Future<GoogleAuthResult> googleLoginWithAccessToken(String accessToken) async {
+    try {
+      final trimmedToken = accessToken.trim();
+      if (trimmedToken.isEmpty) {
+        return const GoogleAuthResult(
+          success: false,
+          message: 'Google Sign-In did not return an access token.',
+        );
+      }
+
+      final result = await _apiClient.post('/auth/google', {
+        'accessToken': trimmedToken,
+      });
+
+      if (!result.success) {
+        return GoogleAuthResult(
+          success: false,
+          message: result.message.isNotEmpty ? result.message : 'Google Sign-In failed.',
+        );
+      }
+
+      final data = result.data ?? <String, dynamic>{};
+      final isNewUser = data['isNewUser'] == true;
+      final googleName = data['googleName']?.toString() ?? '';
+      final googleEmail = data['googleEmail']?.toString() ?? '';
+
+      if (isNewUser) {
+        return GoogleAuthResult(
+          success: true,
+          message: 'Complete your profile to continue.',
+          isNewUser: true,
+          googleName: googleName,
+          googleEmail: googleEmail,
+          accessToken: trimmedToken,
+        );
+      }
+
+      final authResult = _authResult(result, 'Google Sign-In response was invalid.');
+      return GoogleAuthResult(
+        success: authResult.success,
+        message: authResult.message,
+        authResponse: authResult.data,
+      );
+    } catch (error) {
+      return const GoogleAuthResult(
+        success: false,
+        message: 'Google Sign-In failed.',
+      );
+    }
+  }
+
+  Future<GoogleAuthResult> googleLogin() async {
+    if (kIsWeb) {
+      return const GoogleAuthResult(
+        success: false,
+        message: 'Use the Google button on the web version.',
+      );
+    }
+
     try {
       final googleSignIn = GoogleSignIn.instance;
       if (!_googleInitialized) {
-        await googleSignIn.initialize();
+        final serverClientId = _googleServerClientId;
+        if (serverClientId == null) {
+          return const GoogleAuthResult(
+            success: false,
+            message: 'Google Sign-In is missing ANDROID_GOOGLE_CLIENT_ID.',
+          );
+        }
+
+        await googleSignIn.initialize(serverClientId: serverClientId);
         _googleInitialized = true;
       }
 
@@ -201,22 +279,54 @@ class AuthService {
           await account.authorizationClient.authorizeScopes(scopes);
       final accessToken = authorization.accessToken;
 
-      if (accessToken.isEmpty) {
-        return const ApiResult<AuthResponse>(
+      return googleLoginWithAccessToken(accessToken);
+    } catch (error, stackTrace) {
+      debugPrint('Google Sign-In failed: $error');
+      debugPrint('$stackTrace');
+      return GoogleAuthResult(
+        success: false,
+        message: 'Google Sign-In failed: ${_googleErrorMessage(error)}',
+      );
+    }
+  }
+
+  Future<GoogleAuthResult> completeGoogleRegistration({
+    required String accessToken,
+    required String mobile,
+    required String dob,
+    required String gender,
+    required String country,
+    required bool privacyConsent,
+    required bool hipaaConsent,
+  }) async {
+    try {
+      final result = await _apiClient.post('/auth/google', {
+        'accessToken': accessToken,
+        'mobile': mobile,
+        'dob': dob,
+        'gender': gender,
+        'country': country,
+        'privacyConsent': privacyConsent,
+        'hipaaConsent': hipaaConsent,
+      });
+
+      if (!result.success) {
+        return GoogleAuthResult(
           success: false,
-          message: 'Google Sign-In did not return an access token.',
+          message: result.message.isNotEmpty ? result.message : 'Registration failed.',
         );
       }
 
-      final result = await _apiClient.post('/auth/google', {
-        'accessToken': accessToken,
-      });
-
-      return _authResult(result, 'Google Sign-In response was invalid.');
+      final authResult = _authResult(result, 'Google registration response was invalid.');
+      return GoogleAuthResult(
+        success: authResult.success,
+        message: authResult.message,
+        authResponse: authResult.data,
+      );
     } catch (error) {
-      return const ApiResult<AuthResponse>(
+      return const GoogleAuthResult(
         success: false,
-        message: 'Google Sign-In failed.',
+        message: 'Registration failed.',
       );
     }
   }
@@ -559,4 +669,29 @@ String _findFirstStringByKeys(dynamic value, Set<String> keys) {
   }
 
   return '';
+}
+
+String _googleErrorMessage(Object error) {
+  final message = error.toString().trim();
+  if (message.isEmpty) return 'Please try again.';
+
+  const prefixes = [
+    'GoogleSignInException: ',
+    'PlatformException(',
+    'Exception: ',
+  ];
+
+  var cleaned = message;
+  for (final prefix in prefixes) {
+    if (cleaned.startsWith(prefix)) {
+      cleaned = cleaned.substring(prefix.length).trim();
+      break;
+    }
+  }
+
+  if (cleaned.length > 180) {
+    return '${cleaned.substring(0, 177)}...';
+  }
+
+  return cleaned;
 }

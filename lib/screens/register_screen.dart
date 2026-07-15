@@ -1,8 +1,16 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import '../models/location_model.dart';
+import '../widgets/google_sign_in_web_stub.dart'
+    if (dart.library.js_interop) 'package:google_sign_in_web/web_only.dart'
+    as web_only;
 import '../models/register_model.dart';
 import '../services/auth_repository.dart';
 import '../services/auth_validators.dart';
+import '../services/auth_service.dart';
 import '../services/location_service.dart';
 import '../widgets/auth_widgets.dart';
 import 'main_screen.dart';
@@ -230,7 +238,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   int _currentStep = _stepForm;
   bool _loading = false;
+  bool _googleLoading = false;
+  bool _showGoogleComplete = false;
   String _error = '';
+  String _googleAccessToken = '';
+  String _googleName = '';
+  String _googleEmail = '';
 
   // Form fields
   final _formKey = GlobalKey<FormState>();
@@ -273,16 +286,32 @@ class _RegisterScreenState extends State<RegisterScreen> {
       GlobalKey<FormFieldState<String>>();
 
   final _authRepository = AuthRepository();
+  final _authService = AuthService();
   final LocationService _locationService = LocationService();
+  StreamSubscription<GoogleSignInAuthenticationEvent>? _googleAuthSubscription;
 
   @override
   void initState() {
     super.initState();
     _fetchCountries();
+    if (kIsWeb) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        if (!mounted) return;
+        await GoogleSignIn.instance.initialize();
+        _googleAuthSubscription = GoogleSignIn.instance.authenticationEvents.listen(
+          (event) async {
+            if (event is GoogleSignInAuthenticationEventSignIn) {
+              await _handleGoogleSignedIn(event.user);
+            }
+          },
+        );
+      });
+    }
   }
 
   @override
   void dispose() {
+    _googleAuthSubscription?.cancel();
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
@@ -621,6 +650,145 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   void _setError(String msg) => setState(() => _error = msg);
+
+  Future<void> _handleGoogleSignUp() async {
+    if (kIsWeb) {
+      setState(() {
+        _googleLoading = true;
+        _error = '';
+      });
+      return;
+    }
+
+    setState(() {
+      _googleLoading = true;
+      _error = '';
+    });
+
+    final result = await _authService.googleLogin();
+    if (!mounted) return;
+    setState(() {
+      _googleLoading = false;
+      _error = result.success ? '' : result.message;
+    });
+
+    if (!result.success) return;
+    if (result.isNewUser) {
+      setState(() {
+        _showGoogleComplete = true;
+        _googleAccessToken = result.accessToken;
+        _googleName = result.googleName;
+        _googleEmail = result.googleEmail;
+      });
+      return;
+    }
+
+    if (result.authResponse == null) return;
+    await _authService.saveSession(result.authResponse!);
+    if (!mounted) return;
+    showAuthSnackBar(context, 'Registration Successful');
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
+  }
+
+  Future<void> _handleGoogleSignedIn(GoogleSignInAccount account) async {
+    try {
+      const scopes = ['openid', 'profile', 'email'];
+      final authorization =
+          await account.authorizationClient.authorizationForScopes(scopes) ??
+          await account.authorizationClient.authorizeScopes(scopes);
+      final result = await _authService.googleLoginWithAccessToken(
+        authorization.accessToken,
+      );
+      if (!mounted) return;
+      setState(() {
+        _googleLoading = false;
+        _error = result.success ? '' : result.message;
+      });
+
+      if (!result.success) return;
+      if (result.isNewUser) {
+        setState(() {
+          _showGoogleComplete = true;
+          _googleAccessToken = result.accessToken;
+          _googleName = result.googleName;
+          _googleEmail = result.googleEmail;
+        });
+        return;
+      }
+
+      if (result.authResponse == null) return;
+      await _authService.saveSession(result.authResponse!);
+      if (!mounted) return;
+      showAuthSnackBar(context, 'Registration Successful');
+      Navigator.of(
+        context,
+      ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _googleLoading = false;
+        _error = 'Google Sign-In failed.';
+      });
+    }
+  }
+
+  Future<void> _completeGoogleRegistration() async {
+    if (_mobileController.text.trim().isEmpty) {
+      _setError('Enter mobile number');
+      return;
+    }
+
+    final dobError = _getDobError(_dobController.text.trim());
+    if (dobError.isNotEmpty) {
+      _setError(dobError);
+      return;
+    }
+
+    if (_selectedGender.isEmpty) {
+      _setError('Select Gender');
+      return;
+    }
+
+    if (_selectedCountry.isEmpty) {
+      _setError('Select your country');
+      return;
+    }
+
+    if (!_privacyConsent || !_hipaaConsent) {
+      _setError('Accept Terms, Privacy Policy, and HIPAA consent requirements');
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = '';
+    });
+
+    final result = await _authService.completeGoogleRegistration(
+      accessToken: _googleAccessToken,
+      mobile: _mobileController.text.trim(),
+      dob: _dobController.text.trim(),
+      gender: _selectedGender,
+      country: _selectedCountry,
+      privacyConsent: _privacyConsent,
+      hipaaConsent: _hipaaConsent,
+    );
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _error = result.success ? '' : result.message;
+    });
+
+    if (!result.success || result.authResponse == null) return;
+    await _authService.saveSession(result.authResponse!);
+    if (!mounted) return;
+    showAuthSnackBar(context, 'Registration Successful');
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
+  }
 
   // ── Date picker ───────────────────────────────────────────────────────────
   Future<void> _pickDob() async {
@@ -1254,12 +1422,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
             ),
           ),
+          const SizedBox(height: 16),
+          _googleSignupButton(),
           const SizedBox(height: 20),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 4,
+            runSpacing: 4,
             children: [
               Text(
-                'Already have an account? ',
+                'Already have an account?',
                 style: TextStyle(color: Colors.grey[600], fontSize: 14),
               ),
               GestureDetector(
@@ -1276,6 +1448,147 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _googleSignupButton() {
+    if (kIsWeb) {
+      return SizedBox(
+        width: double.infinity,
+        height: 54,
+        child: web_only.renderButton(),
+      );
+    }
+
+    final disabled = _loading || _googleLoading;
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: OutlinedButton.icon(
+        onPressed: disabled ? null : _handleGoogleSignUp,
+        icon: _googleLoading
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.g_mobiledata, size: 22),
+        label: Text(
+          _googleLoading ? 'Connecting...' : 'Continue with Google',
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: const Color(0xff1a3a5c),
+          side: const BorderSide(color: Color(0xffd1d5db)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGoogleCompletionScreen() {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        foregroundColor: const Color(0xff1a3a5c),
+        elevation: 0,
+        title: const Text('Complete your profile'),
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Welcome ${_googleName.isNotEmpty ? _googleName : 'there'}',
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _googleEmail.isNotEmpty
+                    ? 'We need a few more details to finish creating your account for $_googleEmail.'
+                    : 'We need a few more details to finish creating your account.',
+                style: TextStyle(fontSize: 14, color: Colors.grey[600], height: 1.4),
+              ),
+              const SizedBox(height: 24),
+              if (_error.isNotEmpty) ...[
+                _errorBox(_error),
+                const SizedBox(height: 16),
+              ],
+              TextField(
+                controller: _mobileController,
+                keyboardType: TextInputType.phone,
+                decoration: _dec(label: 'Mobile Number', icon: Icons.phone_outlined),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _dobController,
+                readOnly: true,
+                onTap: _pickDob,
+                decoration: _dec(
+                  label: 'Date of Birth',
+                  icon: Icons.calendar_today_outlined,
+                  suffix: const Icon(Icons.edit_calendar_outlined, size: 18),
+                ),
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                initialValue: _selectedGender.isEmpty ? null : _selectedGender,
+                decoration: _dec(label: 'Gender', icon: Icons.wc_outlined),
+                items: _genders
+                    .map((g) => DropdownMenuItem(value: g, child: Text(g)))
+                    .toList(),
+                onChanged: (value) => setState(() => _selectedGender = value ?? ''),
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<String>(
+                initialValue: _selectedCountry.isEmpty ? null : _selectedCountry,
+                decoration: _dec(label: 'Country', icon: Icons.public_outlined),
+                items: _countries
+                    .map((country) => DropdownMenuItem(value: country, child: Text(country)))
+                    .toList(),
+                onChanged: (value) => setState(() => _selectedCountry = value ?? ''),
+              ),
+              const SizedBox(height: 14),
+              CheckboxListTile(
+                value: _privacyConsent,
+                onChanged: (value) => setState(() => _privacyConsent = value ?? false),
+                title: const Text('I agree to the Privacy Policy'),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+              ),
+              CheckboxListTile(
+                value: _hipaaConsent,
+                onChanged: (value) => setState(() => _hipaaConsent = value ?? false),
+                title: const Text('I accept the HIPAA consent requirements'),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: _loading ? null : _completeGoogleRegistration,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xff1a3a5c),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: _loading
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                        )
+                      : const Text('Create Account'),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1439,6 +1752,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // ═══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
+    if (_showGoogleComplete) {
+      return _buildGoogleCompletionScreen();
+    }
+
     return AuthScaffold(
       title: _currentStep == _stepForm ? 'Create Account' : 'Verify Email',
       subtitle: _currentStep == _stepForm

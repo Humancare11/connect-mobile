@@ -1,4 +1,4 @@
-package com.example.hello_app
+package com.humancareconnect.app
 
 import io.flutter.embedding.android.FlutterFragmentActivity
 

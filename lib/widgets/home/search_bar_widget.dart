@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import '../../config/app_design_system.dart';
 
 class SearchBarWidget extends StatelessWidget {
-  const SearchBarWidget({super.key});
+  const SearchBarWidget({super.key, this.onChanged});
+
+  final ValueChanged<String>? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -30,8 +32,9 @@ class SearchBarWidget extends StatelessWidget {
           const SizedBox(width: 10),
 
           // ── Input field ────────────────────────────────────────────────
-          const Expanded(
+          Expanded(
             child: TextField(
+              onChanged: onChanged,
               decoration: InputDecoration(
                 hintText: 'Search doctors, services, specialties...',
                 hintStyle: TextStyle(

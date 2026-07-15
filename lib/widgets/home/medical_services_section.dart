@@ -28,7 +28,9 @@ class _MedService {
 // ── Main widget ───────────────────────────────────────────────────────────────
 
 class MedicalServicesSection extends StatelessWidget {
-  const MedicalServicesSection({super.key});
+  const MedicalServicesSection({super.key, this.searchQuery = ''});
+
+  final String searchQuery;
 
   static const List<_MedService> _services = [
     _MedService(
@@ -75,8 +77,20 @@ class MedicalServicesSection extends StatelessWidget {
     ),
   ];
 
+  List<_MedService> get _filteredServices {
+    final query = _normalizeSearchText(searchQuery);
+    if (query.isEmpty) return _services;
+
+    return _services.where((service) {
+      return _normalizeSearchText(service.title).contains(query) ||
+          _normalizeSearchText(service.subtitle).contains(query);
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final services = _filteredServices;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -90,21 +104,24 @@ class MedicalServicesSection extends StatelessWidget {
         const SizedBox(height: AppSpacing.md),
 
         // ── 2-col service grid ─────────────────────────────────────────────
-        GridView.builder(
-          shrinkWrap: true,
-          physics:    const NeverScrollableScrollPhysics(),
-          itemCount:  _services.length,
-          gridDelegate:
-              const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount:   2,
-            crossAxisSpacing: 10,
-            mainAxisSpacing:  10,
-            childAspectRatio: 2.05,
+        if (services.isEmpty)
+          const _EmptyServicesState()
+        else
+          GridView.builder(
+            shrinkWrap: true,
+            physics:    const NeverScrollableScrollPhysics(),
+            itemCount:  services.length,
+            gridDelegate:
+                const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount:   2,
+              crossAxisSpacing: 10,
+              mainAxisSpacing:  10,
+              childAspectRatio: 2.05,
+            ),
+            itemBuilder: (context, index) {
+              return _ServiceTile(item: services[index]);
+            },
           ),
-          itemBuilder: (context, index) {
-            return _ServiceTile(item: _services[index]);
-          },
-        ),
       ],
     );
   }
@@ -188,4 +205,35 @@ class _ServiceTile extends StatelessWidget {
       ),
     );
   }
+}
+
+class _EmptyServicesState extends StatelessWidget {
+  const _EmptyServicesState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color:        AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border:       Border.all(color: AppColors.border, width: 1.2),
+        boxShadow:    AppShadows.subtle,
+      ),
+      child: const Text(
+        'No medical services match your search.',
+        style: TextStyle(
+          fontFamily: AppFonts.family,
+          fontSize:   12,
+          fontWeight: FontWeight.w500,
+          color:      AppColors.textSecondary,
+        ),
+      ),
+    );
+  }
+}
+
+String _normalizeSearchText(String value) {
+  return value.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
 }

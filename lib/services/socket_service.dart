@@ -31,6 +31,14 @@ class SocketService {
     _socket.on(event, handler);
   }
 
+  void off(String event, [void Function(dynamic)? handler]) {
+    if (handler == null) {
+      _socket.off(event);
+      return;
+    }
+    _socket.off(event, handler);
+  }
+
   void once(String event, void Function(dynamic) handler) {
     _socket.once(event, handler);
   }

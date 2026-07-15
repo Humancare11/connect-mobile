@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../services/auth_repository.dart';
 import 'profile_settings_screen.dart';
 import 'my_records_screen.dart';
 import 'raise_ticket_screen.dart';
 import 'change_password_screen.dart';
 import 'faq_screen.dart';
+import 'login_screen.dart';
 
 // Central palette so the "premium dark blue" theme stays consistent
 // everywhere. Tweak these two values to shift the whole screen's tone.
@@ -21,7 +23,9 @@ class _Palette {
 }
 
 class AccountScreen extends StatelessWidget {
-  const AccountScreen({super.key});
+  const AccountScreen({super.key, this.authRepository});
+
+  final AuthRepository? authRepository;
 
   Future<void> _confirmLogout(BuildContext context) async {
     final confirmed = await showDialog<bool>(
@@ -32,12 +36,17 @@ class AccountScreen extends StatelessWidget {
           'Log out',
           style: TextStyle(fontWeight: FontWeight.w800),
         ),
-        content: const Text('Are you sure you want to log out of your account?'),
+        content: const Text(
+          'Are you sure you want to log out of your account?',
+        ),
         actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel', style: TextStyle(color: _Palette.subtitle)),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: _Palette.subtitle),
+            ),
           ),
           FilledButton(
             style: FilledButton.styleFrom(
@@ -54,9 +63,27 @@ class AccountScreen extends StatelessWidget {
     );
 
     if (confirmed == true && context.mounted) {
-      // TODO: hook this up to your actual auth / session logic.
-      // e.g. AuthService.instance.logout();
-      Navigator.of(context).popUntil((route) => route.isFirst);
+      final repository = authRepository ?? AuthRepository();
+
+      try {
+        await repository.clearSession();
+      } catch (error, stackTrace) {
+        debugPrint('Logout failed: $error');
+        debugPrint('$stackTrace');
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to sign out right now. Please try again.'),
+          ),
+        );
+        return;
+      }
+
+      if (!context.mounted) return;
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+        (route) => false,
+      );
     }
   }
 
@@ -103,7 +130,10 @@ class AccountScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text(
           'Account',
-          style: TextStyle(fontWeight: FontWeight.w800, color: _Palette.darkBlue),
+          style: TextStyle(
+            fontWeight: FontWeight.w800,
+            color: _Palette.darkBlue,
+          ),
         ),
         backgroundColor: Colors.white,
         foregroundColor: _Palette.darkBlue,
@@ -184,7 +214,11 @@ class _OptionGroup extends StatelessWidget {
               if (!isLast)
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16),
-                  child: Divider(height: 1, thickness: 1, color: _Palette.divider),
+                  child: Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: _Palette.divider,
+                  ),
                 ),
             ],
           );
@@ -235,7 +269,10 @@ class _AccountTile extends StatelessWidget {
                     const SizedBox(height: 3),
                     Text(
                       option.subtitle,
-                      style: const TextStyle(fontSize: 12.5, color: _Palette.subtitle),
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: _Palette.subtitle,
+                      ),
                     ),
                   ],
                 ),

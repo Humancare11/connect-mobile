@@ -33,12 +33,12 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
 
     final selection = args ??
         {
-          "specName": "General Physician",
-          "specIcon": "🩺",
-          "catLabel": "General & Everyday Care",
-          "condName": "Fever",
-          "condIcon": "🌡️",
-          "cost": 100,
+          "specName": "",
+          "specIcon": "",
+          "catLabel": "",
+          "condName": "",
+          "condIcon": "",
+          "cost": 0,
         };
 
     return Scaffold(

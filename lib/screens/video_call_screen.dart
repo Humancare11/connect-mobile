@@ -505,6 +505,11 @@ class _VideoCallScreenState extends State<VideoCallScreen>
     return (p ?? '').toString();
   }
 
+  bool get _canJoinConsultation {
+    final status = _appt?['status'];
+    return status == 'confirmed' || (status == 'assigned' && _apptDoctorId.isNotEmpty);
+  }
+
   bool get _isDoctor {
     if (_activeRole.isNotEmpty) return _activeRole == 'doctor';
     if (_doctorId.isNotEmpty &&
@@ -684,7 +689,7 @@ class _VideoCallScreenState extends State<VideoCallScreen>
   }
 
   void _afterApptLoaded() {
-    if (_appt?['status'] == 'confirmed' && !_callSessionStarted) {
+    if (_canJoinConsultation && !_callSessionStarted) {
       _callSessionStarted = true;
       _startCallSession();
     }
@@ -1158,7 +1163,7 @@ class _VideoCallScreenState extends State<VideoCallScreen>
       _completing = true;
     });
     try {
-      if (_isDoctor && _appt?['status'] == 'confirmed') {
+      if (_isDoctor && _canJoinConsultation) {
         await ApiService.instance
             .put('/api/appointments/${widget.appointmentId}/complete', {});
       }
@@ -1282,7 +1287,9 @@ class _VideoCallScreenState extends State<VideoCallScreen>
       );
     }
 
-    if (_appt?['status'] == 'pending') {
+    final status = _appt?['status'];
+    if (!_canJoinConsultation &&
+        ['pending', 'requested', 'upcoming', 'assigned'].contains(status)) {
       return _gateScreen(
         icon: Icons.access_time,
         title: 'Appointment Pending',
@@ -1292,7 +1299,6 @@ class _VideoCallScreenState extends State<VideoCallScreen>
       );
     }
 
-    final status = _appt?['status'];
     if (['complete', 'completed'].contains(status) || status == 'cancelled') {
       final isComplete = ['complete', 'completed'].contains(status);
       return _gateScreen(

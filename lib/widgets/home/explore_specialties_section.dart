@@ -1,216 +1,130 @@
-// Section 5 — ExploreSpecialtiesSection
-// Premium redesign: horizontal scroll, soft tinted icon backgrounds,
-// consistent card shadow, pill "See all" button
-
 import 'package:flutter/material.dart';
-import '../../config/app_design_system.dart';
-import '../../screens/book_appointment_screen.dart';
 
-// ── Data model ────────────────────────────────────────────────────────────────
+import '../../config/app_design_system.dart';
+import '../../models/appointment_tree_model.dart';
+import '../../screens/book_appointment_screen.dart';
+import '../../services/appointment_tree_service.dart';
 
 class _SpecialtyItem {
-  final IconData icon;
-  final String   title;
-  final Color    accent;
-  final Color    bgColor;
+  final String icon;
+  final String title;
+  final String appointmentName;
+  final Color accent;
+  final Color bgColor;
 
   const _SpecialtyItem({
     required this.icon,
     required this.title,
+    required this.appointmentName,
     required this.accent,
     required this.bgColor,
   });
-
-  String get appointmentName => title.replaceAll(RegExp(r'\s+'), ' ').trim();
 }
 
-// ── Main widget ───────────────────────────────────────────────────────────────
+class ExploreSpecialtiesSection extends StatefulWidget {
+  const ExploreSpecialtiesSection({super.key, this.searchQuery = ''});
 
-class ExploreSpecialtiesSection extends StatelessWidget {
-  const ExploreSpecialtiesSection({super.key});
+  final String searchQuery;
 
-  static const List<_SpecialtyItem> _specialties = [
-  _SpecialtyItem(
-    icon: Icons.medical_services_outlined,
-    title: 'General\nPhysician',
-    accent: AppColors.catHeart,
-    bgColor: Color(0xFFEFF6FF),
-  ),
-  _SpecialtyItem(
-    icon: Icons.local_hospital_outlined,
-    title: 'Internal\nMedicine',
-    accent: AppColors.catBrain,
-    bgColor: Color(0xFFF5EFFF),
-  ),
-  _SpecialtyItem(
-    icon: Icons.family_restroom_outlined,
-    title: 'Family\nMedicine',
-    accent: AppColors.catMental,
-    bgColor: Color(0xFFEFFAF6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.psychology_outlined,
-    title: 'Psychiatry',
-    accent: AppColors.catMental,
-    bgColor: Color(0xFFF5EFFF),
-  ),
-  _SpecialtyItem(
-    icon: Icons.self_improvement_outlined,
-    title: 'Psychology /\nCounselling',
-    accent: AppColors.catMental,
-    bgColor: Color(0xFFEFF6FF),
-  ),
-  _SpecialtyItem(
-    icon: Icons.favorite_outline,
-    title: 'Behavioral\nHealth',
-    accent: AppColors.catMental,
-    bgColor: Color(0xFFEFFAF6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.face_retouching_natural_outlined,
-    title: 'Dermatology',
-    accent: AppColors.catWomen,
-    bgColor: Color(0xFFFFF0F6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.pregnant_woman_outlined,
-    title: 'OB-GYN',
-    accent: AppColors.catWomen,
-    bgColor: Color(0xFFFFF0F6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.female_outlined,
-    title: 'Menopause\nCare',
-    accent: AppColors.catWomen,
-    bgColor: Color(0xFFFFF0F6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.psychology_alt_outlined,
-    title: "Women's Mental\nHealth",
-    accent: AppColors.catWomen,
-    bgColor: Color(0xFFFFF0F6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.child_friendly_outlined,
-    title: 'Lactation\nConsulting',
-    accent: AppColors.catWomen,
-    bgColor: Color(0xFFFFF0F6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.man_outlined,
-    title: "Men's\nHealth",
-    accent: AppColors.catHeart,
-    bgColor: Color(0xFFEFF6FF),
-  ),
-  _SpecialtyItem(
-    icon: Icons.water_drop_outlined,
-    title: 'Urology',
-    accent: AppColors.catHeart,
-    bgColor: Color(0xFFEFFAF6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.child_care_outlined,
-    title: 'Pediatrics',
-    accent: AppColors.catChild,
-    bgColor: Color(0xFFFFFBEB),
-  ),
-  _SpecialtyItem(
-    icon: Icons.school_outlined,
-    title: 'Adolescent\nCare',
-    accent: AppColors.catChild,
-    bgColor: Color(0xFFFFFBEB),
-  ),
-  _SpecialtyItem(
-    icon: Icons.monitor_weight_outlined,
-    title: 'Weight\nManagement',
-    accent: AppColors.catRespire,
-    bgColor: Color(0xFFEFFAF6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.restaurant_menu_outlined,
-    title: 'Nutrition &\nDietetics',
-    accent: AppColors.catRespire,
-    bgColor: Color(0xFFEFFAF6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.spa_outlined,
-    title: 'Lifestyle\nMedicine',
-    accent: AppColors.catRespire,
-    bgColor: Color(0xFFEFFAF6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.favorite_border_rounded,
-    title: 'Cardiology',
-    accent: AppColors.catHeart,
-    bgColor: Color(0xFFFFF0F3),
-  ),
-  _SpecialtyItem(
-    icon: Icons.psychology_alt_outlined,
-    title: 'Neurology',
-    accent: AppColors.catBrain,
-    bgColor: Color(0xFFF5EFFF),
-  ),
-  _SpecialtyItem(
-    icon: Icons.science_outlined,
-    title: 'Endocrinology',
-    accent: AppColors.catGenetics,
-    bgColor: Color(0xFFF0FFF3),
-  ),
-  _SpecialtyItem(
-    icon: Icons.medication_outlined,
-    title: 'Gastroenterology',
-    accent: AppColors.catRespire,
-    bgColor: Color(0xFFEFFAF6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.air_rounded,
-    title: 'Pulmonology',
-    accent: AppColors.catRespire,
-    bgColor: Color(0xFFEFFAF6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.record_voice_over_outlined,
-    title: 'Expert Medical\nOpinion',
-    accent: AppColors.catBrain,
-    bgColor: Color(0xFFEFF6FF),
-  ),
-  _SpecialtyItem(
-    icon: Icons.visibility_outlined,
-    title: 'Ophthalmology',
-    accent: AppColors.catHeart,
-    bgColor: Color(0xFFEFF6FF),
-  ),
-  _SpecialtyItem(
-    icon: Icons.hearing_outlined,
-    title: 'ENT',
-    accent: AppColors.catHeart,
-    bgColor: Color(0xFFEFFAF6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.accessibility_new_outlined,
-    title: 'Orthopedics',
-    accent: AppColors.catBones,
-    bgColor: Color(0xFFEFF9FF),
-  ),
-  _SpecialtyItem(
-    icon: Icons.favorite_outline,
-    title: 'Sexual\nHealth',
-    accent: AppColors.catWomen,
-    bgColor: Color(0xFFFFF0F6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.flight_takeoff_outlined,
-    title: 'Travel\nMedicine',
-    accent: AppColors.catRespire,
-    bgColor: Color(0xFFEFFAF6),
-  ),
-  _SpecialtyItem(
-    icon: Icons.public_outlined,
-    title: 'Global /\nCross-Border Care',
-    accent: AppColors.catGenetics,
-    bgColor: Color(0xFFF0FFF3),
-  ),
+  @override
+  State<ExploreSpecialtiesSection> createState() =>
+      _ExploreSpecialtiesSectionState();
+}
+
+class _ExploreSpecialtiesSectionState extends State<ExploreSpecialtiesSection> {
+  final _treeService = AppointmentTreeService();
+
+  bool _loadingSpecialties = true;
+  String? _specialtyError;
+  List<_SpecialtyItem> _specialties = const [];
+
+  static const List<Color> _accentColors = [
+    AppColors.catHeart,
+    AppColors.catBrain,
+    AppColors.catMental,
+    AppColors.catWomen,
+    AppColors.catChild,
+    AppColors.catRespire,
+    AppColors.catGenetics,
+    AppColors.catBones,
   ];
+
+  static const List<Color> _bgColors = [
+    Color(0xFFEFF6FF),
+    Color(0xFFF5EFFF),
+    Color(0xFFEFFAF6),
+    Color(0xFFFFF0F6),
+    Color(0xFFFFFBEB),
+    Color(0xFFF0FFF3),
+    Color(0xFFEFF9FF),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSpecialties();
+  }
+
+  Future<void> _loadSpecialties() async {
+    setState(() {
+      _loadingSpecialties = true;
+      _specialtyError = null;
+    });
+
+    final result = await _treeService.fetchTree();
+    if (!mounted) return;
+
+    setState(() {
+      _loadingSpecialties = false;
+      if (result.success) {
+        _specialties = _buildSpecialties(result.data ?? const []);
+      } else {
+        _specialtyError = result.message;
+      }
+    });
+  }
+
+  List<_SpecialtyItem> _buildSpecialties(
+    List<AppointmentTreeCategory> categories,
+  ) {
+    final items = <_SpecialtyItem>[];
+    for (final category in categories) {
+      for (final specialty in category.specialties) {
+        final name = specialty.name.trim();
+        if (name.isEmpty) continue;
+
+        final index = items.length;
+        items.add(
+          _SpecialtyItem(
+            icon: specialty.icon,
+            title: _displayTitle(name),
+            appointmentName: name,
+            accent: _accentColors[index % _accentColors.length],
+            bgColor: _bgColors[index % _bgColors.length],
+          ),
+        );
+      }
+    }
+    return items;
+  }
+
+  List<_SpecialtyItem> get _filteredSpecialties {
+    final query = _normalizeSearchText(widget.searchQuery);
+    if (query.isEmpty) return _specialties;
+
+    return _specialties.where((item) {
+      return _normalizeSearchText(item.title).contains(query) ||
+          _normalizeSearchText(item.appointmentName).contains(query);
+    }).toList();
+  }
+
+  String _displayTitle(String value) {
+    final words = value.replaceAll(RegExp(r'\s+'), ' ').trim().split(' ');
+    if (words.length < 2 || value.length <= 12) return value;
+
+    final midpoint = (words.length / 2).ceil();
+    return '${words.take(midpoint).join(' ')}\n${words.skip(midpoint).join(' ')}';
+  }
 
   void _openAppointmentPage(
     BuildContext context, {
@@ -233,100 +147,110 @@ class ExploreSpecialtiesSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── Section header ─────────────────────────────────────────────────
         AppSectionHeader(
-          title:       'Explore Specialties',
+          title: 'Explore Specialties',
           seeAllLabel: 'See all',
-          onSeeAll:    () => _openAppointmentPage(
-            context,
-            showAllSpecialties: true,
-          ),
+          onSeeAll: () =>
+              _openAppointmentPage(context, showAllSpecialties: true),
         ),
-
         const SizedBox(height: AppSpacing.md),
-
-        // ── Horizontal scroll list ─────────────────────────────────────────
-        SizedBox(
-          height: 140,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            padding:         const EdgeInsets.symmetric(vertical: 2),
-            itemCount:       _specialties.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 10),
-            itemBuilder: (context, index) {
-              return _SpecialtyCard(
-                item: _specialties[index],
-                onTap: () => _openAppointmentPage(
-                  context,
-                  specialtyName: _specialties[index].appointmentName,
-                ),
-              );
-            },
-          ),
-        ),
+        SizedBox(height: 140, child: _buildContent(context)),
       ],
     );
   }
-}
 
-// ── Specialty card ────────────────────────────────────────────────────────────
+  Widget _buildContent(BuildContext context) {
+    if (_loadingSpecialties) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_specialtyError != null) {
+      return _InlineState(
+        message: _specialtyError!.isEmpty
+            ? 'Unable to load specialties.'
+            : _specialtyError!,
+        actionLabel: 'Retry',
+        onAction: _loadSpecialties,
+      );
+    }
+
+    final specialties = _filteredSpecialties;
+
+    if (specialties.isEmpty) {
+      if (_specialties.isNotEmpty && widget.searchQuery.trim().isNotEmpty) {
+        return const _InlineState(message: 'No specialties match your search.');
+      }
+
+      return const _InlineState(message: 'No specialties available.');
+    }
+
+    return ListView.separated(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      itemCount: specialties.length,
+      separatorBuilder: (_, _) => const SizedBox(width: 10),
+      itemBuilder: (context, index) {
+        final item = specialties[index];
+        return _SpecialtyCard(
+          item: item,
+          onTap: () => _openAppointmentPage(
+            context,
+            specialtyName: item.appointmentName,
+          ),
+        );
+      },
+    );
+  }
+}
 
 class _SpecialtyCard extends StatelessWidget {
   final _SpecialtyItem item;
   final VoidCallback onTap;
 
-  const _SpecialtyCard({
-    super.key,
-    required this.item,
-    required this.onTap,
-  });
+  const _SpecialtyCard({required this.item, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color:        Colors.transparent,
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(AppRadius.lg),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.lg),
-        splashColor:  item.accent.withOpacity(0.12),
-        onTap:        onTap,
+        splashColor: item.accent.withValues(alpha: 0.12),
+        onTap: onTap,
         child: Container(
-          width:   108,
+          width: 108,
           padding: const EdgeInsets.all(AppSpacing.md),
           decoration: BoxDecoration(
-            color:        AppColors.surface,
+            color: AppColors.surface,
             borderRadius: BorderRadius.circular(AppRadius.lg),
-            border:       Border.all(color: AppColors.border, width: 1.2),
-            boxShadow:    AppShadows.card,
+            border: Border.all(color: AppColors.border, width: 1.2),
+            boxShadow: AppShadows.card,
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Soft tinted icon circle
               Container(
-                width:  52,
+                width: 52,
                 height: 52,
                 decoration: BoxDecoration(
                   color: item.bgColor,
                   shape: BoxShape.circle,
                 ),
-                child: Icon(item.icon, color: item.accent, size: 24),
+                child: Center(child: _SpecialtyIcon(icon: item.icon)),
               ),
-
               const SizedBox(height: AppSpacing.sm + 2),
-
-              // Specialty label
               Text(
                 item.title,
                 textAlign: TextAlign.center,
-                maxLines:  2,
-                overflow:  TextOverflow.ellipsis,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
                   fontFamily: AppFonts.family,
-                  fontSize:   11.5,
+                  fontSize: 11.5,
                   fontWeight: FontWeight.w600,
-                  color:      AppColors.textPrimary,
-                  height:     1.25,
+                  color: AppColors.textPrimary,
+                  height: 1.25,
                 ),
               ),
             ],
@@ -335,4 +259,71 @@ class _SpecialtyCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SpecialtyIcon extends StatelessWidget {
+  const _SpecialtyIcon({required this.icon});
+
+  final String icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = icon.trim();
+    if (value.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Text(
+      value,
+      textAlign: TextAlign.center,
+      style: const TextStyle(fontSize: 24, height: 1),
+    );
+  }
+}
+
+class _InlineState extends StatelessWidget {
+  const _InlineState({required this.message, this.actionLabel, this.onAction});
+
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.border, width: 1.2),
+        boxShadow: AppShadows.card,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontFamily: AppFonts.family,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          if (actionLabel != null && onAction != null) ...[
+            const SizedBox(width: AppSpacing.sm),
+            TextButton(onPressed: onAction, child: Text(actionLabel!)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+String _normalizeSearchText(String value) {
+  return value.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
 }

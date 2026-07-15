@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/appointment_tree_service.dart';
+
 class AppointmentBookingPage extends StatefulWidget {
   final String? initialCategoryLabel;
   final String? initialSpecialtyName;
@@ -17,487 +19,15 @@ class AppointmentBookingPage extends StatefulWidget {
 }
 
 class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
+  final _treeService = AppointmentTreeService();
+  final searchCtrl = TextEditingController();
+
   String tab = "cat";
   Map<String, dynamic>? activeCat;
   Map<String, dynamic>? activeSpec;
-  final searchCtrl = TextEditingController();
-
-
-
-final List<Map<String, dynamic>> hccTree = [
-  {
-    "id": "general",
-    "label": "General & Everyday Care",
-    "icon": "🩺",
-    "specs": [
-      {
-        "name": "General Physician",
-        "icon": "🩺",
-        "live": true,
-        "count": "98 doctors",
-        "cost": 100,
-        "conditions": [
-          ["Fever", "🌡️"],
-          ["Cold & flu", "🤧"],
-          ["Cough & sore throat", "😷"],
-          ["Headache", "🤕"],
-          ["Sinus infection", "👃"],
-          ["Body aches", "💪"],
-          ["Fatigue", "😮‍💨"],
-          ["Minor infections", "🩹"],
-        ],
-      },
-      {
-        "name": "Internal Medicine",
-        "icon": "🏥",
-        "cost": 100,
-        "conditions": [
-          ["Undiagnosed symptoms", "❓"],
-          ["Multi-system complaints", "🩺"],
-          ["Preventive screening", "🛡️"],
-          ["Medication review", "💊"],
-        ],
-      },
-      {
-        "name": "Family Medicine",
-        "icon": "👨‍👩‍👧",
-        "cost": 100,
-        "conditions": [
-          ["Routine check-ups", "✅"],
-          ["Whole-family illness", "👪"],
-          ["Chronic-disease review", "📋"],
-          ["Vaccination advice", "💉"],
-        ],
-      },
-    ],
-  },
-
-  {
-    "id": "mental",
-    "label": "Mental Health",
-    "icon": "🧠",
-    "specs": [
-      {
-        "name": "Psychiatry",
-        "icon": "🧠",
-        "live": true,
-        "count": "76 doctors",
-        "cost": 1499,
-        "conditions": [
-          ["Anxiety", "😟"],
-          ["Depression", "💭"],
-          ["Bipolar follow-up", "🔄"],
-          ["OCD", "🔁"],
-          ["PTSD", "🌀"],
-          ["Panic attacks", "⚡"],
-          ["Insomnia", "😴"],
-          ["ADHD follow-up", "🎯"],
-        ],
-      },
-      {
-        "name": "Psychology / Counselling",
-        "icon": "💬",
-        "cost": 1299,
-        "conditions": [
-          ["Stress", "😣"],
-          ["Grief & loss", "🕊️"],
-          ["Relationship issues", "💔"],
-          ["Low self-esteem", "🪞"],
-          ["Trauma support", "🤝"],
-        ],
-      },
-      {
-        "name": "Behavioral Health",
-        "icon": "🧩",
-        "cost": 999,
-        "conditions": [
-          ["Anger management", "🔥"],
-          ["Adjustment difficulties", "🔀"],
-          ["Substance-use concerns", "🚭"],
-          ["Sleep-related anxiety", "🌙"],
-        ],
-      },
-    ],
-  },
-
-  {
-    "id": "skin",
-    "label": "Skin & Hair",
-    "icon": "🧴",
-    "specs": [
-      {
-        "name": "Dermatology",
-        "icon": "🧴",
-        "live": true,
-        "count": "35 doctors",
-        "cost": 100,
-        "conditions": [
-          ["Acne", "🔴"],
-          ["Eczema", "🌾"],
-          ["Psoriasis", "🩹"],
-          ["Skin rashes", "🌡️"],
-          ["Hives", "🐝"],
-          ["Rosacea", "🌹"],
-          ["Fungal infections", "🍄"],
-          ["Hair loss", "💈"],
-          ["Nail problems", "💅"],
-          ["Mole & skin checks", "🔎"],
-        ],
-      },
-    ],
-  },
-
-  {
-    "id": "women",
-    "label": "Women's Health",
-    "icon": "🌸",
-    "specs": [
-      {
-        "name": "OB-GYN",
-        "icon": "🌸",
-        "count": "44 doctors",
-        "cost": 1199,
-        "conditions": [
-          ["Irregular periods", "📅"],
-          ["Painful periods", "😣"],
-          ["PCOS", "🌺"],
-          ["Contraception advice", "💊"],
-          ["Vaginal infections", "🩺"],
-          ["Pelvic pain", "⚡"],
-          ["Prenatal teleconsult", "🤰"],
-        ],
-      },
-      {
-        "name": "Menopause Care",
-        "icon": "🌙",
-        "cost": 999,
-        "conditions": [
-          ["Hot flashes", "🔥"],
-          ["Mood changes", "🎭"],
-          ["Sleep disturbance", "😴"],
-          ["HRT guidance", "💊"],
-        ],
-      },
-      {
-        "name": "Women's Mental Health",
-        "icon": "💗",
-        "cost": 1099,
-        "conditions": [
-          ["Postnatal depression", "🍼"],
-          ["Perinatal anxiety", "🤱"],
-          ["PMDD", "📆"],
-        ],
-      },
-      {
-        "name": "Lactation Consulting",
-        "icon": "🤱",
-        "cost": 699,
-        "conditions": [
-          ["Low milk supply", "🍼"],
-          ["Latch problems", "👶"],
-          ["Nipple pain", "🩹"],
-          ["Weaning guidance", "🥄"],
-        ],
-      },
-    ],
-  },
-
-  {
-    "id": "men",
-    "label": "Men's Health",
-    "icon": "♂️",
-    "specs": [
-      {
-        "name": "Men's Health",
-        "icon": "♂️",
-        "count": "19 doctors",
-        "cost": 100,
-        "conditions": [
-          ["Erectile dysfunction", "💙"],
-          ["Low testosterone", "📉"],
-          ["Hair loss", "💈"],
-          ["Prostate concerns", "🔬"],
-          ["Low libido", "💤"],
-        ],
-      },
-      {
-        "name": "Urology",
-        "icon": "🚹",
-        "cost": 100,
-        "conditions": [
-          ["UTIs", "🚻"],
-          ["Kidney stones follow-up", "🪨"],
-          ["Blood in urine", "🩸"],
-          ["Incontinence", "💧"],
-          ["Bladder problems", "🚽"],
-        ],
-      },
-    ],
-  },
-
-  {
-    "id": "family",
-    "label": "Children & Family",
-    "icon": "🧒",
-    "specs": [
-      {
-        "name": "Pediatrics",
-        "icon": "🧒",
-        "live": true,
-        "count": "41 doctors",
-        "cost": 699,
-        "conditions": [
-          ["Fever in children", "🌡️"],
-          ["Cough & cold", "🤧"],
-          ["Childhood rashes", "🌸"],
-          ["Ear infections", "👂"],
-          ["Feeding concerns", "🍼"],
-          ["Growth & development", "📏"],
-          ["Vaccination advice", "💉"],
-        ],
-      },
-      {
-        "name": "Adolescent Care",
-        "icon": "🧑",
-        "cost": 699,
-        "conditions": [
-          ["Teen acne", "🔴"],
-          ["Puberty concerns", "🌱"],
-          ["Teen mood & anxiety", "😟"],
-          ["Menstrual problems", "📅"],
-          ["Sports injuries", "🏃"],
-        ],
-      },
-    ],
-  },
-
-  {
-    "id": "weight",
-    "label": "Weight & Nutrition",
-    "icon": "🥗",
-    "specs": [
-      {
-        "name": "Weight Management",
-        "icon": "⚖️",
-        "cost": 999,
-        "conditions": [
-          ["Obesity", "📊"],
-          ["GLP-1 eligibility", "💉"],
-          ["Metabolic syndrome", "🔬"],
-          ["Weight-loss planning", "🎯"],
-          ["Binge eating", "🍽️"],
-        ],
-      },
-      {
-        "name": "Nutrition & Dietetics",
-        "icon": "🥗",
-        "cost": 699,
-        "conditions": [
-          ["Diabetic diet", "🩸"],
-          ["Cholesterol diet", "🫀"],
-          ["Food-intolerance plan", "🚫"],
-          ["Pregnancy nutrition", "🤰"],
-          ["Sports nutrition", "🏋️"],
-        ],
-      },
-      {
-        "name": "Lifestyle Medicine",
-        "icon": "🌱",
-        "cost": 599,
-        "conditions": [
-          ["Healthy-habit coaching", "✅"],
-          ["Diet & exercise plan", "🏃"],
-          ["Sleep hygiene", "😴"],
-          ["Stress reduction", "🧘"],
-        ],
-      },
-    ],
-  },
-
-  {
-    "id": "chronic",
-    "label": "Chronic Care & Expert Opinion",
-    "icon": "📋",
-    "specs": [
-      {
-        "name": "Cardiology",
-        "icon": "🫀",
-        "live": true,
-        "count": "48 doctors",
-        "cost": 1799,
-        "conditions": [
-          ["High blood pressure", "💉"],
-          ["Chest pain (non-emerg.)", "❤️"],
-          ["Palpitations", "💓"],
-          ["High cholesterol", "🩸"],
-          ["Heart failure follow-up", "🫀"],
-        ],
-      },
-      {
-        "name": "Neurology",
-        "icon": "🧬",
-        "live": true,
-        "count": "32 doctors",
-        "cost": 1699,
-        "conditions": [
-          ["Migraine & headaches", "🤕"],
-          ["Seizures follow-up", "⚡"],
-          ["Numbness & tingling", "🖐️"],
-          ["Tremor", "🤲"],
-          ["Dizziness", "💫"],
-          ["Memory concerns", "🧠"],
-        ],
-      },
-      {
-        "name": "Endocrinology",
-        "icon": "⚕️",
-        "cost": 1499,
-        "conditions": [
-          ["Thyroid disorders", "🦋"],
-          ["Diabetes (Type 1 & 2)", "🩸"],
-          ["PCOS", "🌺"],
-          ["Hormone imbalance", "⚗️"],
-          ["Osteoporosis", "🦴"],
-        ],
-      },
-      {
-        "name": "Gastroenterology",
-        "icon": "🍽️",
-        "cost": 1399,
-        "conditions": [
-          ["Acid reflux / GERD", "🔥"],
-          ["IBS", "🌀"],
-          ["Constipation", "🚽"],
-          ["Stomach pain", "😣"],
-          ["Bloating", "🎈"],
-        ],
-      },
-      {
-        "name": "Pulmonology",
-        "icon": "🫁",
-        "cost": 1299,
-        "conditions": [
-          ["Asthma", "💨"],
-          ["COPD", "🫁"],
-          ["Chronic cough", "😷"],
-          ["Shortness of breath", "😮‍💨"],
-          ["Sleep apnea screening", "😴"],
-        ],
-      },
-      {
-        "name": "Expert Medical Opinion",
-        "icon": "📑",
-        "cost": 2499,
-        "conditions": [
-          ["Cancer second opinion", "🎗️"],
-          ["Surgery second opinion", "🏥"],
-          ["Complex-diagnosis review", "🔍"],
-          ["Treatment-plan review", "📋"],
-        ],
-      },
-    ],
-  },
-
-  {
-    "id": "eeb",
-    "label": "Eye, Ear & Bone",
-    "icon": "🦴",
-    "specs": [
-      {
-        "name": "Ophthalmology",
-        "icon": "👁️",
-        "live": true,
-        "count": "22 doctors",
-        "cost": 999,
-        "conditions": [
-          ["Red / irritated eyes", "👁️"],
-          ["Dry eyes", "🌵"],
-          ["Vision changes", "🔭"],
-          ["Eye infections", "🦠"],
-          ["Stye", "💢"],
-        ],
-      },
-      {
-        "name": "ENT",
-        "icon": "👂",
-        "cost": 899,
-        "conditions": [
-          ["Sinusitis", "👃"],
-          ["Sore throat / tonsillitis", "😮"],
-          ["Ear infections", "👂"],
-          ["Vertigo", "💫"],
-          ["Nasal congestion", "🤧"],
-        ],
-      },
-      {
-        "name": "Orthopedics",
-        "icon": "🦴",
-        "live": true,
-        "count": "29 doctors",
-        "cost": 1299,
-        "conditions": [
-          ["Back pain", "🔙"],
-          ["Neck pain", "🧍"],
-          ["Knee & joint pain", "🦵"],
-          ["Sprains & strains", "🤕"],
-          ["Sports injuries", "🏃"],
-        ],
-      },
-    ],
-  },
-
-  {
-    "id": "sexual",
-    "label": "Sexual Health",
-    "icon": "💗",
-    "specs": [
-      {
-        "name": "Sexual Health",
-        "icon": "💗",
-        "cost": 799,
-        "conditions": [
-          ["STI advice & testing", "🔬"],
-          ["Contraception advice", "💊"],
-          ["Erectile dysfunction", "💙"],
-          ["Confidential care", "🤐"],
-          ["Safe-sex counselling", "🤝"],
-        ],
-      },
-    ],
-  },
-
-  {
-    "id": "travel",
-    "label": "Travel & Global Care",
-    "icon": "✈️",
-    "specs": [
-      {
-        "name": "Travel Medicine",
-        "icon": "✈️",
-        "cost": 899,
-        "conditions": [
-          ["Pre-travel vaccination", "💉"],
-          ["Malaria prevention", "🦟"],
-          ["Altitude sickness", "⛰️"],
-          ["Travel-illness advice", "🤒"],
-          ["Post-travel symptoms", "🌡️"],
-        ],
-      },
-      {
-        "name": "Global / Cross-Border Care",
-        "icon": "🌍",
-        "cost": 1999,
-        "conditions": [
-          ["Cross-border consult", "🌐"],
-          ["Care continuity abroad", "🔄"],
-          ["Referral coordination", "🗺️"],
-          ["Travel medical assistance", "🆘"],
-          ["Prescription continuity", "💊"],
-        ],
-      },
-    ],
-  },
-];
+  List<Map<String, dynamic>> hccTree = const [];
+  bool loadingTree = true;
+  String? treeError;
 
   @override
   void initState() {
@@ -507,6 +37,42 @@ final List<Map<String, dynamic>> hccTree = [
       tab = widget.initialTab;
     }
 
+    _loadAppointmentTree();
+  }
+
+  @override
+  void dispose() {
+    searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadAppointmentTree() async {
+    setState(() {
+      loadingTree = true;
+      treeError = null;
+    });
+
+    final result = await _treeService.fetchTree();
+    if (!mounted) return;
+
+    if (!result.success) {
+      setState(() {
+        loadingTree = false;
+        treeError = result.message;
+      });
+      return;
+    }
+
+    setState(() {
+      hccTree = (result.data ?? const [])
+          .map((category) => category.toUiMap())
+          .toList();
+      loadingTree = false;
+    });
+    _applyInitialSelection();
+  }
+
+  void _applyInitialSelection() {
     final initialSpecialty = widget.initialSpecialtyName;
     if (initialSpecialty != null) {
       _selectInitialSpecialty(initialSpecialty);
@@ -517,9 +83,12 @@ final List<Map<String, dynamic>> hccTree = [
     if (initialLabel == null) return;
 
     for (final cat in hccTree) {
-      if (cat["label"].toString().toLowerCase() == initialLabel.toLowerCase()) {
-        activeCat = cat;
-        tab = "spec";
+      if (_normalizeLabel(cat["label"].toString()) ==
+          _normalizeLabel(initialLabel)) {
+        setState(() {
+          activeCat = cat;
+          tab = "spec";
+        });
         break;
       }
     }
@@ -535,13 +104,15 @@ final List<Map<String, dynamic>> hccTree = [
     for (final cat in hccTree) {
       for (final spec in cat["specs"] as List) {
         if (_normalizeLabel(spec["name"].toString()) == target) {
-          activeCat = cat;
-          activeSpec = {
-            ...Map<String, dynamic>.from(spec),
-            "catLabel": cat["label"],
-            "catIcon": cat["icon"],
-          };
-          tab = "cond";
+          setState(() {
+            activeCat = cat;
+            activeSpec = {
+              ...Map<String, dynamic>.from(spec),
+              "catLabel": cat["label"],
+              "catIcon": cat["icon"],
+            };
+            tab = "cond";
+          });
           return;
         }
       }
@@ -551,33 +122,39 @@ final List<Map<String, dynamic>> hccTree = [
   String get q => searchCtrl.text.trim().toLowerCase();
 
   List<Map<String, dynamic>> get flatSpecs {
-    return hccTree.expand((cat) {
-      return (cat["specs"] as List).map((spec) {
-        return {
-          ...Map<String, dynamic>.from(spec),
-          "catLabel": cat["label"],
-          "catIcon": cat["icon"],
-        };
-      });
-    }).where((spec) {
-      return q.isEmpty || spec["name"].toString().toLowerCase().contains(q);
-    }).toList();
+    return hccTree
+        .expand((cat) {
+          return (cat["specs"] as List).map((spec) {
+            return {
+              ...Map<String, dynamic>.from(spec),
+              "catLabel": cat["label"],
+              "catIcon": cat["icon"],
+            };
+          });
+        })
+        .where((spec) {
+          return q.isEmpty || spec["name"].toString().toLowerCase().contains(q);
+        })
+        .toList();
   }
 
   List<Map<String, dynamic>> get flatConditions {
-    return flatSpecs.expand((spec) {
-      return (spec["conditions"] as List).map((cond) {
-        return {
-          "name": cond[0],
-          "icon": cond[1],
-          "spec": spec,
-        };
-      });
-    }).where((cond) {
-      return q.isEmpty ||
-          cond["name"].toString().toLowerCase().contains(q) ||
-          cond["spec"]["name"].toString().toLowerCase().contains(q);
-    }).toList();
+    return flatSpecs
+        .expand((spec) {
+          return (spec["conditions"] as List).map((cond) {
+            return {
+              "name": cond[0],
+              "icon": cond.length > 1 ? cond[1] : "",
+              "spec": spec,
+            };
+          });
+        })
+        .where((cond) {
+          return q.isEmpty ||
+              cond["name"].toString().toLowerCase().contains(q) ||
+              cond["spec"]["name"].toString().toLowerCase().contains(q);
+        })
+        .toList();
   }
 
   void selectCondition(String name, String icon, Map<String, dynamic> spec) {
@@ -600,8 +177,8 @@ final List<Map<String, dynamic>> hccTree = [
     final placeholder = tab == "cat"
         ? "Search categories..."
         : tab == "spec"
-            ? "Search specialties..."
-            : "Search conditions / symptoms...";
+        ? "Search specialties..."
+        : "Search conditions / symptoms...";
 
     return Scaffold(
       backgroundColor: const Color(0xfff6f8fb),
@@ -625,7 +202,6 @@ final List<Map<String, dynamic>> hccTree = [
               style: TextStyle(color: Colors.black54),
             ),
             const SizedBox(height: 18),
-
             Row(
               children: [
                 _tabButton("01", "Categories", "cat"),
@@ -633,9 +209,7 @@ final List<Map<String, dynamic>> hccTree = [
                 _tabButton("03", "Conditions", "cond"),
               ],
             ),
-
             const SizedBox(height: 14),
-
             TextField(
               controller: searchCtrl,
               onChanged: (_) => setState(() {}),
@@ -650,12 +224,16 @@ final List<Map<String, dynamic>> hccTree = [
                 ),
               ),
             ),
-
             const SizedBox(height: 18),
-
-            if (tab == "cat") _categoryView(),
-            if (tab == "spec") _specialtyView(),
-            if (tab == "cond") _conditionView(),
+            if (loadingTree) _loadingState(),
+            if (!loadingTree && treeError != null) _errorState(treeError!),
+            if (!loadingTree && treeError == null && hccTree.isEmpty)
+              _emptyState("No appointment categories are available."),
+            if (!loadingTree && treeError == null && hccTree.isNotEmpty) ...[
+              if (tab == "cat") _categoryView(),
+              if (tab == "spec") _specialtyView(),
+              if (tab == "cond") _conditionView(),
+            ],
           ],
         ),
       ),
@@ -708,9 +286,10 @@ final List<Map<String, dynamic>> hccTree = [
 
   Widget _categoryView() {
     final cats = hccTree.where((cat) {
-      return q.isEmpty ||
-          cat["label"].toString().toLowerCase().contains(q);
+      return q.isEmpty || cat["label"].toString().toLowerCase().contains(q);
     }).toList();
+
+    if (cats.isEmpty) return _emptyState("No categories match your search.");
 
     return Column(
       children: cats.map((cat) {
@@ -723,8 +302,8 @@ final List<Map<String, dynamic>> hccTree = [
         return _card(
           icon: cat["icon"],
           title: cat["label"],
-          subtitle: "${specs.length} specialties · $conditionCount conditions",
-          trailing: "Explore →",
+          subtitle: "${specs.length} specialties - $conditionCount conditions",
+          trailing: "Explore",
           onTap: () {
             setState(() {
               activeCat = cat;
@@ -739,28 +318,34 @@ final List<Map<String, dynamic>> hccTree = [
 
   Widget _specialtyView() {
     final specs = activeCat != null
-        ? (activeCat!["specs"] as List).map((s) {
-            return {
-              ...Map<String, dynamic>.from(s),
-              "catLabel": activeCat!["label"],
-            };
-          }).where((s) {
-            return q.isEmpty ||
-                s["name"].toString().toLowerCase().contains(q);
-          }).toList()
+        ? (activeCat!["specs"] as List)
+              .map((s) {
+                return {
+                  ...Map<String, dynamic>.from(s),
+                  "catLabel": activeCat!["label"],
+                };
+              })
+              .where((s) {
+                return q.isEmpty ||
+                    s["name"].toString().toLowerCase().contains(q);
+              })
+              .toList()
         : flatSpecs;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (activeCat != null) _backCrumb("All Categories", activeCat!["label"]),
+        if (activeCat != null)
+          _backCrumb("All Categories", activeCat!["label"]),
+        if (specs.isEmpty) _emptyState("No specialties are available."),
         ...specs.map((spec) {
+          final count = spec["count"]?.toString().trim() ?? "";
           return _card(
             icon: spec["icon"],
             title: spec["name"],
-            subtitle: spec["count"] ?? "Book now",
+            subtitle: count.isEmpty ? "Book now" : count,
             badge: spec["live"] == true ? "LIVE" : null,
-            trailing: "Select →",
+            trailing: "Select",
             onTap: () {
               setState(() {
                 activeSpec = spec;
@@ -777,50 +362,36 @@ final List<Map<String, dynamic>> hccTree = [
   Widget _conditionView() {
     final conditions = activeSpec != null
         ? (activeSpec!["conditions"] as List)
-            .map((c) => {
+              .map(
+                (c) => {
                   "name": c[0],
-                  "icon": c[1],
+                  "icon": c.length > 1 ? c[1] : "",
                   "spec": activeSpec!,
-                })
-            .where((c) {
-              return q.isEmpty ||
-                  c["name"].toString().toLowerCase().contains(q);
-            }).toList()
+                },
+              )
+              .where((c) {
+                return q.isEmpty ||
+                    c["name"].toString().toLowerCase().contains(q);
+              })
+              .toList()
         : flatConditions;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (activeSpec != null) _backCrumb("Specialties", activeSpec!["name"]),
+        if (conditions.isEmpty) _emptyState("No conditions are available."),
         ...conditions.map((cond) {
           return _card(
             icon: cond["icon"],
             title: cond["name"],
             subtitle: cond["spec"]["name"],
-            trailing: "Book →",
+            trailing: "Book",
             onTap: () {
-              selectCondition(
-                cond["name"],
-                cond["icon"],
-                cond["spec"],
-              );
+              selectCondition(cond["name"], cond["icon"], cond["spec"]);
             },
           );
         }),
-        if (activeSpec != null)
-          _card(
-            icon: "💬",
-            title: "Other / not listed",
-            subtitle: activeSpec!["name"],
-            trailing: "Book →",
-            onTap: () {
-              selectCondition(
-                "General Consultation",
-                "🩺",
-                activeSpec!,
-              );
-            },
-          ),
       ],
     );
   }
@@ -845,7 +416,7 @@ final List<Map<String, dynamic>> hccTree = [
               ),
             ),
           ),
-          const Text("  ›  "),
+          const Text("  >  "),
           Expanded(
             child: Text(
               second,
@@ -857,6 +428,49 @@ final List<Map<String, dynamic>> hccTree = [
     );
   }
 
+  Widget _loadingState() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: _box(),
+      child: const Center(child: CircularProgressIndicator()),
+    );
+  }
+
+  Widget _errorState(String message) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: _box(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "Unable to load appointment options.",
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            message.isEmpty ? "Please try again." : message,
+            style: const TextStyle(color: Colors.black54),
+          ),
+          const SizedBox(height: 14),
+          ElevatedButton(
+            onPressed: _loadAppointmentTree,
+            child: const Text("Try again"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyState(String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: _box(),
+      child: Text(message, style: const TextStyle(color: Colors.black54)),
+    );
+  }
+
   Widget _card({
     required String icon,
     required String title,
@@ -865,25 +479,22 @@ final List<Map<String, dynamic>> hccTree = [
     required VoidCallback onTap,
     String? badge,
   }) {
+    final hasIcon = icon.trim().isNotEmpty;
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.04),
-              blurRadius: 12,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
+        decoration: _box(),
         child: Row(
           children: [
-            Text(icon, style: const TextStyle(fontSize: 30)),
+            SizedBox(
+              width: 34,
+              child: hasIcon
+                  ? Text(icon, style: const TextStyle(fontSize: 30))
+                  : const Icon(Icons.medical_services_outlined, size: 30),
+            ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
@@ -922,10 +533,7 @@ final List<Map<String, dynamic>> hccTree = [
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: const TextStyle(color: Colors.black54),
-                  ),
+                  Text(subtitle, style: const TextStyle(color: Colors.black54)),
                 ],
               ),
             ),
@@ -940,6 +548,20 @@ final List<Map<String, dynamic>> hccTree = [
           ],
         ),
       ),
+    );
+  }
+
+  BoxDecoration _box() {
+    return BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.04),
+          blurRadius: 12,
+          offset: const Offset(0, 6),
+        ),
+      ],
     );
   }
 }

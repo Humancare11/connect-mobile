@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../services/token_storage_service.dart';
 import '../services/api_client.dart';
+import '../services/socket_service.dart';
 import 'book_appointment_screen.dart';
 import 'video_call_screen.dart';
 
@@ -68,7 +71,7 @@ class Appointment {
             )
           : null,
       specialty: json['specialty']?.toString(),
-      status: (json['status'] ?? '').toString().toLowerCase(),
+      status: (json['status'] ?? '').toString().trim().toLowerCase(),
       date: json['date']?.toString(),
       time: json['time']?.toString(),
       problem: json['problem']?.toString(),
@@ -94,6 +97,19 @@ class Appointment {
   final List<MedicalReport> medicalReports;
   final Map<String, dynamic> raw;
 
+  bool get hasAssignedDoctor {
+    final value = doctor?.toJson() ?? const <String, dynamic>{};
+    if (value.isNotEmpty) return true;
+    final rawDoctor = raw['doctorId'] ?? raw['doctor'];
+    if (rawDoctor is Map) return rawDoctor.isNotEmpty;
+    return (rawDoctor?.toString().trim() ?? '').isNotEmpty;
+  }
+
+  String get displayStatus {
+    if (status == 'assigned' && hasAssignedDoctor) return 'confirmed';
+    return status;
+  }
+
   Map<String, dynamic> toVideoCallPayload(Map<String, String> patientProfile) {
     final patientId = patientProfile['userId'] ?? '';
     final patient = {
@@ -108,7 +124,7 @@ class Appointment {
       ...raw,
       '_id': id,
       'id': id,
-      'status': status,
+      'status': displayStatus,
       if ((date ?? '').isNotEmpty) 'date': date,
       if ((time ?? '').isNotEmpty) 'time': time,
       if ((problem ?? '').isNotEmpty) 'problem': problem,
@@ -128,11 +144,13 @@ class AppointmentsScreen extends StatefulWidget {
   State<AppointmentsScreen> createState() => _AppointmentsScreenState();
 }
 
-class _AppointmentsScreenState extends State<AppointmentsScreen> {
+class _AppointmentsScreenState extends State<AppointmentsScreen>
+    with WidgetsBindingObserver {
   final _apiClient = ApiClient();
   final _tokenStorage = const TokenStorageService();
   final _scrollController = ScrollController();
   final Map<String, GlobalKey> _cardKeys = {};
+  Timer? _refreshTimer;
 
   List<Appointment> _appointments = [];
   bool _loading = true;
@@ -144,28 +162,39 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
   void initState() {
     super.initState();
     _loadAppointments();
+    _connectAppointmentUpdates();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _refreshTimer?.cancel();
+    SocketService.instance.off('connect', _handleSocketConnected);
+    SocketService.instance.off('appointment-updated', _handleRealtimeUpdate);
+    SocketService.instance.off('new-prescription', _handleRealtimeUpdate);
+    SocketService.instance.off('new-certificate', _handleRealtimeUpdate);
     _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadAppointments() async {
-    setState(() {
-      _loading = true;
-      _error = '';
-    });
+  Future<void> _loadAppointments({bool withLoader = true}) async {
+    if (withLoader) {
+      setState(() {
+        _loading = true;
+        _error = '';
+      });
+    }
 
     final result = await _apiClient.get('/appointments/mine');
     if (!mounted) return;
 
     if (!result.success) {
-      setState(() {
-        _loading = false;
-        _error = result.message;
-      });
+      if (withLoader) {
+        setState(() {
+          _loading = false;
+          _error = result.message;
+        });
+      }
       return;
     }
 
@@ -175,6 +204,60 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
       _loading = false;
     });
     _handleDeepLink();
+  }
+
+  Future<void> _connectAppointmentUpdates() async {
+    WidgetsBinding.instance.addObserver(this);
+    SocketService.instance.on('connect', _handleSocketConnected);
+    SocketService.instance.on('appointment-updated', _handleRealtimeUpdate);
+    SocketService.instance.on('new-prescription', _handleRealtimeUpdate);
+    SocketService.instance.on('new-certificate', _handleRealtimeUpdate);
+
+    if (SocketService.instance.connected) {
+      await _joinPatientSocketRoom();
+    } else {
+      SocketService.instance.connect();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _queueRefresh();
+      _joinPatientSocketRoom();
+    }
+  }
+
+  void _handleSocketConnected(dynamic _) {
+    _joinPatientSocketRoom();
+    _queueRefresh();
+  }
+
+  void _handleRealtimeUpdate(dynamic _) {
+    _queueRefresh();
+  }
+
+  void _queueRefresh() {
+    _refreshTimer?.cancel();
+    _refreshTimer = Timer(const Duration(milliseconds: 200), () {
+      _refreshTimer = null;
+      if (mounted) {
+        _loadAppointments(withLoader: false);
+      }
+    });
+  }
+
+  Future<void> _joinPatientSocketRoom() async {
+    final profile = await _tokenStorage.getUserProfile();
+    if (!mounted) return;
+
+    final userId = (profile['userId'] ?? '').trim();
+    if (userId.isEmpty || !SocketService.instance.connected) return;
+
+    SocketService.instance.emit('user-online', {
+      'userId': userId,
+      'role': 'user',
+    });
   }
 
   List<Appointment> _extractAppointments(Map<String, dynamic> response) {
@@ -222,7 +305,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     final appointment = matches.first;
     setState(() {
       _focusedAppointmentId = activityId;
-      _activeTab = _tabForStatus(appointment.status);
+      _activeTab = _tabForStatus(appointment.displayStatus);
     });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -244,15 +327,15 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
           'upcoming',
           'assigned',
           'pending',
-        }.contains(item.status),
+        }.contains(item.displayStatus),
       )
       .toList();
 
   List<Appointment> get _confirmed =>
-      _appointments.where((item) => item.status == 'confirmed').toList();
+      _appointments.where((item) => item.displayStatus == 'confirmed').toList();
 
   List<Appointment> get _completed => _appointments
-      .where((item) => const {'complete', 'completed'}.contains(item.status))
+      .where((item) => const {'complete', 'completed'}.contains(item.displayStatus))
       .toList();
 
   List<Appointment> get _currentList {
@@ -286,7 +369,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
       backgroundColor: const Color(0xFFF6F8FB),
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: _loadAppointments,
+          onRefresh: () => _loadAppointments(),
           child: ListView(
             controller: _scrollController,
             padding: const EdgeInsets.all(16),
@@ -458,7 +541,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
         title: 'Could not load appointments',
         message: _error,
         action: OutlinedButton(
-          onPressed: _loadAppointments,
+          onPressed: () => _loadAppointments(),
           child: const Text('Try Again'),
         ),
       );
@@ -649,6 +732,8 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
   }
 
   Widget _buildCardActions(Appointment appointment) {
+    final canJoinVideoCall = appointment.displayStatus == 'confirmed';
+
     if (_activeTab == 'pending') {
       final text = appointment.status == 'assigned'
           ? 'Doctor assigned. Awaiting confirmation.'
@@ -670,24 +755,21 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
       );
     }
 
-    if (appointment.status != 'confirmed') {
+    if (!canJoinVideoCall) {
       return const SizedBox.shrink();
     }
 
-    return Wrap(
-      spacing: 10,
-      runSpacing: 8,
-      children: [
-        ElevatedButton.icon(
-          onPressed: () => _openVideoConsultation(appointment),
-          icon: const Icon(Icons.video_call_outlined, size: 18),
-          label: const Text('Join consultation'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.teal.shade600,
-            foregroundColor: Colors.white,
-          ),
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: () => _openVideoConsultation(appointment),
+        icon: const Icon(Icons.video_call),
+        label: const Text('Join Consultation'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.green,
+          foregroundColor: Colors.white,
         ),
-      ],
+      ),
     );
   }
 
@@ -703,15 +785,16 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
     }
   }
 
-  void _openBooking() {
-    Navigator.push(
+  Future<void> _openBooking() async {
+    await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => const AppointmentBookingPage()),
     );
+    if (mounted) _loadAppointments(withLoader: false);
   }
 
   Future<void> _openVideoConsultation(Appointment appointment) async {
-    final patientProfile = await _tokenStorage.getUserProfile();
+    final patientProfile = await _loadPatientProfile();
     if (!mounted) return;
 
     Navigator.push(
@@ -733,6 +816,16 @@ class _AppointmentsScreenState extends State<AppointmentsScreen> {
         ),
       ),
     );
+  }
+
+  Future<Map<String, String>> _loadPatientProfile() async {
+    final tokenData = await _tokenStorage.getUserProfile();
+
+    return {
+      'userId': tokenData['userId']?.toString() ?? '',
+      'name': tokenData['name']?.toString() ?? '',
+      'email': tokenData['email']?.toString() ?? '',
+    };
   }
 
   BoxDecoration _cardDecoration() {
