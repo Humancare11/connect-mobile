@@ -6,6 +6,7 @@ import '../models/api_result.dart';
 import '../models/auth_response.dart';
 import '../models/google_auth_result.dart';
 import 'api_client.dart';
+import 'notification_service.dart';
 import 'token_storage_service.dart';
 
 class AuthService {
@@ -198,7 +199,9 @@ class AuthService {
     );
   }
 
-  Future<GoogleAuthResult> googleLoginWithAccessToken(String accessToken) async {
+  Future<GoogleAuthResult> googleLoginWithAccessToken(
+    String accessToken,
+  ) async {
     try {
       final trimmedToken = accessToken.trim();
       if (trimmedToken.isEmpty) {
@@ -215,7 +218,9 @@ class AuthService {
       if (!result.success) {
         return GoogleAuthResult(
           success: false,
-          message: result.message.isNotEmpty ? result.message : 'Google Sign-In failed.',
+          message: result.message.isNotEmpty
+              ? result.message
+              : 'Google Sign-In failed.',
         );
       }
 
@@ -235,7 +240,10 @@ class AuthService {
         );
       }
 
-      final authResult = _authResult(result, 'Google Sign-In response was invalid.');
+      final authResult = _authResult(
+        result,
+        'Google Sign-In response was invalid.',
+      );
       return GoogleAuthResult(
         success: authResult.success,
         message: authResult.message,
@@ -313,11 +321,16 @@ class AuthService {
       if (!result.success) {
         return GoogleAuthResult(
           success: false,
-          message: result.message.isNotEmpty ? result.message : 'Registration failed.',
+          message: result.message.isNotEmpty
+              ? result.message
+              : 'Registration failed.',
         );
       }
 
-      final authResult = _authResult(result, 'Google registration response was invalid.');
+      final authResult = _authResult(
+        result,
+        'Google registration response was invalid.',
+      );
       return GoogleAuthResult(
         success: authResult.success,
         message: authResult.message,
@@ -349,6 +362,7 @@ class AuthService {
       city: authResponse.user.city,
       location: authResponse.user.location,
     );
+    await NotificationService.instance.syncTokenAfterLogin();
   }
 
   Future<ApiResult<Map<String, String>>> fetchCurrentProfile() async {
@@ -555,10 +569,7 @@ class AuthService {
       responseData['refresh_token'],
       nestedData['refreshToken'],
       nestedData['refresh_token'],
-      _findFirstStringByKeys(data, const {
-        'refreshToken',
-        'refresh_token',
-      }),
+      _findFirstStringByKeys(data, const {'refreshToken', 'refresh_token'}),
     ]);
 
     if (!result.success) {

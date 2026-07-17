@@ -541,6 +541,8 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     final time = args['time']?.toString() ?? '';
     final appointmentDateTime = _combineDateAndTime(date, time);
 
+    final serviceId = args['serviceId']?.toString() ?? '';
+
     return {
       'category': args['catLabel']?.toString() ?? '',
       'specialty': args['specName']?.toString() ?? '',
@@ -553,6 +555,7 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       'problem': args['problem']?.toString() ?? '',
       'medicalReports': const <dynamic>[],
       'paymentIntentId': paymentIntentId,
+      if (serviceId.isNotEmpty) 'serviceId': serviceId,
     };
   }
 

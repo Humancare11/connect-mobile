@@ -2,21 +2,34 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
+import 'package:firebase_core/firebase_core.dart';
+
+import 'firebase_options.dart';
 import 'config/api_config.dart';
 import 'screens/login_screen.dart';
 import 'screens/book_appointment_form_screen.dart';
 import 'screens/book_appointment_payment_screen.dart';
 import 'screens/book_appointment_confirmation_screen.dart';
+import 'services/notification_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   const appEnv = String.fromEnvironment('APP_ENV', defaultValue: 'local');
+
   final envFile = switch (appEnv) {
     'production' => '.env.production',
     'uat' => '.env.uat',
     _ => '.env',
   };
+
   await dotenv.load(fileName: envFile);
+
+  // Firebase Initialize
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  await NotificationService.instance.initialize();
+
   debugPrint('[AppConfig] APP_ENV=$appEnv envFile=$envFile');
   debugPrint('[AppConfig] API_BASE_URL=${ApiConfig.baseUrl}');
 
@@ -24,11 +37,14 @@ Future<void> main() async {
       dotenv.env['STRIPE_PUBLISHABLE_KEY'] ??
       dotenv.env['VITE_STRIPE_PUBLISHABLE_KEY'] ??
       '';
+
   if (stripeKey.trim().isNotEmpty && _supportsStripePaymentSheet) {
     Stripe.publishableKey = stripeKey.trim();
     Stripe.urlScheme = 'humancareconnect';
     Stripe.setReturnUrlSchemeOnAndroid = true;
+
     await Stripe.instance.applySettings();
+
     debugPrint(
       '[StripeConfig] publishableKey=${_redactPublishableKey(stripeKey.trim())} '
       'mode=${_stripeKeyMode(stripeKey.trim())} '
@@ -52,7 +68,10 @@ bool get _supportsStripePaymentSheet {
 }
 
 String _redactPublishableKey(String value) {
-  if (value.length <= 12) return value.isEmpty ? '(missing)' : '...';
+  if (value.length <= 12) {
+    return value.isEmpty ? '(missing)' : '...';
+  }
+
   return '${value.substring(0, 7)}...${value.substring(value.length - 4)}';
 }
 
@@ -68,6 +87,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: NotificationService.navigatorKey,
       debugShowCheckedModeBanner: false,
       home: const LoginScreen(),
       routes: {
@@ -75,6 +95,11 @@ class MyApp extends StatelessWidget {
         "/appointment-payment": (context) => const AppointmentPaymentPage(),
         "/appointment-confirmation": (context) =>
             const AppointmentConfirmationPage(),
+      },
+      onGenerateRoute: NotificationService.instance.onGenerateRoute,
+      builder: (context, child) {
+        NotificationService.instance.flushPendingNavigation();
+        return child ?? const SizedBox.shrink();
       },
     );
   }

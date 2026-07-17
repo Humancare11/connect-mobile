@@ -1,3 +1,9 @@
+# Environment variables - contain live API/TURN credentials, never commit new ones.
+# .env / .env.uat / .env.production are already tracked from an earlier commit;
+# this only stops further *new* env files from being added.
+.env.local
+.env.*.local
+
 # Miscellaneous
 *.class
 *.log

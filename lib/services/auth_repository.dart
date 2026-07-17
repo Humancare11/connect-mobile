@@ -2,6 +2,7 @@ import '../models/api_result.dart';
 import '../models/auth_response.dart';
 import '../models/register_model.dart';
 import 'auth_service.dart';
+import 'notification_service.dart';
 import 'token_storage_service.dart';
 
 /// Repository pattern implementation for authentication
@@ -73,6 +74,7 @@ class AuthRepository {
       city: authResponse.user.city,
       location: authResponse.user.location,
     );
+    await NotificationService.instance.syncTokenAfterLogin();
   }
 
   /// Get current authentication token

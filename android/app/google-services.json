@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "909321726896",
+    "project_id": "humancare-connect-69b09",
+    "storage_bucket": "humancare-connect-69b09.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:909321726896:android:c74d01297b2bdc24328475",
+        "android_client_info": {
+          "package_name": "com.humancareconnect.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAAsGVj23BF4A0apHtnsxzdRUJNak6Mork"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

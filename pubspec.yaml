@@ -1,5 +1,47 @@
-name: hello_app
-description: "A new Flutter project."
+# name: hello_app
+# description: "A new Flutter project."
+# publish_to: 'none'
+
+# version: 1.0.0+1
+
+# environment:
+#   sdk: ^3.12.0
+
+# dependencies:
+#   flutter:
+#     sdk: flutter
+
+#   cupertino_icons: ^1.0.8
+#   flutter_dotenv: ^5.2.1
+#   flutter_stripe: ^13.0.0
+#   flutter_webrtc: ^1.0.0
+#   file_picker: ^10.3.2
+#   google_fonts: ^6.2.1
+#   google_sign_in: ^7.1.1
+#   http: ^1.2.1
+#   shared_preferences: ^2.2.2
+#   socket_io_client: ^2.0.3+1
+#   flutter_secure_storage: ^9.0.0
+#   intl: ^0.19.0
+#   pdf: ^3.11.1
+#   printing: ^5.13.4
+
+# dev_dependencies:
+#   flutter_test:
+#     sdk: flutter
+
+#   flutter_lints: ^6.0.0
+
+# flutter:
+#   uses-material-design: true
+
+#   assets:
+#     - .env
+#     - .env.uat
+#     - .env.production
+#     - assets/
+name: humancare_connect
+description: "GlobaL Health Passport"
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -26,11 +68,20 @@ dependencies:
   pdf: ^3.11.1
   printing: ^5.13.4
 
+  firebase_core: ^4.0.0
+  firebase_messaging: ^16.0.0
+  flutter_local_notifications: ^19.4.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/Logo.png"
 
 flutter:
   uses-material-design: true

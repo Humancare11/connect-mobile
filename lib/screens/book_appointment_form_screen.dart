@@ -12,19 +12,32 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
   String? selectedTime;
   final notesCtrl = TextEditingController();
 
-  final List<String> timeSlots = [
-    "8:00 AM", "8:30 AM", "9:00 AM", "9:30 AM",
-    "10:00 AM", "10:30 AM", "11:00 AM", "11:30 AM",
-    "12:00 PM", "12:30 PM", "1:00 PM", "1:30 PM",
-    "2:00 PM", "2:30 PM", "3:00 PM", "3:30 PM",
-    "4:00 PM", "4:30 PM", "5:00 PM", "5:30 PM",
-    "6:00 PM", "6:30 PM", "7:00 PM", "7:30 PM",
-  ];
+  // Generated the same way as the web version: all 48 half-hour slots
+  // across the full 24-hour day (12:00 AM -> 11:30 PM), not just business
+  // hours.
+  late final List<String> timeSlots = _generateTimeSlots();
 
-  bool telehealth = true;
-  bool terms = true;
-  bool hipaa = true;
-  bool age = true;
+  List<String> _generateTimeSlots() {
+    final List<String> slots = [];
+    for (int hour = 0; hour < 24; hour++) {
+      for (int minute = 0; minute < 60; minute += 30) {
+        final period = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+        final ampm = hour < 12 ? "AM" : "PM";
+        final minuteStr = minute.toString().padLeft(2, "0");
+        slots.add("$period:$minuteStr $ampm");
+      }
+    }
+    return slots;
+  }
+
+  // Consent checkboxes are no longer pre-checked by default — they are
+  // force-reset to false every time the modal is opened (see
+  // _validateAndOpenConsent), mirroring the updated web behavior where
+  // users must explicitly re-affirm consent on every booking attempt.
+  bool telehealth = false;
+  bool terms = false;
+  bool hipaa = false;
+  bool age = false;
 
   @override
   Widget build(BuildContext context) {
@@ -358,6 +371,15 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
       _snack("Please describe your problem.");
       return;
     }
+
+    // Force all consent checkboxes back to unchecked every time the modal
+    // is opened — no pre-checked boxes, matching the updated web behavior.
+    setState(() {
+      telehealth = false;
+      terms = false;
+      hipaa = false;
+      age = false;
+    });
 
     _showConsentDialog(selection);
   }
