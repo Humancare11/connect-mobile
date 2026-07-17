@@ -1,36 +1,20 @@
-// ICE server (STUN/TURN) configuration, ported 1:1 from the environment-driven
-// config the web app builds in frontend/src/pages/VideoCall.jsx
-// (buildIceServerConfig / sanitizeIceServers / validateIceServers /
-// hasTurnServer). Uses the SAME env var names as frontend/.env* so ops can
-// copy the existing TURN block into connect-mobile/.env* verbatim.
+// ICE server (STUN/TURN) configuration, fetched from the backend at call
+// start — ported from `frontend/src/pages/VideoCall.jsx`'s ICE-config effect,
+// NOT from the older, static-credential pattern in `rtcIceConfig.js` (used
+// only by the web app's no-login Direct Video Call flow).
 //
-// Env vars read (via flutter_dotenv):
-//   VITE_RTC_ICE_SERVERS_JSON        - optional full override, JSON array or
-//                                       {"iceServers": [...]}
-//   VITE_RTC_STUN_URLS               - comma-separated STUN urls
-//   VITE_RTC_TURN_URLS               - comma-separated TURN urls
-//   VITE_RTC_TURN_USERNAME           - TURN username
-//   VITE_RTC_TURN_CREDENTIAL         - TURN credential
-//   VITE_RTC_ICE_CANDIDATE_POOL_SIZE - default 10
-
-import 'dart:convert';
+// VideoCall.jsx's own header comment explains why: TURN credentials baked
+// into a shipped build (env vars inlined at build time) are readable by
+// anyone who decompiles/inspects the app and can be used to relay traffic
+// through the TURN server indefinitely. The backend instead mints a
+// short-lived, per-request TURN credential (coturn's "TURN REST API"
+// convention) behind an authenticated endpoint — GET /api/rtc/ice-servers —
+// so nothing long-lived ever ships in the app. This file fetches that
+// endpoint the same way, with the same retry policy VideoCall.jsx uses.
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-const List<String> kFallbackStunUrls = [
-  'stun:stun.l.google.com:19302',
-  'stun:stun1.l.google.com:19302',
-  'stun:stun2.l.google.com:19302',
-  'stun:stun3.l.google.com:19302',
-  'stun:stun4.l.google.com:19302',
-];
-
-List<String> _parseCsv(String? value) => (value ?? '')
-    .split(',')
-    .map((item) => item.trim())
-    .where((item) => item.isNotEmpty)
-    .toList();
+import 'api_service.dart';
 
 bool _isTurnUrl(String url) =>
     RegExp(r'^turns?:', caseSensitive: false).hasMatch(url);
@@ -40,12 +24,13 @@ bool _isSupportedIceUrl(String url) =>
 
 List<String> _normalizeIceUrls(dynamic urls) {
   if (urls is List) return urls.map((u) => u.toString()).toList();
-  return _parseCsv(urls?.toString());
+  if (urls == null) return const [];
+  return [urls.toString()];
 }
 
 /// Result of building the ICE configuration: `config` is the map to pass to
 /// `createPeerConnection`, `error` is a non-empty validation message if the
-/// resolved server list is unusable (mirrors RTC_CONFIG_ERROR in React).
+/// resolved server list is unusable (mirrors `iceConfigError` in React).
 class IceServerSetup {
   final Map<String, dynamic> config;
   final String error;
@@ -56,7 +41,15 @@ class IceServerSetup {
     required this.error,
     required this.hasTurn,
   });
+
+  bool get isUsable => error.isEmpty && config.isNotEmpty;
 }
+
+const IceServerSetup kEmptyIceServerSetup = IceServerSetup(
+  config: {},
+  error: '',
+  hasTurn: false,
+);
 
 Map<String, dynamic>? _sanitizeServer(dynamic server) {
   if (server is! Map) return null;
@@ -79,7 +72,8 @@ Map<String, dynamic>? _sanitizeServer(dynamic server) {
   return sanitized;
 }
 
-List<Map<String, dynamic>> _sanitizeIceServers(List<dynamic> iceServers) {
+List<Map<String, dynamic>> _sanitizeIceServers(dynamic iceServers) {
+  if (iceServers is! List) return const [];
   final result = <Map<String, dynamic>>[];
   for (final server in iceServers) {
     final sanitized = _sanitizeServer(server);
@@ -88,12 +82,16 @@ List<Map<String, dynamic>> _sanitizeIceServers(List<dynamic> iceServers) {
   return result;
 }
 
+/// Mirrors `validateIceServers` in VideoCall.jsx: a TURN url without a
+/// username/credential means the server responded but is misconfigured —
+/// that's reported immediately rather than retried (see fetchIceServerConfig).
 String _validateIceServers(List<Map<String, dynamic>> iceServers) {
-  if (iceServers.isEmpty) return 'No ICE servers are configured.';
+  if (iceServers.isEmpty) {
+    return 'No ICE servers were returned by the server.';
+  }
 
   for (final server in iceServers) {
     final urls = _normalizeIceUrls(server['urls']);
-    if (urls.isEmpty) return 'An ICE server is missing urls.';
     for (final url in urls) {
       if (_isTurnUrl(url)) {
         final username = server['username'];
@@ -102,7 +100,7 @@ String _validateIceServers(List<Map<String, dynamic>> iceServers) {
             credential == null ||
             username.toString().isEmpty ||
             credential.toString().isEmpty) {
-          return 'TURN servers require username and credential.';
+          return 'A TURN server is missing its credential.';
         }
       }
     }
@@ -114,94 +112,55 @@ bool _hasTurnServer(List<Map<String, dynamic>> iceServers) => iceServers.any(
       (server) => _normalizeIceUrls(server['urls']).any(_isTurnUrl),
     );
 
-int _envInt(String key, int fallback) {
-  final raw = dotenv.env[key];
-  if (raw == null || raw.trim().isEmpty) return fallback;
-  return int.tryParse(raw.trim()) ?? fallback;
-}
+const List<int> _kRetryDelaysMs = [1000, 2000]; // before the 2nd/3rd attempt
 
-/// Builds the ICE server configuration exactly the way VideoCall.jsx does:
-/// prefer a full JSON override, else assemble from STUN/TURN CSV env vars,
-/// else fall back to public STUN. Warns (does not fail) when no TURN server
-/// is configured, mirroring the React `console.warn` in production builds.
-IceServerSetup buildIceServerConfig() {
-  final poolSize = _envInt('VITE_RTC_ICE_CANDIDATE_POOL_SIZE', 10);
+/// Fetches ICE servers from the backend, retrying only on request failure
+/// (network blip) — same policy as VideoCall.jsx's `attemptFetch`. A response
+/// that arrives but fails validation indicates a persistent server-side
+/// config problem, not a blip, so it's reported immediately without retrying.
+Future<IceServerSetup> fetchIceServerConfig() async {
+  Object? lastError;
 
-  Map<String, dynamic> baseConfig(List<Map<String, dynamic>> iceServers) => {
-        'iceServers': iceServers,
-        'iceCandidatePoolSize': poolSize,
-        'bundlePolicy': 'max-bundle',
-        'rtcpMuxPolicy': 'require',
-      };
-
-  final jsonConfig = dotenv.env['VITE_RTC_ICE_SERVERS_JSON'];
-  if (jsonConfig != null && jsonConfig.trim().isNotEmpty) {
+  for (var attempt = 0; attempt <= _kRetryDelaysMs.length; attempt++) {
     try {
-      final parsed = jsonDecode(jsonConfig);
-      final rawList = parsed is List
-          ? parsed
-          : (parsed is Map ? parsed['iceServers'] as List<dynamic>? : null);
-      final iceServers = _sanitizeIceServers(rawList ?? []);
-      if (iceServers.isNotEmpty) {
-        final error = _validateIceServers(iceServers);
-        final hasTurn = _hasTurnServer(iceServers);
-        if (!hasTurn) {
-          debugPrint(
-            '[ice-config] No TURN server configured. Same-network calls may '
-            'work, but calls across strict NATs can fail.',
-          );
-        }
-        return IceServerSetup(
-          config: baseConfig(iceServers),
-          error: error,
-          hasTurn: hasTurn,
+      final data = await ApiService.instance.get('/api/rtc/ice-servers');
+      final iceServers = _sanitizeIceServers(
+        data is Map ? data['iceServers'] : null,
+      );
+      final error = _validateIceServers(iceServers);
+      if (error.isNotEmpty) {
+        return IceServerSetup(config: const {}, error: error, hasTurn: false);
+      }
+
+      final hasTurn = _hasTurnServer(iceServers);
+      if (!hasTurn) {
+        debugPrint(
+          '[ice-config] No TURN server configured. Same-network calls may '
+          'work, but calls across strict NATs can fail.',
         );
       }
-      debugPrint('[ice-config] VITE_RTC_ICE_SERVERS_JSON did not contain iceServers.');
-    } catch (err) {
+
       return IceServerSetup(
-        config: const {},
-        error: 'Invalid VITE_RTC_ICE_SERVERS_JSON: $err',
-        hasTurn: false,
+        config: {
+          'iceServers': iceServers,
+          'iceCandidatePoolSize': 10,
+          'bundlePolicy': 'max-bundle',
+          'rtcpMuxPolicy': 'require',
+        },
+        error: '',
+        hasTurn: hasTurn,
       );
+    } catch (err) {
+      lastError = err;
+      if (attempt < _kRetryDelaysMs.length) {
+        await Future.delayed(Duration(milliseconds: _kRetryDelaysMs[attempt]));
+      }
     }
   }
 
-  final stunUrls = _parseCsv(dotenv.env['VITE_RTC_STUN_URLS']);
-  final turnUrls = _parseCsv(dotenv.env['VITE_RTC_TURN_URLS']);
-  final turnUsername = dotenv.env['VITE_RTC_TURN_USERNAME'] ?? '';
-  final turnCredential = dotenv.env['VITE_RTC_TURN_CREDENTIAL'] ?? '';
-
-  final iceServers = <Map<String, dynamic>>[
-    for (final url in (stunUrls.isNotEmpty ? stunUrls : kFallbackStunUrls))
-      {'urls': url},
-  ];
-
-  if (turnUrls.isNotEmpty && turnUsername.isNotEmpty && turnCredential.isNotEmpty) {
-    iceServers.add({
-      'urls': turnUrls,
-      'username': turnUsername,
-      'credential': turnCredential,
-    });
-  } else if (turnUrls.isNotEmpty) {
-    debugPrint(
-      '[ice-config] VITE_RTC_TURN_URLS is set, but TURN username/credential '
-      'is missing. Continuing with STUN-only ICE.',
-    );
-  }
-
-  final error = _validateIceServers(iceServers);
-  final hasTurn = _hasTurnServer(iceServers);
-  if (!hasTurn) {
-    debugPrint(
-      '[ice-config] No TURN server configured. Same-network calls may work, '
-      'but calls across strict NATs can fail.',
-    );
-  }
-
   return IceServerSetup(
-    config: baseConfig(iceServers),
-    error: error,
-    hasTurn: hasTurn,
+    config: const {},
+    error: lastError?.toString() ?? 'Could not fetch video call configuration.',
+    hasTurn: false,
   );
 }

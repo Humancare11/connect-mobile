@@ -13,13 +13,16 @@
 // from the same source the web app uses — not doctor-only UI.
 
 import 'dart:async';
+import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_background/flutter_background.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../services/api_service.dart';
 import '../services/ice_server_config.dart';
 import '../services/socket_service.dart';
+import '../services/token_storage_service.dart';
 import '../utils/direct_upload.dart';
 
 const Map<String, dynamic> kMediaConstraints = {
@@ -40,6 +43,7 @@ const Map<String, dynamic> kMediaConstraints = {
 };
 
 const int kCameraBitrate = 1200000;
+const int kScreenShareBitrate = 2000000;
 const int kVoiceBitrate = 64000;
 const int kIceRestartDelayMs = 2500;
 const int kConnectionFailTimeoutMs = 25000;
@@ -89,14 +93,12 @@ class VideoCallController extends ChangeNotifier {
         _initialPatient = initialPatient,
         _initialRole = initialRole,
         activeRole = initialRole,
-        apptLoading = initialAppointment == null,
-        _iceSetup = buildIceServerConfig();
+        apptLoading = initialAppointment == null;
 
   final String appointmentId;
   final Map<String, dynamic>? _initialDoctor;
   final Map<String, dynamic>? _initialPatient;
   final String _initialRole;
-  final IceServerSetup _iceSetup;
   final SocketService _socket = SocketService.instance;
 
   /// Called ~4s after the peer marks the appointment complete (patient side
@@ -244,8 +246,17 @@ class VideoCallController extends ChangeNotifier {
   bool isMuted = false;
   bool isCamOff = false;
   bool isSwapped = false;
+  bool isScreenSharing = false;
+  MediaStream? _screenStream;
+  bool _screenShareStartInProgress = false;
+  bool _screenShareStopInProgress = false;
   bool camError = false;
   String camErrorReason = '';
+  // idle | checking | ready | failed — mirrors React's `deviceCheck.status`.
+  String deviceCheckStatus = 'idle';
+  String deviceCheckCamera = 'unknown';
+  String deviceCheckMicrophone = 'unknown';
+  String deviceCheckSpeaker = 'unknown';
   bool completing = false;
   String inlineError = '';
   Timer? _inlineErrorTimer;
@@ -261,7 +272,8 @@ class VideoCallController extends ChangeNotifier {
   Map<String, dynamic>? prescriptionNotif;
   Timer? _prescriptionTimer;
 
-  String get iceConfigError => _iceSetup.error;
+  String iceConfigError = '';
+  bool _fetchingIceConfig = false;
 
   // ─────────────────────────────────────────────────────────────────────
   // Lifecycle
@@ -362,11 +374,19 @@ class VideoCallController extends ChangeNotifier {
   // ─────────────────────────────────────────────────────────────────────
 
   Future<void> startCallSession() async {
-    if (_iceSetup.error.isNotEmpty) {
-      apptError = 'Video consultation is not configured: ${_iceSetup.error}';
+    if (_fetchingIceConfig) return;
+    _fetchingIceConfig = true;
+    final iceSetup = await fetchIceServerConfig();
+    _fetchingIceConfig = false;
+    if (_disposed) return;
+
+    if (!iceSetup.isUsable) {
+      iceConfigError = iceSetup.error;
+      apptError = 'Video consultation is not configured: ${iceSetup.error}';
       notifyListeners();
       return;
     }
+    iceConfigError = '';
 
     _completedFlag = false;
     _pendingRemoteCandidates.clear();
@@ -387,15 +407,15 @@ class VideoCallController extends ChangeNotifier {
       _pc = null;
     }
 
-    final pc = await createPeerConnection(_iceSetup.config);
+    final pc = await createPeerConnection(iceSetup.config);
     if (_disposed) {
       await pc.close();
       return;
     }
     _pc = pc;
     _logEvent('peer_connection_created', {
-      'iceServerCount': (_iceSetup.config['iceServers'] as List).length,
-      'hasTurn': _iceSetup.hasTurn,
+      'iceServerCount': (iceSetup.config['iceServers'] as List).length,
+      'hasTurn': iceSetup.hasTurn,
     });
 
     final remoteStream = await createLocalMediaStream('remote');
@@ -420,7 +440,14 @@ class VideoCallController extends ChangeNotifier {
 
   Future<void> _acquireLocalMedia(RTCPeerConnection pc) async {
     try {
+      deviceCheckStatus = 'checking';
+      notifyListeners();
+
       final summary = await _deviceCheckSummary();
+      deviceCheckCamera = summary['camera'] ?? 'unknown';
+      deviceCheckMicrophone = summary['microphone'] ?? 'unknown';
+      deviceCheckSpeaker = summary['speaker'] ?? 'unknown';
+      notifyListeners();
       _logEvent('device_check', summary);
 
       final stream = await _getConsultationMediaStream();
@@ -437,6 +464,7 @@ class VideoCallController extends ChangeNotifier {
       isReady = true;
       camError = false;
       camErrorReason = '';
+      deviceCheckStatus = 'ready';
       notifyListeners();
       _logEvent('media_ready', {
         'audioTracks': stream.getAudioTracks().length,
@@ -459,6 +487,7 @@ class VideoCallController extends ChangeNotifier {
       if (!_disposed) {
         camError = true;
         camErrorReason = _mediaErrorMessage(err);
+        deviceCheckStatus = 'failed';
         notifyListeners();
       }
       if (!_localReady.isCompleted) _localReady.complete(false);
@@ -945,6 +974,20 @@ class VideoCallController extends ChangeNotifier {
     await startCallSession();
   }
 
+  /// No direct React equivalent (browser tabs don't get suspended the same
+  /// way), but a real mobile gap: the OS can freeze networking while the app
+  /// is backgrounded, leaving the socket client's own reconnection backoff
+  /// timer stale by the time the app returns to the foreground. Proactively
+  /// kicking the socket on resume starts recovery immediately instead of
+  /// waiting out whatever backoff delay was in flight when the app was
+  /// backgrounded.
+  void handleAppResumed() {
+    final pc = _pc;
+    if (_disposed || pc == null) return;
+    if (_isConnectedState(pc)) return;
+    _socket.connect();
+  }
+
   Future<void> retryMediaPermissions() async {
     final pc = _pc;
     if (pc == null || pc.signalingState == RTCSignalingState.RTCSignalingStateClosed) {
@@ -956,16 +999,28 @@ class VideoCallController extends ChangeNotifier {
     }
 
     camError = false;
+    deviceCheckStatus = 'checking';
     notifyListeners();
 
     try {
+      final summary = await _deviceCheckSummary();
+      deviceCheckCamera = summary['camera'] ?? 'unknown';
+      deviceCheckMicrophone = summary['microphone'] ?? 'unknown';
+      deviceCheckSpeaker = summary['speaker'] ?? 'unknown';
+      _logEvent('media_retry_started', summary);
+
       final stream = await _getConsultationMediaStream();
       await _attachLocalMediaStream(stream, pc);
 
       isReady = true;
       camError = false;
       camErrorReason = '';
+      deviceCheckStatus = 'ready';
       notifyListeners();
+      _logEvent('media_retry_succeeded', {
+        'audioTracks': stream.getAudioTracks().length,
+        'videoTracks': stream.getVideoTracks().length,
+      });
       _emitOnlineAndJoinRoom();
 
       if (pc.signalingState == RTCSignalingState.RTCSignalingStateHaveRemoteOffer) {
@@ -982,6 +1037,8 @@ class VideoCallController extends ChangeNotifier {
     } catch (err) {
       camError = true;
       camErrorReason = _mediaErrorMessage(err);
+      deviceCheckStatus = 'failed';
+      _logEvent('media_retry_failed', {'error': err.toString()});
       notifyListeners();
     }
   }
@@ -1261,19 +1318,38 @@ class VideoCallController extends ChangeNotifier {
     }
 
     final activeUserId = isDoctor ? doctorId : userId;
+    final activeRole = isDoctor ? 'doctor' : 'user';
+    unawaited(_emitOnlineAndJoinRoomPayload(activeUserId, activeRole));
+    return true;
+  }
+
+  /// Split out from `_emitOnlineAndJoinRoom` because fetching the token is
+  /// async while the join dedup check above must stay synchronous. Explicit,
+  /// role-scoped `token` on both emits — matches VideoCall.jsx: each event is
+  /// handled independently and asynchronously on the server, so
+  /// join-appointment-room can't assume user-online (emitted first) has
+  /// already finished resolving identity from the connection-time auth
+  /// snapshot alone (see server.js's resolveSocketIdentity). This app only
+  /// ever authenticates as a patient today, so the connection-time handshake
+  /// token is normally enough on its own — this is defense-in-depth so
+  /// per-event identity resolution stays correct if that ever changes.
+  Future<void> _emitOnlineAndJoinRoomPayload(String activeUserId, String role) async {
+    final token = await const TokenStorageService().getToken() ?? '';
+
     if (activeUserId.isNotEmpty) {
       _socket.emit('user-online', {
         'userId': activeUserId,
-        'role': isDoctor ? 'doctor' : 'user',
+        'role': role,
+        'token': token,
       });
     }
     _socket.emit('join-appointment-room', {
       'appointmentId': appointmentId,
       'userId': activeUserId,
-      'role': isDoctor ? 'doctor' : 'user',
+      'role': role,
+      'token': token,
     });
     _logEvent('appointment_room_join_requested', {'socketId': _socket.id});
-    return true;
   }
 
   void _handleSocketConnect(dynamic _) {
@@ -1332,6 +1408,183 @@ class VideoCallController extends ChangeNotifier {
     isCamOff = !isCamOff;
     _localStream?.getVideoTracks().forEach((t) => t.enabled = !isCamOff);
     notifyListeners();
+  }
+
+  // ── Screen sharing ───────────────────────────────────────────────────
+  // Ported from startScreenShare/stopScreenShare/toggleScreenShare in
+  // VideoCall.jsx: replace the existing video sender's track with a
+  // screen-capture track, then swap it back to the camera on stop.
+  //
+  // One real platform gap vs. the web version: browsers fire
+  // `track.onended` when the OS-level share is stopped from outside the
+  // page (e.g. the browser's "Stop sharing" bar). flutter_webrtc 1.5.2's
+  // native MediaStreamTrack does not surface an equivalent callback, so
+  // there is no reliable way to detect the user stopping the capture from
+  // the platform's screen-recording control (Android's status-bar/quick-
+  // settings "Stop", the iOS Control Center recording indicator) — only
+  // the in-app "Stop" button reliably restores the camera. This is a
+  // constraint of the plugin version, not something worth faking with a
+  // callback that would never actually fire.
+
+  Future<RTCRtpSender?> _videoSender() {
+    final pc = _pc;
+    if (pc == null) return Future.value(null);
+    return _getSenderForKind(pc, 'video');
+  }
+
+  bool _backgroundExecutionEnabled = false;
+
+  /// Android requires a running `mediaProjection`-typed foreground service
+  /// for the duration of a MediaProjection capture, or getDisplayMedia
+  /// throws a SecurityException — see AndroidManifest.xml. iOS's
+  /// getDisplayMedia routes through in-process RPScreenRecorder and needs
+  /// none of this, so it's a no-op there.
+  Future<bool> _startBackgroundExecutionForScreenShare() async {
+    if (!Platform.isAndroid) return true;
+    try {
+      final initialized = await FlutterBackground.initialize(
+        androidConfig: const FlutterBackgroundAndroidConfig(
+          notificationTitle: 'Humancare Connect',
+          notificationText: 'Screen sharing is active in your consultation.',
+          notificationImportance: AndroidNotificationImportance.normal,
+        ),
+      );
+      if (!initialized) return false;
+      _backgroundExecutionEnabled =
+          await FlutterBackground.enableBackgroundExecution();
+      return _backgroundExecutionEnabled;
+    } catch (err) {
+      debugPrint('[video-call] flutter_background init/enable failed: $err');
+      return false;
+    }
+  }
+
+  Future<void> _stopBackgroundExecutionForScreenShare() async {
+    if (!Platform.isAndroid || !_backgroundExecutionEnabled) return;
+    _backgroundExecutionEnabled = false;
+    try {
+      await FlutterBackground.disableBackgroundExecution();
+    } catch (err) {
+      debugPrint('[video-call] flutter_background disable failed: $err');
+    }
+  }
+
+  Future<void> startScreenShare() async {
+    final pc = _pc;
+    if (pc == null ||
+        isScreenSharing ||
+        _screenShareStartInProgress ||
+        _screenShareStopInProgress) {
+      return;
+    }
+
+    final sender = await _videoSender();
+    if (sender == null) {
+      _showInlineMessage(
+        'Screen sharing requires an active video sender. Enable camera first, then try again.',
+      );
+      return;
+    }
+
+    _screenShareStartInProgress = true;
+    MediaStream? screen;
+    try {
+      final backgroundReady = await _startBackgroundExecutionForScreenShare();
+      if (!backgroundReady) {
+        _showInlineMessage(
+          'Screen sharing could not be started (background permission denied).',
+        );
+        return;
+      }
+
+      screen = await navigator.mediaDevices
+          .getDisplayMedia({'video': true, 'audio': false});
+      final screenTrack = screen.getVideoTracks().isNotEmpty ? screen.getVideoTracks().first : null;
+      if (screenTrack == null) {
+        for (final t in screen.getTracks()) {
+          await t.stop();
+        }
+        _showInlineMessage('No screen video track was shared by the system.');
+        return;
+      }
+
+      await sender.replaceTrack(screenTrack);
+      await _tuneSenderQuality(sender, maxBitrate: kScreenShareBitrate, maxFramerate: 30);
+
+      _screenStream = screen;
+      isScreenSharing = true;
+      notifyListeners();
+      _logEvent('screen_share_started', {});
+    } catch (err) {
+      if (screen != null) {
+        for (final t in screen.getTracks()) {
+          await t.stop();
+        }
+      }
+      try {
+        await _restoreCameraAfterScreenShare(sender);
+      } catch (restoreErr) {
+        debugPrint('[video-call] camera restore after failed screen share start failed: $restoreErr');
+      }
+      debugPrint('[video-call] screen share error: $err');
+      _logEvent('screen_share_failed', {'error': err.toString()});
+      _showInlineMessage('Screen sharing could not be started on this device.');
+    } finally {
+      _screenShareStartInProgress = false;
+      if (!isScreenSharing) await _stopBackgroundExecutionForScreenShare();
+    }
+  }
+
+  Future<void> stopScreenShare() async {
+    if (_screenShareStopInProgress) return;
+    _screenShareStopInProgress = true;
+
+    final screenStream = _screenStream;
+    _screenStream = null;
+
+    try {
+      if (screenStream != null) {
+        for (final t in screenStream.getTracks()) {
+          await t.stop();
+        }
+      }
+      final sender = await _videoSender();
+      if (sender != null) {
+        await _restoreCameraAfterScreenShare(sender);
+      }
+      _logEvent('screen_share_stopped', {});
+    } catch (err) {
+      debugPrint('[video-call] camera restore after screen share failed: $err');
+      _logEvent('screen_share_restore_failed', {'error': err.toString()});
+      _showInlineMessage(
+        'Screen sharing stopped, but camera could not be restored. Toggle the camera or rejoin the call.',
+      );
+    } finally {
+      isScreenSharing = false;
+      _screenShareStartInProgress = false;
+      _screenShareStopInProgress = false;
+      await _stopBackgroundExecutionForScreenShare();
+      notifyListeners();
+    }
+  }
+
+  Future<void> _restoreCameraAfterScreenShare(RTCRtpSender sender) async {
+    final camTrack = _localStream?.getVideoTracks().isNotEmpty == true
+        ? _localStream!.getVideoTracks().first
+        : null;
+    await sender.replaceTrack(camTrack);
+    if (camTrack != null) {
+      await _tuneSenderQuality(sender, maxBitrate: kCameraBitrate, maxFramerate: 30);
+    }
+    _assignStreams(isSwapped);
+  }
+
+  void toggleScreenShare() {
+    if (isScreenSharing) {
+      unawaited(stopScreenShare());
+    } else {
+      unawaited(startScreenShare());
+    }
   }
 
   void toggleSwap() {
@@ -1421,17 +1674,41 @@ class VideoCallController extends ChangeNotifier {
     _pc = null;
     await pc?.close();
 
+    // The screen-capture stream is independent of the RTCPeerConnection, so
+    // closing `pc` above doesn't stop it — matches VideoCall.jsx's main
+    // effect cleanup, which stops screenStreamRef's tracks on every
+    // teardown (including a forced reconnect), not just on final leave.
+    final screenStream = _screenStream;
+    _screenStream = null;
+    if (screenStream != null) {
+      for (final t in screenStream.getTracks()) {
+        await t.stop();
+      }
+    }
+    isScreenSharing = false;
+    _screenShareStartInProgress = false;
+    _screenShareStopInProgress = false;
+    await _stopBackgroundExecutionForScreenShare();
+
     _pendingRemoteCandidates.clear();
     _joinedSocketId = '';
     _ignoreOffer = false;
     _restartRequestInFlight = false;
   }
 
-  Future<void> performCleanup() async {
+  /// [emitLeave] mirrors React's `pageUnloadingRef` gate on the
+  /// `leave-appointment-room` emit: user-initiated leaves (leaveCall,
+  /// completeAppointment, normal widget dispose) should tell the peer
+  /// immediately, but an app-process kill (see
+  /// `didChangeAppLifecycleState(AppLifecycleState.detached)` in the
+  /// screen) should not — the socket disconnecting on its own gives the
+  /// server's grace-period logic a chance to treat a quick relaunch as a
+  /// resume instead of an abrupt "peer left".
+  Future<void> performCleanup({bool emitLeave = true}) async {
     if (_completedFlag) return;
     _completedFlag = true;
 
-    await _teardownSession();
+    await _teardownSession(leaveRoom: emitLeave);
 
     final tracks = _localStream?.getTracks() ?? const [];
     for (final t in tracks) {

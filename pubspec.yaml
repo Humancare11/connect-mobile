@@ -71,6 +71,11 @@ dependencies:
   firebase_core: ^4.0.0
   firebase_messaging: ^16.0.0
   flutter_local_notifications: ^19.4.2
+  # Android-only: runs the mediaProjection foreground service screen sharing
+  # requires (see android/app/src/main/AndroidManifest.xml). No-op on iOS,
+  # which doesn't need it — see video_call_controller.dart's screen-sharing
+  # section.
+  flutter_background: ^1.3.1
 
 dev_dependencies:
   flutter_test:

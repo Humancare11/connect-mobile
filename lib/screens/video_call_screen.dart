@@ -5,10 +5,15 @@
 // control bar, confirm overlays), but owns no signaling/WebRTC logic itself.
 // See lib/controllers/video_call_controller.dart for the ported behavior.
 //
-// Deliberately NOT ported from the web UI: screen sharing (native mobile
-// screen capture needs platform-specific plumbing well beyond this app) and
-// the doctor-authored prescription/notes UI (this app has no doctor login
-// flow — see the controller's class doc comment).
+// Screen sharing is ported (see VideoCallController.startScreenShare /
+// stopScreenShare) — Android needs a foreground service declared in
+// AndroidManifest.xml (MediaProjection requires one); iOS needs none, since
+// flutter_webrtc's getDisplayMedia routes through in-process RPScreenRecorder
+// for in-app sharing.
+//
+// Deliberately NOT ported from the web UI: the doctor-authored
+// prescription/notes UI (this app has no doctor login flow — see the
+// controller's class doc comment).
 
 import 'dart:async';
 
@@ -97,7 +102,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.detached) {
-      unawaited(_controller.performCleanup());
+      // Mirrors VideoCall.jsx's pageUnloadingRef: don't tell the peer we
+      // left explicitly on a process kill — let the socket's natural
+      // disconnect + the server's grace period handle a quick relaunch as
+      // a resume instead of an abrupt "peer left".
+      unawaited(_controller.performCleanup(emitLeave: false));
+    } else if (state == AppLifecycleState.resumed) {
+      _controller.handleAppResumed();
     }
   }
 
@@ -205,6 +216,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
                 children: [
                   _buildTopBar(),
                   if (_controller.inlineError.isNotEmpty) _inlineErrorBanner(),
+                  if (_controller.deviceCheckStatus != 'idle' &&
+                      _controller.deviceCheckStatus != 'ready')
+                    _deviceCheckBanner(),
                   if (_controller.reconnectStalled) _reconnectStalledBanner(),
                   Expanded(child: _buildBody()),
                   _buildControlBar(),
@@ -356,6 +370,36 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
           TextButton(
             onPressed: () => unawaited(_controller.forceReconnect()),
             child: const Text('Reconnect', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _deviceCheckBanner() {
+    final failed = _controller.deviceCheckStatus == 'failed';
+    return Container(
+      width: double.infinity,
+      color: failed ? const Color(0xFFFEF2F2) : const Color(0xFFEFF6FF),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Icon(
+            failed ? Icons.warning_amber_rounded : Icons.autorenew,
+            color: failed ? Colors.red : const Color(0xFF1D4ED8),
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              failed
+                  ? 'Device check failed. Review app permissions and retry.'
+                  : 'Checking camera and microphone…',
+              style: TextStyle(
+                color: failed ? Colors.red : const Color(0xFF1D4ED8),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
           ),
         ],
       ),
@@ -836,6 +880,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
               label: _controller.isCamOff ? 'Cam On' : 'Cam Off',
               danger: _controller.isCamOff,
               onTap: _controller.isReady ? _controller.toggleCamera : null,
+            ),
+            _ctrlButton(
+              icon: Icons.screen_share,
+              label: _controller.isScreenSharing ? 'Stop' : 'Share',
+              active: _controller.isScreenSharing,
+              onTap: _controller.isReady ? _controller.toggleScreenShare : null,
             ),
             if (_controller.inCall)
               Container(
