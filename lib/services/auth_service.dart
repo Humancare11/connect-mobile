@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -5,6 +7,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import '../models/api_result.dart';
 import '../models/auth_response.dart';
 import '../models/google_auth_result.dart';
+import '../utils/json_helpers.dart';
 import 'api_client.dart';
 import 'notification_service.dart';
 import 'token_storage_service.dart';
@@ -43,12 +46,22 @@ class AuthService {
   }) async {
     final result = await _apiClient.post('/auth/login', {
       'email': email,
-      'password': password,
+      'password': password.trim(),
     });
 
     return _authResult(result, 'Login response did not include a valid token.');
   }
 
+  // Every password value is trimmed here — the single place all password
+  // flows (register, forgot-password reset, login above) funnel through —
+  // rather than in each screen individually. Previously only login_screen.dart
+  // and change_password_screen.dart trimmed before sending, while
+  // registration and password-reset didn't: a password with a leading/
+  // trailing space (easy to introduce via autocapitalize or paste) would be
+  // accepted here untrimmed but validated as if trimmed (AuthValidators
+  // treats a space as a valid "special character"), then rejected on every
+  // future login attempt once trimmed — permanently locking the user out of
+  // an account with its own valid password.
   Future<ApiResult<void>> sendRegisterOtp({
     required String email,
     required String password,
@@ -58,7 +71,7 @@ class AuthService {
   }) async {
     final result = await _apiClient.post('/auth/send-register-otp', {
       'email': email,
-      'password': password,
+      'password': password.trim(),
       'dob': dob,
       'privacyConsent': privacyConsent,
       'hipaaConsent': hipaaConsent,
@@ -87,7 +100,7 @@ class AuthService {
     final result = await _apiClient.post('/auth/register', {
       'name': name.trim(),
       'email': email.trim().toLowerCase(),
-      'password': password,
+      'password': password.trim(),
       'otp': otp.trim(),
       'privacyConsent': privacyConsent,
       'hipaaConsent': hipaaConsent,
@@ -126,8 +139,8 @@ class AuthService {
     });
 
     final data = result.data ?? <String, dynamic>{};
-    final responseData = _asMap(data['data']);
-    final resetToken = _firstNonEmptyString([
+    final responseData = asMap(data['data']);
+    final resetToken = firstNonEmptyString([
       data['resetToken'],
       responseData['resetToken'],
     ]);
@@ -169,7 +182,7 @@ class AuthService {
   }) async {
     final result = await _apiClient.post('/auth/reset-password', {
       'resetToken': resetToken,
-      'newPassword': newPassword,
+      'newPassword': newPassword.trim(),
     });
 
     return ApiResult<void>(
@@ -187,8 +200,8 @@ class AuthService {
     required String newPassword,
   }) async {
     final result = await _apiClient.put('/auth/change-password', {
-      'currentPassword': currentPassword,
-      'newPassword': newPassword,
+      'currentPassword': currentPassword.trim(),
+      'newPassword': newPassword.trim(),
     });
 
     return ApiResult<void>(
@@ -362,7 +375,14 @@ class AuthService {
       city: authResponse.user.city,
       location: authResponse.user.location,
     );
-    await NotificationService.instance.syncTokenAfterLogin();
+    // Fire-and-forget: FCM token registration now retries transient
+    // failures with backoff (see notification_service.dart), which can add
+    // several seconds of delay on its own. Awaiting it here would block the
+    // login/register screen from navigating to MainScreen on nothing more
+    // than a slow or flaky push-notification registration — whether this
+    // device gets push notifications has no bearing on whether login should
+    // proceed.
+    unawaited(NotificationService.instance.syncTokenAfterLogin());
   }
 
   Future<ApiResult<Map<String, String>>> fetchCurrentProfile() async {
@@ -479,14 +499,14 @@ class AuthService {
     Map<String, dynamic> data,
     Map<String, String> fallback,
   ) {
-    final responseData = _asMap(data['data']);
+    final responseData = asMap(data['data']);
     final user = UserModel.fromMaps(data, responseData);
-    final responseUser = _firstNonEmptyMap([
+    final responseUser = firstNonEmptyMap([
       data['user'],
       responseData['user'],
-      _findFirstMapByKeys(data, const {'user'}),
+      findFirstMapByKeys(data, const {'user'}),
     ]);
-    final patientId = _firstNonEmptyString([
+    final patientId = firstNonEmptyString([
       responseUser['patientId'],
       data['patientId'],
       responseData['patientId'],
@@ -524,9 +544,9 @@ class AuthService {
     String missingTokenMessage,
   ) {
     final data = result.data ?? <String, dynamic>{};
-    final responseData = _asMap(data['data']);
-    final nestedData = _asMap(responseData['data']);
-    final token = _firstNonEmptyString([
+    final responseData = asMap(data['data']);
+    final nestedData = asMap(responseData['data']);
+    final token = firstNonEmptyString([
       data['token'],
       data['accessToken'],
       data['access_token'],
@@ -551,7 +571,7 @@ class AuthService {
       nestedData['jwt'],
       nestedData['jwtToken'],
       nestedData['bearerToken'],
-      _findFirstStringByKeys(data, const {
+      findFirstStringByKeys(data, const {
         'token',
         'accessToken',
         'access_token',
@@ -562,14 +582,14 @@ class AuthService {
         'bearerToken',
       }),
     ]);
-    final refreshToken = _firstNonEmptyString([
+    final refreshToken = firstNonEmptyString([
       data['refreshToken'],
       data['refresh_token'],
       responseData['refreshToken'],
       responseData['refresh_token'],
       nestedData['refreshToken'],
       nestedData['refresh_token'],
-      _findFirstStringByKeys(data, const {'refreshToken', 'refresh_token'}),
+      findFirstStringByKeys(data, const {'refreshToken', 'refresh_token'}),
     ]);
 
     if (!result.success) {
@@ -602,84 +622,6 @@ class AuthService {
       statusCode: result.statusCode,
     );
   }
-}
-
-Map<String, dynamic> _asMap(dynamic value) {
-  if (value is Map) {
-    return value.map((key, value) => MapEntry(key.toString(), value));
-  }
-
-  return <String, dynamic>{};
-}
-
-Map<String, dynamic> _firstNonEmptyMap(List<dynamic> values) {
-  for (final value in values) {
-    final map = _asMap(value);
-    if (map.isNotEmpty) return map;
-  }
-
-  return <String, dynamic>{};
-}
-
-Map<String, dynamic> _findFirstMapByKeys(dynamic value, Set<String> keys) {
-  if (value is Map) {
-    for (final entry in value.entries) {
-      final key = entry.key.toString();
-      final map = _asMap(entry.value);
-      if (keys.contains(key) && map.isNotEmpty) return map;
-
-      final nested = _findFirstMapByKeys(entry.value, keys);
-      if (nested.isNotEmpty) return nested;
-    }
-  }
-
-  if (value is List) {
-    for (final item in value) {
-      final nested = _findFirstMapByKeys(item, keys);
-      if (nested.isNotEmpty) return nested;
-    }
-  }
-
-  return <String, dynamic>{};
-}
-
-String _firstNonEmptyString(List<dynamic> values) {
-  for (final value in values) {
-    final text = value?.toString().trim() ?? '';
-
-    if (text.isNotEmpty) {
-      return text;
-    }
-  }
-
-  return '';
-}
-
-String _findFirstStringByKeys(dynamic value, Set<String> keys) {
-  if (value is Map) {
-    for (final entry in value.entries) {
-      final key = entry.key.toString();
-      if (keys.contains(key)) {
-        final entryValue = entry.value;
-        if (entryValue is String || entryValue is num || entryValue is bool) {
-          final text = entryValue.toString().trim();
-          if (text.isNotEmpty) return text;
-        }
-      }
-
-      final nested = _findFirstStringByKeys(entry.value, keys);
-      if (nested.isNotEmpty) return nested;
-    }
-  }
-
-  if (value is List) {
-    for (final item in value) {
-      final nested = _findFirstStringByKeys(item, keys);
-      if (nested.isNotEmpty) return nested;
-    }
-  }
-
-  return '';
 }
 
 String _googleErrorMessage(Object error) {

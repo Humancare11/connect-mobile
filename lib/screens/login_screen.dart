@@ -31,6 +31,7 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _loading = false;
   bool _googleLoading = false;
   StreamSubscription<GoogleSignInAuthenticationEvent>? _googleAuthSubscription;
+  Timer? _googleWebTimeoutTimer;
   bool _obscurePassword = true;
   bool _showGoogleComplete = false;
   bool _privacyConsent = false;
@@ -50,6 +51,12 @@ class _LoginScreenState extends State<LoginScreen> {
   static const Color _textMuted = Color(0xFF6B7280);
 
   Future<void> _login() async {
+    // `onPressed: _loading ? null : _login` reflects last frame's state, not
+    // this one — setState schedules a rebuild for the *next* frame, so two
+    // taps landing before that rebuild could both reach here and fire
+    // duplicate login requests. Guard explicitly instead of relying on the
+    // button's disabled state alone.
+    if (_loading) return;
     if (!_formKey.currentState!.validate()) return;
     setState(() {
       _loading = true;
@@ -74,10 +81,24 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _googleLogin() async {
+    if (_googleLoading) return;
     if (kIsWeb) {
       setState(() {
         _googleLoading = true;
         _error = '';
+      });
+      // On web, the actual result arrives asynchronously via the
+      // authenticationEvents stream in initState (only a sign-in success
+      // is guaranteed to emit an event — closing/cancelling the popup may
+      // not emit anything at all). Without this timeout, cancelling the
+      // popup left the button stuck on its loading spinner forever.
+      _googleWebTimeoutTimer?.cancel();
+      _googleWebTimeoutTimer = Timer(const Duration(seconds: 45), () {
+        if (!mounted || !_googleLoading) return;
+        setState(() {
+          _googleLoading = false;
+          _error = 'Google Sign-In was cancelled or timed out. Please try again.';
+        });
       });
       return;
     }
@@ -121,6 +142,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _handleGoogleSignedIn(GoogleSignInAccount account) async {
+    _googleWebTimeoutTimer?.cancel();
     try {
       const scopes = ['openid', 'profile', 'email'];
       final authorization =
@@ -170,6 +192,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _completeGoogleRegistration() async {
+    if (_loading) return;
     if (_mobileController.text.trim().isEmpty) {
       setState(() => _error = 'Enter mobile number');
       return;
@@ -238,6 +261,14 @@ class _LoginScreenState extends State<LoginScreen> {
               await _handleGoogleSignedIn(event.user);
             }
           },
+          onError: (Object error) {
+            _googleWebTimeoutTimer?.cancel();
+            if (!mounted) return;
+            setState(() {
+              _googleLoading = false;
+              _error = 'Google Sign-In failed. Please try again.';
+            });
+          },
         );
       });
     }
@@ -246,6 +277,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void dispose() {
     _googleAuthSubscription?.cancel();
+    _googleWebTimeoutTimer?.cancel();
     _emailController.dispose();
     _passwordController.dispose();
     _mobileController.dispose();

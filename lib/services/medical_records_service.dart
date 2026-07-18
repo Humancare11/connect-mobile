@@ -36,11 +36,29 @@ class MedicalRecordsService {
         ? _certificatesFromResult(certificateResult)
         : const <MedicalCertificateRecord>[];
 
+    // Previously only prescriptionResult's failure was ever surfaced — if
+    // certificates failed to load (401, 500, timeout) while prescriptions
+    // succeeded, `certificates` silently became `[]` with no error at all,
+    // and the UI showed "No certificates yet" as if that were confirmed
+    // fact rather than an unreported fetch failure.
+    final failures = [
+      if (!prescriptionResult.success) prescriptionResult,
+      if (!certificateResult.success) certificateResult,
+    ];
+
     var error = '';
-    if (!prescriptionResult.success) {
-      error = prescriptionResult.statusCode == 401
-          ? 'Session expired. Please log in again.'
-          : prescriptionResult.message;
+    if (failures.isNotEmpty) {
+      final anySessionExpired = failures.any((r) => r.statusCode == 401);
+      if (anySessionExpired) {
+        error = 'Session expired. Please log in again.';
+      } else if (!prescriptionResult.success && !certificateResult.success) {
+        error = 'Could not load your prescriptions or certificates. '
+            '${prescriptionResult.message}';
+      } else if (!prescriptionResult.success) {
+        error = 'Could not load prescriptions. ${prescriptionResult.message}';
+      } else {
+        error = 'Could not load certificates. ${certificateResult.message}';
+      }
     }
 
     return MedicalRecordsSnapshot(

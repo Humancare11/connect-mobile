@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/api_result.dart';
+import '../utils/json_helpers.dart';
 import 'api_client.dart';
 import 'token_storage_service.dart';
 
@@ -85,6 +86,19 @@ class TicketService {
       }
     }
 
+    if (lastFailure != null && _isAuthFailure(lastFailure)) {
+      // Expired/invalid auth was previously treated identically to
+      // "endpoint not found" and silently rendered as an empty ticket list
+      // (success:true, data:[]) — a user whose session expired saw "No
+      // tickets found" with no indication they needed to log in again.
+      return ApiResult<List<Map<String, dynamic>>>(
+        success: false,
+        message: 'Session expired. Please log in again.',
+        raw: lastFailure.raw,
+        statusCode: lastFailure.statusCode,
+      );
+    }
+
     if (lastFailure == null ||
         _shouldTreatMissingTicketListAsEmpty(lastFailure)) {
       return ApiResult<List<Map<String, dynamic>>>(
@@ -137,8 +151,8 @@ class TicketService {
     Map<String, dynamic> data,
     Map<String, dynamic> fallback,
   ) {
-    final responseData = _asMap(data['data']);
-    final ticket = _firstNonEmptyMap([
+    final responseData = asMap(data['data']);
+    final ticket = firstNonEmptyMap([
       data['ticket'],
       responseData['ticket'],
       responseData,
@@ -171,21 +185,30 @@ class TicketService {
   }
 }
 
+bool _isAuthFailure(ApiResult<Map<String, dynamic>> result) {
+  return result.statusCode == 401 || result.statusCode == 403;
+}
+
 bool _shouldTryNextTicketEndpoint(ApiResult<Map<String, dynamic>> result) {
-  return [401, 403, 404, 405].contains(result.statusCode) ||
+  // 401/403 means "wrong identity for this resource," not "wrong URL" — an
+  // auth failure will happen identically on every remaining endpoint, and
+  // trying them all just delays surfacing the real problem (an expired
+  // session) to the user. Stop immediately instead.
+  if (_isAuthFailure(result)) return false;
+  return [404, 405].contains(result.statusCode) ||
       result.message.startsWith('Unexpected response from the server');
 }
 
 bool _shouldTreatMissingTicketListAsEmpty(
   ApiResult<Map<String, dynamic>> result,
 ) {
-  return [401, 403, 404, 405].contains(result.statusCode) ||
+  return [404, 405].contains(result.statusCode) ||
       result.message.startsWith('Unexpected response from the server');
 }
 
 List<Map<String, dynamic>> _ticketListFrom(Map<String, dynamic> data) {
-  final responseData = _asMap(data['data']);
-  final nestedData = _asMap(responseData['data']);
+  final responseData = asMap(data['data']);
+  final nestedData = asMap(responseData['data']);
   final candidates = [
     data['tickets'],
     data['ticket'],
@@ -225,7 +248,7 @@ List<Map<String, dynamic>> _asMapList(dynamic value) {
         .toList();
   }
 
-  final map = _asMap(value);
+  final map = asMap(value);
   if (_isTicketLike(map)) return [map];
 
   return const <Map<String, dynamic>>[];
@@ -240,19 +263,3 @@ bool _isTicketLike(Map<String, dynamic> map) {
       map.containsKey('category');
 }
 
-Map<String, dynamic> _asMap(dynamic value) {
-  if (value is Map) {
-    return value.map((key, value) => MapEntry(key.toString(), value));
-  }
-
-  return <String, dynamic>{};
-}
-
-Map<String, dynamic> _firstNonEmptyMap(List<dynamic> values) {
-  for (final value in values) {
-    final map = _asMap(value);
-    if (map.isNotEmpty) return map;
-  }
-
-  return <String, dynamic>{};
-}

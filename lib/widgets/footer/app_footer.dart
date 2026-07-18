@@ -24,7 +24,6 @@ class AppFooter extends StatelessWidget {
   // ── Color tokens ───────────────────────────────────────────────────────────
   static const Color _primary      = Color(0xFF052269);
   static const Color _accent       = Color(0xFF2563EB);
-  static const Color _primaryLight = Color(0xFFEEF2FF);
   static const Color _inactive     = Color(0xFF9AA4B2);
 
   @override
@@ -92,7 +91,11 @@ class AppFooter extends StatelessWidget {
                         icon:          Icons.calendar_today_outlined,
                         activeIcon:    Icons.calendar_today_rounded,
                         label:         'Appointments',
-                        index:         3,
+                        // Matches MainScreen's page-index space (1 =
+                        // AppointmentsScreen) — previously 3, which never
+                        // matched the selectedIndex MainScreen actually sets,
+                        // so this tab never showed as selected.
+                        index:         1,
                         selectedIndex: selectedIndex,
                         onTap:         onTap,
                       ),

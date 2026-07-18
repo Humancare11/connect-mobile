@@ -6,7 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 
 import 'firebase_options.dart';
 import 'config/api_config.dart';
-import 'screens/login_screen.dart';
+import 'screens/auth_gate_screen.dart';
 import 'screens/book_appointment_form_screen.dart';
 import 'screens/book_appointment_payment_screen.dart';
 import 'screens/book_appointment_confirmation_screen.dart';
@@ -89,7 +89,7 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       navigatorKey: NotificationService.navigatorKey,
       debugShowCheckedModeBanner: false,
-      home: const LoginScreen(),
+      home: const AuthGateScreen(),
       routes: {
         "/appointment-form": (context) => const AppointmentFormPage(),
         "/appointment-payment": (context) => const AppointmentPaymentPage(),

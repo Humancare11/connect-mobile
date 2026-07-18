@@ -73,6 +73,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   Future<void> _sendOtp() async {
+    if (_loading) return;
     final email = _emailController.text.trim();
     if (email.isEmpty || !AuthValidators.isValidEmail(email)) {
       setState(() => _error = 'Please enter a valid email address.');
@@ -107,6 +108,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   Future<void> _verifyOtp() async {
+    if (_loading) return;
     final otp = _otpValue.trim();
     if (otp.length < 6) {
       setState(() => _error = 'Enter the complete 6-digit OTP.');
@@ -142,6 +144,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   }
 
   Future<void> _resetPassword() async {
+    if (_loading) return;
     final passwordError = AuthValidators.passwordError(
       _newPasswordController.text,
     );

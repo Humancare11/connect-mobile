@@ -23,9 +23,17 @@ class ApiConfig {
     final allowProduction =
         dotenv.env['ALLOW_PRODUCTION_API']?.trim().toLowerCase() == 'true';
 
-    if (!allowProduction &&
-        host == 'humancareconnect.co' &&
-        !host.startsWith('uat.')) {
+    // Previously only exact-matched the bare apex domain
+    // ("humancareconnect.co"), which — since that string can never itself
+    // start with "uat." — made the second half of the check dead logic and
+    // left this guard unable to catch a realistic production API subdomain
+    // like "api.humancareconnect.co". Now matches the domain or any of its
+    // subdomains, while still explicitly allowing UAT hosts through.
+    final isHumancareDomain =
+        host == 'humancareconnect.co' || host.endsWith('.humancareconnect.co');
+    final isUatHost = host.startsWith('uat.') || host.startsWith('uat-');
+
+    if (!allowProduction && isHumancareDomain && !isUatHost) {
       throw StateError(
         'Production API is disabled for this development build. '
         'Use https://uat-api.humancareconnect.co/api or set '

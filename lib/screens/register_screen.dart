@@ -15,41 +15,6 @@ import '../services/location_service.dart';
 import '../widgets/auth_widgets.dart';
 import 'main_screen.dart';
 
-// ─── Password strength helper ─────────────────────────────────────────────────
-const _commonPasswords = {
-  'password',
-  'password1',
-  'password123',
-  '12345678',
-  '123456789',
-  'qwerty123',
-  'admin123',
-  'admin1234',
-  'welcome1',
-  'welcome123',
-  'letmein1',
-  'iloveyou1',
-  'humancare',
-  'humancare123',
-  'doctor123',
-  'patient123',
-};
-
-String _getPasswordError(String value) {
-  if (value.length < 8) return 'Password must be at least 8 characters.';
-  if (!RegExp(r'[A-Z]').hasMatch(value))
-    return 'Password must include at least one uppercase letter.';
-  if (!RegExp(r'[a-z]').hasMatch(value))
-    return 'Password must include at least one lowercase letter.';
-  if (!RegExp(r'[0-9]').hasMatch(value))
-    return 'Password must include at least one number.';
-  if (!RegExp(r'[^A-Za-z0-9]').hasMatch(value))
-    return 'Password must include at least one special character.';
-  if (_commonPasswords.contains(value.toLowerCase()))
-    return 'Password is too common. Choose a stronger password.';
-  return '';
-}
-
 String _getDobError(String dob) {
   if (dob.isEmpty) return 'Select Date of Birth';
   final parsed = DateTime.tryParse(dob);
@@ -289,6 +254,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _authService = AuthService();
   final LocationService _locationService = LocationService();
   StreamSubscription<GoogleSignInAuthenticationEvent>? _googleAuthSubscription;
+  Timer? _googleWebTimeoutTimer;
 
   @override
   void initState() {
@@ -304,6 +270,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
               await _handleGoogleSignedIn(event.user);
             }
           },
+          onError: (Object error) {
+            _googleWebTimeoutTimer?.cancel();
+            if (!mounted) return;
+            setState(() {
+              _googleLoading = false;
+              _error = 'Google Sign-In failed. Please try again.';
+            });
+          },
         );
       });
     }
@@ -312,6 +286,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void dispose() {
     _googleAuthSubscription?.cancel();
+    _googleWebTimeoutTimer?.cancel();
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
@@ -551,6 +526,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // ── Submit registration → send OTP ────────────────────────────────────────
   Future<void> _handleRegisterSubmit() async {
+    if (_loading) return;
     if (!_formKey.currentState!.validate()) return;
 
     if (!_termsConsent || !_privacyConsent || !_hipaaConsent) {
@@ -585,9 +561,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // ── OTP submit → create account ───────────────────────────────────────────
   Future<void> _handleOtpSubmit() async {
+    // Also guards against the auto-submit-on-6th-digit path (OtpTextField's
+    // onChanged) firing a second time while a tap on the submit button is
+    // already in flight.
+    if (_loading) return;
     final otp = _otpController.text.trim();
     if (otp.length < 6 || !RegExp(r'^\d{6}$').hasMatch(otp)) {
       _setError('Enter the complete 6-digit OTP');
+      return;
+    }
+
+    // Mobile is optional, but if the user typed one, it must actually carry
+    // a resolved dial code — previously an unresolved code silently sent the
+    // raw digits with no country code prefix at all, while the field still
+    // displayed a placeholder that looked like a real selection.
+    if (_mobileController.text.trim().isNotEmpty && _selectedDialCode.isEmpty) {
+      _setError(
+        "Could not resolve a dial code for your country. Re-select your "
+        "country, or clear the mobile number to continue without one.",
+      );
       return;
     }
 
@@ -632,7 +624,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // ── Resend OTP ────────────────────────────────────────────────────────────
   Future<void> _handleResendOtp() async {
-    setState(() => _error = '');
+    // The 60s cooldown (_otpTimer) throttles repeat resends once _startTimer
+    // has run, but there's a window right after a tap, before that timer
+    // starts, where a fast double-tap could still fire this twice — this
+    // handler never set _loading at all despite the button's onTap already
+    // being gated on it, so that gate was a no-op for this specific action.
+    if (_loading) return;
+    setState(() {
+      _loading = true;
+      _error = '';
+    });
     final result = await _authRepository.sendRegisterOtp(
       email: _emailController.text.trim().toLowerCase(),
       password: _passwordController.text,
@@ -641,6 +642,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       hipaaConsent: _hipaaConsent,
     );
     if (!mounted) return;
+    setState(() => _loading = false);
     if (result.success) {
       _startTimer();
       showAuthSnackBar(context, 'OTP resent');
@@ -652,10 +654,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void _setError(String msg) => setState(() => _error = msg);
 
   Future<void> _handleGoogleSignUp() async {
+    if (_googleLoading) return;
     if (kIsWeb) {
       setState(() {
         _googleLoading = true;
         _error = '';
+      });
+      // See login_screen.dart's identical timeout: cancelling the web popup
+      // may not emit any authenticationEvents-stream event at all, which
+      // previously left this button stuck on its loading spinner forever.
+      _googleWebTimeoutTimer?.cancel();
+      _googleWebTimeoutTimer = Timer(const Duration(seconds: 45), () {
+        if (!mounted || !_googleLoading) return;
+        setState(() {
+          _googleLoading = false;
+          _error = 'Google Sign-In was cancelled or timed out. Please try again.';
+        });
       });
       return;
     }
@@ -693,6 +707,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _handleGoogleSignedIn(GoogleSignInAccount account) async {
+    _googleWebTimeoutTimer?.cancel();
     try {
       const scopes = ['openid', 'profile', 'email'];
       final authorization =
@@ -735,6 +750,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _completeGoogleRegistration() async {
+    if (_loading) return;
     if (_mobileController.text.trim().isEmpty) {
       _setError('Enter mobile number');
       return;
@@ -1234,7 +1250,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 6),
                     alignment: Alignment.center,
                     child: Text(
-                      _selectedDialCode.isEmpty ? '+91' : _selectedDialCode,
+                      // Previously showed a hardcoded "+91" placeholder here
+                      // even when no dial code had actually resolved for the
+                      // selected country — visually implying a code that
+                      // wasn't what would actually be submitted (see the
+                      // guard in _handleOtpSubmit, which now blocks
+                      // submission instead of silently sending a mobile
+                      // number with no country code at all).
+                      _selectedDialCode.isEmpty ? '+--' : _selectedDialCode,
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,
@@ -1326,7 +1349,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
             ),
             validator: (v) {
-              final err = _getPasswordError(v ?? '');
+              final err = AuthValidators.passwordError(v ?? '');
               return err.isEmpty ? null : err;
             },
           ),

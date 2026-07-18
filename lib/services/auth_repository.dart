@@ -2,7 +2,6 @@ import '../models/api_result.dart';
 import '../models/auth_response.dart';
 import '../models/register_model.dart';
 import 'auth_service.dart';
-import 'notification_service.dart';
 import 'token_storage_service.dart';
 
 /// Repository pattern implementation for authentication
@@ -49,32 +48,15 @@ class AuthRepository {
     );
 
     if (result.success && result.data != null) {
-      await _saveSession(result.data!);
+      // Delegates to AuthService.saveSession — the two used to duplicate
+      // this logic verbatim (this copy was only ever reachable from
+      // register(), while every screen that logs in calls
+      // AuthService.saveSession directly), risking silent drift if one was
+      // ever updated without the other.
+      await _authService.saveSession(result.data!);
     }
 
     return result;
-  }
-
-  /// Save user session after successful registration/login
-  Future<void> _saveSession(AuthResponse authResponse) async {
-    await _tokenStorage.saveToken(authResponse.token);
-    if (authResponse.refreshToken.isNotEmpty) {
-      await _tokenStorage.saveRefreshToken(authResponse.refreshToken);
-    }
-    await _tokenStorage.saveUserProfile(
-      userId: authResponse.user.id,
-      name: authResponse.user.name,
-      email: authResponse.user.email,
-      role: authResponse.user.role,
-      mobile: authResponse.user.mobile,
-      dob: authResponse.user.dob,
-      gender: authResponse.user.gender,
-      country: authResponse.user.country,
-      state: authResponse.user.state,
-      city: authResponse.user.city,
-      location: authResponse.user.location,
-    );
-    await NotificationService.instance.syncTokenAfterLogin();
   }
 
   /// Get current authentication token

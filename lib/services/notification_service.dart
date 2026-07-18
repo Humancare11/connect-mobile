@@ -333,6 +333,13 @@ class NotificationService {
     );
   }
 
+  // Before/after: a single failed attempt against a non-404/405 endpoint
+  // (a transient 5xx, a timeout) used to `return` immediately with no log
+  // and no retry — the device would silently stop receiving push
+  // notifications until some unrelated future token-refresh happened to
+  // succeed, possibly days later, with no visible signal anywhere.
+  static const List<int> _fcmRetryDelaysMs = [1000, 3000];
+
   Future<void> _saveTokenToBackend(String token) async {
     final authenticated = await _tokenStorage.isAuthenticated();
     if (!authenticated) return;
@@ -352,13 +359,39 @@ class NotificationService {
       '/auth/fcm-token',
       '/users/fcm-token',
     ]) {
-      final result = await _apiClient.post(endpoint, payload);
-      if (_isAcceptedTokenResponse(result)) {
-        debugPrint('[Notifications] token synced via $endpoint');
+      for (var attempt = 0; attempt <= _fcmRetryDelaysMs.length; attempt++) {
+        final result = await _apiClient.post(endpoint, payload);
+        if (_isAcceptedTokenResponse(result)) {
+          debugPrint('[Notifications] token synced via $endpoint');
+          return;
+        }
+
+        if (result.statusCode == 404 || result.statusCode == 405) {
+          // Wrong endpoint shape for this backend deployment — try the
+          // next candidate, not worth retrying this one.
+          break;
+        }
+
+        if (attempt < _fcmRetryDelaysMs.length) {
+          debugPrint(
+            '[Notifications] token sync via $endpoint failed '
+            '(status=${result.statusCode}), retrying...',
+          );
+          await Future.delayed(
+            Duration(milliseconds: _fcmRetryDelaysMs[attempt]),
+          );
+          continue;
+        }
+
+        debugPrint(
+          '[Notifications] token sync via $endpoint failed after retries '
+          '(status=${result.statusCode}): ${result.message}',
+        );
         return;
       }
-      if (result.statusCode != 404 && result.statusCode != 405) return;
     }
+
+    debugPrint('[Notifications] token sync failed on all known endpoints.');
   }
 
   bool _isAcceptedTokenResponse(ApiResult<Map<String, dynamic>> result) {

@@ -1,3 +1,5 @@
+import '../utils/json_helpers.dart';
+
 class AuthResponse {
   const AuthResponse({
     required this.token,
@@ -43,8 +45,8 @@ class UserModel {
     Map<String, dynamic> data,
     Map<String, dynamic> responseData,
   ) {
-    final nestedData = _asMap(responseData['data']);
-    final user = _firstNonEmptyMap([
+    final nestedData = asMap(responseData['data']);
+    final user = firstNonEmptyMap([
       data['user'],
       data['patient'],
       data['profile'],
@@ -57,7 +59,7 @@ class UserModel {
       nestedData['patient'],
       nestedData['profile'],
       nestedData['account'],
-      _findFirstMapByKeys(data, const {
+      findFirstMapByKeys(data, const {
         'user',
         'patient',
         'profile',
@@ -66,119 +68,68 @@ class UserModel {
     ]);
 
     return UserModel(
-      id: _firstNonEmptyString([
+      id: firstNonEmptyString([
         user['_id'],
         user['id'],
         data['userId'],
         responseData['userId'],
       ]),
-      name: _firstNonEmptyString([
+      name: firstNonEmptyString([
         user['name'],
         user['fullName'],
         data['name'],
         responseData['name'],
       ]),
-      email: _firstNonEmptyString([
+      email: firstNonEmptyString([
         user['email'],
         data['email'],
         responseData['email'],
       ]),
-      role: _firstNonEmptyString([
+      role: firstNonEmptyString([
         user['role'],
         user['userRole'],
         data['role'],
         responseData['role'],
         'patient',
       ]),
-      mobile: _firstNonEmptyString([
+      mobile: firstNonEmptyString([
         user['mobile'],
         user['phone'],
         user['phoneNumber'],
         data['mobile'],
         responseData['mobile'],
       ]),
-      dob: _firstNonEmptyString([
+      dob: firstNonEmptyString([
         user['dob'],
         data['dob'],
         responseData['dob'],
       ]),
-      gender: _firstNonEmptyString([
+      gender: firstNonEmptyString([
         user['gender'],
         data['gender'],
         responseData['gender'],
       ]),
-      country: _firstNonEmptyString([
+      country: firstNonEmptyString([
         user['country'],
         data['country'],
         responseData['country'],
       ]),
-      state: _firstNonEmptyString([
+      state: firstNonEmptyString([
         user['state'],
         user['province'],
         data['state'],
         responseData['state'],
       ]),
-      city: _firstNonEmptyString([
+      city: firstNonEmptyString([
         user['city'],
         data['city'],
         responseData['city'],
       ]),
-      location: _firstNonEmptyString([
+      location: firstNonEmptyString([
         user['location'],
         data['location'],
         responseData['location'],
       ]),
     );
   }
-}
-
-Map<String, dynamic> _asMap(dynamic value) {
-  if (value is Map) {
-    return value.map((key, value) => MapEntry(key.toString(), value));
-  }
-
-  return <String, dynamic>{};
-}
-
-Map<String, dynamic> _firstNonEmptyMap(List<dynamic> values) {
-  for (final value in values) {
-    final map = _asMap(value);
-    if (map.isNotEmpty) return map;
-  }
-
-  return <String, dynamic>{};
-}
-
-String _firstNonEmptyString(List<dynamic> values) {
-  for (final value in values) {
-    final text = value?.toString().trim() ?? '';
-
-    if (text.isNotEmpty) {
-      return text;
-    }
-  }
-
-  return '';
-}
-
-Map<String, dynamic> _findFirstMapByKeys(dynamic value, Set<String> keys) {
-  if (value is Map) {
-    for (final entry in value.entries) {
-      final key = entry.key.toString();
-      final map = _asMap(entry.value);
-      if (keys.contains(key) && map.isNotEmpty) return map;
-
-      final nested = _findFirstMapByKeys(entry.value, keys);
-      if (nested.isNotEmpty) return nested;
-    }
-  }
-
-  if (value is List) {
-    for (final item in value) {
-      final nested = _findFirstMapByKeys(item, keys);
-      if (nested.isNotEmpty) return nested;
-    }
-  }
-
-  return <String, dynamic>{};
 }

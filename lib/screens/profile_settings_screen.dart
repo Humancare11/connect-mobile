@@ -18,6 +18,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
   bool loadingProfile = true;
   bool saving = false;
   bool saved = false;
+  // Tracks the background fetchCurrentProfile() call that confirms/refreshes
+  // whatever was shown immediately from the local cache. Previously this had
+  // no visible signal at all: if it failed, the screen silently kept
+  // whatever was cached forever with no indication it might be stale.
+  bool syncingProfile = false;
+  String profileSyncError = '';
 
   final nameCtrl = TextEditingController();
   final emailCtrl = TextEditingController();
@@ -83,8 +89,62 @@ class _EditProfilePageState extends State<EditProfilePage> {
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.all(16),
-          children: [_avatarCard(age), const SizedBox(height: 16), _formCard()],
+          children: [
+            if (profileSyncError.isNotEmpty) _profileSyncErrorBanner(),
+            if (syncingProfile) _syncingProfileNotice(),
+            _avatarCard(age),
+            const SizedBox(height: 16),
+            _formCard(),
+          ],
         ),
+      ),
+    );
+  }
+
+  Widget _syncingProfileNotice() {
+    return const Padding(
+      padding: EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(strokeWidth: 1.5),
+          ),
+          SizedBox(width: 8),
+          Text(
+            'Syncing your latest details…',
+            style: TextStyle(color: Colors.black45, fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _profileSyncErrorBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xfffef2f2),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xfffca5a5)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              profileSyncError,
+              style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600),
+            ),
+          ),
+          TextButton(
+            onPressed: _loadUserProfile,
+            child: const Text('Retry'),
+          ),
+        ],
       ),
     );
   }
@@ -587,11 +647,26 @@ class _EditProfilePageState extends State<EditProfilePage> {
     setState(() {
       _applyProfile(profile);
       loadingProfile = false;
+      syncingProfile = true;
+      profileSyncError = '';
     });
 
     final remoteResult = await _authService.fetchCurrentProfile();
 
-    if (!mounted || !remoteResult.success || remoteResult.data == null) return;
+    if (!mounted) return;
+
+    if (!remoteResult.success || remoteResult.data == null) {
+      setState(() {
+        syncingProfile = false;
+        // Only worth surfacing if there was nothing cached to fall back on
+        // — otherwise this fires on every load for a user who is simply
+        // offline, which would be noisy rather than useful.
+        profileSyncError = profile.values.every((v) => v.trim().isEmpty)
+            ? 'Could not load your profile. Pull to refresh or try again.'
+            : '';
+      });
+      return;
+    }
 
     final remoteProfile = remoteResult.data!;
     await _tokenStorage.saveUserProfile(
@@ -610,6 +685,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
     setState(() {
       _applyProfile(remoteProfile);
+      syncingProfile = false;
+      profileSyncError = '';
     });
   }
 

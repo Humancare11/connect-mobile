@@ -291,6 +291,27 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       );
       _validateStripeMode(stripeKey, intent);
 
+      // The price shown on this screen (`amount`, derived from
+      // args['cost']) was never checked against what the backend actually
+      // created a PaymentIntent for. If server-side pricing had changed or
+      // diverged (a stale category price, a currency mismatch) between the
+      // user seeing the summary and this call, the Stripe sheet — and the
+      // real charge — could silently differ from what the user consented
+      // to. Abort before presenting the sheet rather than charging a
+      // different amount than what was displayed.
+      final expectedCents = (amount * 100).round();
+      if (intent.amountCents != expectedCents || intent.currency != 'usd') {
+        debugPrint(
+          '[PaymentSheet] Amount/currency mismatch: displayed \$${_displayAmount(amount)} '
+          '($expectedCents cents, usd) but PaymentIntent is '
+          '${intent.amountCents} ${intent.currency}.',
+        );
+        _snack(
+          'The price for this appointment changed. Please go back and try again.',
+        );
+        return;
+      }
+
       await _logPaymentIntentStatus(
         intent.clientSecret,
         phase: 'before initPaymentSheet',
@@ -639,6 +660,17 @@ String get _stripePublishableKey {
 bool get _isStripeTestMode => _stripePublishableKey.startsWith('pk_test_');
 
 bool get _useLocalPaymentBypass {
+  // kReleaseMode is a genuine compile-time constant set by the Flutter build
+  // tool itself (`flutter build ... --release`), not something any .env
+  // value or --dart-define can override. The three checks below it were all
+  // runtime-configurable, so a release build shipped with a misconfigured
+  // bundled .env (LOCAL_PAYMENT_BYPASS=true + an API host that happens to
+  // look local) could previously activate this path — marking appointments
+  // "paid" via a client-generated reference with no real Stripe charge and
+  // no server-side proof of payment at all. This makes that impossible
+  // regardless of env configuration.
+  if (kReleaseMode) return false;
+
   const appEnv = String.fromEnvironment('APP_ENV', defaultValue: 'local');
   final enabled = _envFlag('LOCAL_PAYMENT_BYPASS') || _envFlag('DEV_BYPASS');
   return appEnv == 'local' && enabled && _isLocalApiBaseUrl;

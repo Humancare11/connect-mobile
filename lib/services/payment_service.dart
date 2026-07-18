@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../models/api_result.dart';
+import '../utils/json_helpers.dart';
 import 'api_client.dart';
 
 class StripeIntent {
@@ -64,9 +65,9 @@ class PaymentService {
     }
 
     final data = result.data ?? <String, dynamic>{};
-    final responseData = _asMap(data['data']);
-    final nestedData = _asMap(responseData['data']);
-    final intentData = _firstNonEmptyMap([
+    final responseData = asMap(data['data']);
+    final nestedData = asMap(responseData['data']);
+    final intentData = firstNonEmptyMap([
       data['paymentIntent'],
       data['intent'],
       responseData['paymentIntent'],
@@ -74,7 +75,7 @@ class PaymentService {
       nestedData['paymentIntent'],
       nestedData['intent'],
     ]);
-    final clientSecret = _firstNonEmptyString([
+    final clientSecret = firstNonEmptyString([
       data['clientSecret'],
       data['client_secret'],
       data['paymentIntentClientSecret'],
@@ -89,14 +90,14 @@ class PaymentService {
       nestedData['payment_intent_client_secret'],
       intentData['clientSecret'],
       intentData['client_secret'],
-      _findFirstStringByKeys(data, const {
+      findFirstStringByKeys(data, const {
         'clientSecret',
         'client_secret',
         'paymentIntentClientSecret',
         'payment_intent_client_secret',
       }),
     ]);
-    final paymentIntentId = _firstNonEmptyString([
+    final paymentIntentId = firstNonEmptyString([
       data['paymentIntentId'],
       data['payment_intent_id'],
       data['id'],
@@ -107,7 +108,7 @@ class PaymentService {
       nestedData['payment_intent_id'],
       nestedData['id'],
       intentData['id'],
-      _findFirstStringByKeys(data, const {
+      findFirstStringByKeys(data, const {
         'paymentIntentId',
         'payment_intent_id',
       }),
@@ -126,12 +127,12 @@ class PaymentService {
       intentData['amount_cents'],
       intentData['amount'],
     ]);
-    final currency = _firstNonEmptyString([
+    final currency = firstNonEmptyString([
       data['currency'],
       responseData['currency'],
       nestedData['currency'],
       intentData['currency'],
-      _findFirstStringByKeys(data, const {'currency'}),
+      findFirstStringByKeys(data, const {'currency'}),
       'usd',
     ]).toLowerCase();
     final livemode = _firstBoolOrNull([
@@ -214,59 +215,6 @@ class PaymentService {
 
     return null;
   }
-}
-
-Map<String, dynamic> _asMap(dynamic value) {
-  if (value is Map) {
-    return value.map((key, value) => MapEntry(key.toString(), value));
-  }
-
-  return <String, dynamic>{};
-}
-
-Map<String, dynamic> _firstNonEmptyMap(List<dynamic> values) {
-  for (final value in values) {
-    final map = _asMap(value);
-    if (map.isNotEmpty) return map;
-  }
-
-  return <String, dynamic>{};
-}
-
-String _firstNonEmptyString(List<dynamic> values) {
-  for (final value in values) {
-    final text = value?.toString().trim() ?? '';
-    if (text.isNotEmpty) return text;
-  }
-
-  return '';
-}
-
-String _findFirstStringByKeys(dynamic value, Set<String> keys) {
-  if (value is Map) {
-    for (final entry in value.entries) {
-      final key = entry.key.toString();
-      if (keys.contains(key)) {
-        final entryValue = entry.value;
-        if (entryValue is String || entryValue is num || entryValue is bool) {
-          final text = entryValue.toString().trim();
-          if (text.isNotEmpty) return text;
-        }
-      }
-
-      final nested = _findFirstStringByKeys(entry.value, keys);
-      if (nested.isNotEmpty) return nested;
-    }
-  }
-
-  if (value is List) {
-    for (final item in value) {
-      final nested = _findFirstStringByKeys(item, keys);
-      if (nested.isNotEmpty) return nested;
-    }
-  }
-
-  return '';
 }
 
 String _redactClientSecret(String value) {

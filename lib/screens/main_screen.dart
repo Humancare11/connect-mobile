@@ -19,54 +19,39 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   late int selectedIndex;
 
+  // Built once and kept alive via IndexedStack (below) instead of a getter
+  // that would hand Flutter a brand-new widget instance on every rebuild.
+  // With `body: pages[selectedIndex]` swapping the widget in that slot, the
+  // outgoing tab's State was disposed and the incoming tab got a fresh
+  // State every time — losing scroll position, search text, and loaded data
+  // on every tab switch.
+  late final List<Widget> _pages;
+
   @override
   void initState() {
     super.initState();
     selectedIndex = widget.initialIndex.clamp(0, 3);
+    _pages = [
+      const HomeScreen(), // 0
+      AppointmentsScreen(activityId: widget.appointmentId), // 1
+      const AppointmentBookingPage(), // 2 (Book Button)
+      const AccountScreen(), // 3
+    ];
   }
-
-  List<Widget> get pages => [
-    const HomeScreen(), // 0
-    AppointmentsScreen(activityId: widget.appointmentId), // 1
-    const AppointmentBookingPage(), // 2 (Book Button)
-    const AccountScreen(), // 3
-  ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: pages[selectedIndex],
+      body: IndexedStack(index: selectedIndex, children: _pages),
+      // AppFooter's nav items now report indices directly in this same
+      // page-index space (see app_footer.dart), so no translation is
+      // needed here anymore — the previous switch mapped footer index 3
+      // ("Appointments") to page index 1, but AppFooter itself still
+      // compared its own selectedIndex against index 3 for highlighting,
+      // so the Appointments tab never showed as selected.
       bottomNavigationBar: AppFooter(
         selectedIndex: selectedIndex,
-        onTap: (index) {
-          int pageIndex = 0;
-
-          switch (index) {
-            case 0: // Home
-              pageIndex = 0;
-              break;
-
-            case 1: // Services
-              pageIndex = 1;
-              break;
-
-            case 2: // Center Book Button
-              pageIndex = 2;
-              break;
-
-            case 3: // Appointments
-              pageIndex = 1;
-              break;
-
-            case 4: // Account
-              pageIndex = 3;
-              break;
-          }
-
-          setState(() {
-            selectedIndex = pageIndex;
-          });
-        },
+        onTap: (index) => setState(() => selectedIndex = index),
       ),
     );
   }

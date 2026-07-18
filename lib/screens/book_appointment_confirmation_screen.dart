@@ -59,7 +59,7 @@ class AppointmentConfirmationPage extends StatelessWidget {
                   const Divider(height: 30),
                   _line('Specialty', args['specName']),
                   _line('Condition', args['condName']),
-                  _line('Date', args['date']),
+                  _line('Date', _formatDate(_parseDate(args['date']))),
                   _line('Time', args['time']),
                   _line('Payment ID', args['paymentIntentId']),
                 ],
@@ -90,6 +90,24 @@ class AppointmentConfirmationPage extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  // Previously this screen displayed args['date'] as-is: a raw
+  // DateTime.toString() (e.g. "2026-07-20 00:00:00.000") forwarded straight
+  // from the booking form, while the payment screen one step earlier showed
+  // the same date formatted as "20-07-2026" — an inconsistent, unpolished
+  // date the user hadn't seen in that form before. Mirrors the payment
+  // screen's own _parseDate/_formatDate exactly.
+  DateTime? _parseDate(Object? value) {
+    if (value is DateTime) return value;
+    return DateTime.tryParse(value?.toString() ?? '');
+  }
+
+  String _formatDate(DateTime? date) {
+    if (date == null) return '-';
+    final month = date.month.toString().padLeft(2, '0');
+    final day = date.day.toString().padLeft(2, '0');
+    return '$day-$month-${date.year}';
   }
 
   Widget _line(String label, Object? value) {

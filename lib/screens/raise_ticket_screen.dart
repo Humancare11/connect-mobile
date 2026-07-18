@@ -753,20 +753,30 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
     List<Map<String, dynamic>> cachedTickets,
   ) {
     final merged = <Map<String, dynamic>>[];
-    final seen = <String>{};
+    final seenIds = <String>{};
+    final seenContent = <String>{};
 
-    void addTicket(Map<String, dynamic> ticket) {
-      final key = _ticketIdentity(ticket);
-      if (seen.contains(key)) return;
-      seen.add(key);
+    // Server tickets go in first and are always authoritative.
+    for (final ticket in serverTickets) {
+      seenIds.add(_ticketIdentity(ticket));
+      seenContent.add(_ticketContentKey(ticket));
       merged.add(ticket);
     }
 
-    for (final ticket in serverTickets) {
-      addTicket(ticket);
-    }
     for (final ticket in cachedTickets) {
-      addTicket(ticket);
+      final id = _ticketIdentity(ticket);
+      if (seenIds.contains(id)) continue;
+      // A ticket just created locally (see _submitTicket/_ticketFromResponse)
+      // falls back to a synthetic timestamp-based `_id` whenever the
+      // create-ticket response doesn't echo a real server id. Once the
+      // server list catches up with the real ticket, id-only dedup can't
+      // recognize it as the same ticket (different ids), so a content match
+      // is used as a second signal — otherwise the same ticket would appear
+      // twice: once under its synthetic local id, once under the server's.
+      if (seenContent.contains(_ticketContentKey(ticket))) continue;
+      seenIds.add(id);
+      seenContent.add(_ticketContentKey(ticket));
+      merged.add(ticket);
     }
 
     return merged;
@@ -780,6 +790,13 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
       ticket["title"]?.toString().trim() ?? "",
       ticket["description"]?.toString().trim() ?? "",
       ticket["createdAt"]?.toString().trim() ?? "",
+    ].join("|");
+  }
+
+  String _ticketContentKey(Map<String, dynamic> ticket) {
+    return [
+      ticket["title"]?.toString().trim().toLowerCase() ?? "",
+      ticket["description"]?.toString().trim().toLowerCase() ?? "",
     ].join("|");
   }
 
