@@ -1,4 +1,12 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:file_picker/file_picker.dart';
+import 'package:http/http.dart' as http;
+
+import '../config/api_config.dart';
+import '../services/api_service.dart';
+import '../services/token_storage_service.dart';
 
 class UploadCandidate {
   const UploadCandidate({
@@ -24,6 +32,35 @@ class UploadedFile {
   final String type;
 }
 
+const int _maxUploadBytes = 10 * 1024 * 1024;
+
+// Mirrors backend/routes/upload.js's ALLOWED_TYPES — the presign endpoint
+// rejects any contentType that isn't exactly one of these values for the
+// given extension, so this must stay a strict match, not a best-effort guess.
+const Map<String, String> _extensionContentTypes = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.doc': 'application/msword',
+  '.xls': 'application/vnd.ms-excel',
+  '.docx':
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+
+String _guessContentType(String fileName) {
+  final dot = fileName.lastIndexOf('.');
+  if (dot < 0) return 'application/octet-stream';
+  final ext = fileName.substring(dot).toLowerCase();
+  return _extensionContentTypes[ext] ?? 'application/octet-stream';
+}
+
+final TokenStorageService _tokenStorage = const TokenStorageService();
+
 Future<UploadCandidate?> pickFileForUpload() async {
   final result = await FilePicker.platform.pickFiles(withData: true);
   final file = result?.files.single;
@@ -36,8 +73,109 @@ Future<UploadCandidate?> pickFileForUpload() async {
   );
 }
 
+/// Ported from frontend/src/utils/directUpload.js's uploadFileDirectToS3:
+/// presign -> PUT direct to S3 -> multipart POST /api/upload fallback if the
+/// PUT fails. The presign call itself is deliberately left unguarded (same as
+/// the web version) — only the S3 PUT is allowed to fall back.
 Future<UploadedFile> uploadFileDirectToS3(UploadCandidate file) async {
-  throw UnsupportedError(
-    'Direct upload is not configured in this mobile build.',
+  if (file.sizeBytes > _maxUploadBytes) {
+    throw Exception('Max 10 MB per file.');
+  }
+
+  final bytes = file.platformFile.bytes;
+  if (bytes == null) {
+    throw Exception('Could not read the selected file.');
+  }
+
+  final contentType = _guessContentType(file.name);
+
+  final presign =
+      await ApiService.instance.post('/api/upload/presign', {
+            'originalName': file.name,
+            'contentType': contentType,
+            'size': file.sizeBytes,
+          })
+          as Map<String, dynamic>;
+
+  final uploadUrl = presign['uploadUrl']?.toString();
+  if (uploadUrl == null || uploadUrl.isEmpty) {
+    throw Exception('Server did not return an upload URL.');
+  }
+
+  try {
+    final headers = <String, String>{'Content-Type': contentType};
+    final presignedHeaders = presign['headers'];
+    if (presignedHeaders is Map) {
+      presignedHeaders.forEach((key, value) {
+        headers[key.toString()] = value.toString();
+      });
+    }
+
+    final putResponse = await http
+        .put(Uri.parse(uploadUrl), headers: headers, body: bytes)
+        .timeout(const Duration(seconds: 60));
+
+    if (putResponse.statusCode < 200 || putResponse.statusCode >= 300) {
+      throw Exception('Upload to S3 failed.');
+    }
+
+    final fileInfo = presign['file'];
+    if (fileInfo is Map) {
+      return UploadedFile(
+        key: (fileInfo['key'] ?? fileInfo['url'] ?? uploadUrl).toString(),
+        name: (fileInfo['name'] ?? file.name).toString(),
+        type: (fileInfo['type'] ?? contentType).toString(),
+      );
+    }
+    return UploadedFile(key: uploadUrl, name: file.name, type: contentType);
+  } catch (_) {
+    return _uploadViaMultipartFallback(file, bytes, contentType);
+  }
+}
+
+Future<UploadedFile> _uploadViaMultipartFallback(
+  UploadCandidate file,
+  Uint8List bytes,
+  String contentType,
+) async {
+  final token = await _tokenStorage.getToken() ?? '';
+  final uri = Uri.parse('${ApiConfig.baseUrl}/upload');
+
+  final request = http.MultipartRequest('POST', uri)
+    ..headers.addAll({
+      'Accept': 'application/json',
+      if (token.isNotEmpty) 'Authorization': 'Bearer $token',
+    })
+    ..files.add(
+      http.MultipartFile.fromBytes('file', bytes, filename: file.name),
+    );
+
+  final streamedResponse = await request.send().timeout(
+    const Duration(seconds: 60),
   );
+  final response = await http.Response.fromStream(streamedResponse);
+
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw Exception(_extractErrorMessage(response.body) ?? 'File upload failed.');
+  }
+
+  final decoded = jsonDecode(response.body) as Map<String, dynamic>;
+  return UploadedFile(
+    key: (decoded['key'] ?? decoded['url'] ?? '').toString(),
+    name: (decoded['name'] ?? file.name).toString(),
+    type: (decoded['type'] ?? contentType).toString(),
+  );
+}
+
+String? _extractErrorMessage(String body) {
+  if (body.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is Map && decoded['msg'] is String) {
+      return decoded['msg'] as String;
+    }
+  } catch (_) {
+    // Non-JSON error body — fall through to the generic message.
+  }
+  return null;
 }

@@ -49,6 +49,7 @@ const int kIceRestartDelayMs = 2500;
 const int kConnectionFailTimeoutMs = 25000;
 const int kIceMaxRecoveryAttempts = 4;
 const int kIceRecoveryCooldownMs = 30000;
+const int kStatsIntervalMs = 30000;
 
 class ChatMessage {
   final String senderId;
@@ -231,11 +232,17 @@ class VideoCallController extends ChangeNotifier {
   DateTime _lastIceRecoveryAt = DateTime.fromMillisecondsSinceEpoch(0);
   String _joinedSocketId = '';
   bool reconnectStalled = false;
+  // Mirrors VideoCall.jsx's hasConnectedOnceRef — distinguishes the first
+  // "Establishing secure connection..." from a later "Reconnecting..." on
+  // the waiting overlay.
+  bool hasConnectedOnce = false;
+  bool retryingMedia = false;
 
   // ── Call lifecycle ────────────────────────────────────────────────────
   bool _completedFlag = false;
   Timer? _callTimer;
   Timer? _heartbeatTimer;
+  Timer? _statsTimer;
   bool isReady = false;
   bool peerJoined = false;
   bool peerLeft = false;
@@ -745,8 +752,11 @@ class VideoCallController extends ChangeNotifier {
       _clearReconnectStallWatch();
       connectionState = 'connected';
       isRemoteConnected = true;
+      hasConnectedOnce = true;
       notifyListeners();
       _markInCall();
+      final pc = _pc;
+      if (pc != null) _startStatsCollection(pc);
     } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnecting) {
       connectionState = 'connecting';
       notifyListeners();
@@ -774,8 +784,11 @@ class VideoCallController extends ChangeNotifier {
       _clearReconnectStallWatch();
       connectionState = 'connected';
       isRemoteConnected = true;
+      hasConnectedOnce = true;
       notifyListeners();
       _markInCall();
+      final pc = _pc;
+      if (pc != null) _startStatsCollection(pc);
     } else if (state == RTCIceConnectionState.RTCIceConnectionStateChecking) {
       if (!inCall) {
         connectionState = 'connecting';
@@ -812,7 +825,9 @@ class VideoCallController extends ChangeNotifier {
     // well under both timeouts, same as VideoCall.jsx's heartbeat effect.
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(const Duration(minutes: 4), (_) {
-      ApiService.instance.post('/api/auth/refresh', const {}).catchError((_) => null);
+      ApiService.instance
+          .post('/api/auth/refresh', {'authRole': isDoctor ? 'doctor' : 'user'})
+          .catchError((_) => null);
     });
   }
 
@@ -1000,6 +1015,7 @@ class VideoCallController extends ChangeNotifier {
 
     camError = false;
     deviceCheckStatus = 'checking';
+    retryingMedia = true;
     notifyListeners();
 
     try {
@@ -1016,6 +1032,7 @@ class VideoCallController extends ChangeNotifier {
       camError = false;
       camErrorReason = '';
       deviceCheckStatus = 'ready';
+      retryingMedia = false;
       notifyListeners();
       _logEvent('media_retry_succeeded', {
         'audioTracks': stream.getAudioTracks().length,
@@ -1038,6 +1055,7 @@ class VideoCallController extends ChangeNotifier {
       camError = true;
       camErrorReason = _mediaErrorMessage(err);
       deviceCheckStatus = 'failed';
+      retryingMedia = false;
       _logEvent('media_retry_failed', {'error': err.toString()});
       notifyListeners();
     }
@@ -1440,7 +1458,9 @@ class VideoCallController extends ChangeNotifier {
   /// getDisplayMedia routes through in-process RPScreenRecorder and needs
   /// none of this, so it's a no-op there.
   Future<bool> _startBackgroundExecutionForScreenShare() async {
-    if (!Platform.isAndroid) return true;
+    // dart:io's Platform throws UnsupportedError on web if touched at all —
+    // kIsWeb must short-circuit before Platform.isAndroid ever evaluates.
+    if (kIsWeb || !Platform.isAndroid) return true;
     try {
       final initialized = await FlutterBackground.initialize(
         androidConfig: const FlutterBackgroundAndroidConfig(
@@ -1460,7 +1480,7 @@ class VideoCallController extends ChangeNotifier {
   }
 
   Future<void> _stopBackgroundExecutionForScreenShare() async {
-    if (!Platform.isAndroid || !_backgroundExecutionEnabled) return;
+    if (kIsWeb || !Platform.isAndroid || !_backgroundExecutionEnabled) return;
     _backgroundExecutionEnabled = false;
     try {
       await FlutterBackground.disableBackgroundExecution();
@@ -1629,7 +1649,8 @@ class VideoCallController extends ChangeNotifier {
         'fileType': uploaded.type,
       });
     } catch (err) {
-      _showInlineMessage('File upload failed.');
+      final message = err.toString().replaceFirst('Exception: ', '');
+      _showInlineMessage(message.isNotEmpty ? message : 'File upload failed.');
     } finally {
       uploadingFile = false;
       notifyListeners();
@@ -1665,6 +1686,7 @@ class VideoCallController extends ChangeNotifier {
     _ignoreOfferResetTimer = null;
     _reconnectStallTimer?.cancel();
     _reconnectStallTimer = null;
+    _stopStatsCollection();
 
     if (leaveRoom && _joinedSocketId.isNotEmpty && _socket.connected) {
       _socket.emit('leave-appointment-room', {'appointmentId': appointmentId});
@@ -1741,6 +1763,82 @@ class VideoCallController extends ChangeNotifier {
       );
       return false;
     }
+  }
+
+  // ── WebRTC connection-quality stats polling ─────────────────────────
+  // Ported from VideoCall.jsx's startStatsCollection/stopStatsCollection —
+  // same STATS_INTERVAL_MS cadence and the same `webrtc_stats` telemetry
+  // event/shape, so mobile calls surface in the same monitoring data as web.
+
+  void _stopStatsCollection() {
+    _statsTimer?.cancel();
+    _statsTimer = null;
+  }
+
+  void _startStatsCollection(RTCPeerConnection pc) {
+    _stopStatsCollection();
+    _statsTimer = Timer.periodic(
+      const Duration(milliseconds: kStatsIntervalMs),
+      (_) async {
+        if (_disposed ||
+            pc.signalingState == RTCSignalingState.RTCSignalingStateClosed) {
+          _stopStatsCollection();
+          return;
+        }
+        try {
+          final stats = await pc.getStats();
+          final diagnostics = <String, dynamic>{
+            'rtt': null,
+            'packetsSent': 0,
+            'packetsLost': 0,
+            'bytesSent': 0,
+            'bytesReceived': 0,
+            'localCandidateType': 'unknown',
+            'remoteCandidateType': 'unknown',
+            'selectedPairState': 'unknown',
+          };
+
+          for (final report in stats) {
+            if (report.type != 'candidate-pair' ||
+                report.values['state'] != 'succeeded') {
+              continue;
+            }
+            diagnostics['selectedPairState'] = report.values['state'];
+
+            final rtt = report.values['currentRoundTripTime'];
+            if (rtt is num) diagnostics['rtt'] = (rtt * 1000).round();
+            final bytesSent = report.values['bytesSent'];
+            if (bytesSent is num) diagnostics['bytesSent'] = bytesSent;
+            final bytesReceived = report.values['bytesReceived'];
+            if (bytesReceived is num) {
+              diagnostics['bytesReceived'] = bytesReceived;
+            }
+            final packetsSent = report.values['packetsSent'];
+            if (packetsSent is num) diagnostics['packetsSent'] = packetsSent;
+            final packetsLost = report.values['packetsLost'];
+            if (packetsLost is num) diagnostics['packetsLost'] = packetsLost;
+
+            final localId = report.values['localCandidateId'];
+            final remoteId = report.values['remoteCandidateId'];
+            for (final inner in stats) {
+              if (inner.type == 'local-candidate' && inner.id == localId) {
+                diagnostics['localCandidateType'] =
+                    inner.values['candidateType'] ?? inner.type;
+              }
+              if (inner.type == 'remote-candidate' && inner.id == remoteId) {
+                diagnostics['remoteCandidateType'] =
+                    inner.values['candidateType'] ?? inner.type;
+              }
+            }
+          }
+
+          debugPrint('[webrtc-stats] $diagnostics');
+          _logEvent('webrtc_stats', diagnostics);
+        } catch (err) {
+          debugPrint('[webrtc-stats] getStats failed: $err');
+        }
+      },
+    );
   }
 
   // ── Lightweight telemetry ────────────────────────────────────────────
