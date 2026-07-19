@@ -968,9 +968,11 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
           ),
           const SizedBox(height: 18),
           Text(
-            _controller.peerJoined
-                ? (_controller.hasConnectedOnce ? 'Reconnecting...' : 'Establishing secure connection...')
-                : 'Waiting for ${_controller.isDoctor ? "patient" : "doctor"}...',
+            _controller.camError && !_controller.peerJoined
+                ? 'Camera or microphone access needed'
+                : _controller.peerJoined
+                    ? (_controller.hasConnectedOnce ? 'Reconnecting...' : 'Establishing secure connection...')
+                    : 'Waiting for ${_controller.isDoctor ? "patient" : "doctor"}...',
             style: _sora(size: 17, weight: FontWeight.w600, color: _C.waitingTitle),
             textAlign: TextAlign.center,
           ),
@@ -978,11 +980,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Text(
-              _controller.peerJoined
-                  ? (_controller.hasConnectedOnce
-                        ? 'Restoring your connection to the call.'
-                        : 'Both participants are ready. Video starting soon.')
-                  : 'Share the appointment link with the other person to begin.',
+              _controller.camError && !_controller.peerJoined
+                  ? 'Allow camera and microphone access below, then tap Retry to join.'
+                  : _controller.peerJoined
+                      ? (_controller.hasConnectedOnce
+                            ? 'Restoring your connection to the call.'
+                            : 'Both participants are ready. Video starting soon.')
+                      : 'Share the appointment link with the other person to begin.',
               style: _dmSans(size: 13, color: _C.waitingSub, height: 1.7),
               textAlign: TextAlign.center,
             ),

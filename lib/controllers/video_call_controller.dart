@@ -50,6 +50,7 @@ const int kConnectionFailTimeoutMs = 25000;
 const int kIceMaxRecoveryAttempts = 4;
 const int kIceRecoveryCooldownMs = 30000;
 const int kStatsIntervalMs = 30000;
+const int kPeerJoinTimeoutMs = 20000;
 
 class ChatMessage {
   final String senderId;
@@ -231,6 +232,7 @@ class VideoCallController extends ChangeNotifier {
   int _iceRecoveryAttempts = 0;
   DateTime _lastIceRecoveryAt = DateTime.fromMillisecondsSinceEpoch(0);
   String _joinedSocketId = '';
+  Timer? _joinTimeoutTimer;
   bool reconnectStalled = false;
   // Mirrors VideoCall.jsx's hasConnectedOnceRef — distinguishes the first
   // "Establishing secure connection..." from a later "Reconnecting..." on
@@ -873,9 +875,18 @@ class VideoCallController extends ChangeNotifier {
 
   Future<bool> _createAndSendOffer({bool iceRestart = false}) async {
     final pc = _pc;
-    if (pc == null || _disposed || _makingOffer) return false;
-    if (!isReady) return false;
-    if (pc.signalingState != RTCSignalingState.RTCSignalingStateStable) return false;
+    if (pc == null || _disposed || _makingOffer) {
+      debugPrint('[video-call] offer skipped: pc=$_pc disposed=$_disposed makingOffer=$_makingOffer');
+      return false;
+    }
+    if (!isReady) {
+      debugPrint('[video-call] offer skipped: not ready');
+      return false;
+    }
+    if (pc.signalingState != RTCSignalingState.RTCSignalingStateStable) {
+      debugPrint('[video-call] offer skipped: signalingState=${pc.signalingState}');
+      return false;
+    }
 
     try {
       _makingOffer = true;
@@ -889,6 +900,7 @@ class VideoCallController extends ChangeNotifier {
         return false;
       }
       await pc.setLocalDescription(offer);
+      _logEvent('offer_sent', {'iceRestart': iceRestart, 'sdpLength': offer.sdp?.length ?? 0});
       _socket.emit('video-offer', {
         'appointmentId': appointmentId,
         'offer': {'sdp': offer.sdp, 'type': offer.type},
@@ -936,6 +948,26 @@ class VideoCallController extends ChangeNotifier {
       reconnectStalled = true;
       notifyListeners();
     });
+  }
+
+  void _startJoinTimeout() {
+    _joinTimeoutTimer?.cancel();
+    if (peerJoined) return;
+    _joinTimeoutTimer = Timer(const Duration(milliseconds: kPeerJoinTimeoutMs), () {
+      if (_disposed || peerJoined || inCall) return;
+      _logEvent('join_timed_out', {});
+      _showInlineMessage(
+        'The other participant has not joined yet. The call will retry automatically.',
+        const Duration(seconds: 6),
+      );
+      reconnectStalled = true;
+      notifyListeners();
+    });
+  }
+
+  void _clearJoinTimeout() {
+    _joinTimeoutTimer?.cancel();
+    _joinTimeoutTimer = null;
   }
 
   void _requestPeerIceRestart() {
@@ -1063,8 +1095,20 @@ class VideoCallController extends ChangeNotifier {
 
   // ── Socket signaling handlers ────────────────────────────────────────
 
-  Future<void> _handleOffer(dynamic data) async {
-    if (_disposed || data is! Map) return;
+  /// Flutter Web's socket_io_client v2 wraps event data as [payload, ackId]
+  /// instead of passing the raw Map. Unwrap both formats transparently.
+  Map<String, dynamic>? _toMap(dynamic data) {
+    if (data is Map) return Map<String, dynamic>.from(data);
+    if (data is List && data.isNotEmpty && data[0] is Map) {
+      return Map<String, dynamic>.from(data[0]);
+    }
+    return null;
+  }
+
+  Future<void> _handleOffer(dynamic raw) async {
+    if (_disposed) return;
+    final data = _toMap(raw);
+    if (data == null) return;
     final offerMap = data['offer'];
     if (offerMap == null || offerMap is! Map) return;
     final pc = _pc;
@@ -1125,8 +1169,10 @@ class VideoCallController extends ChangeNotifier {
     }
   }
 
-  Future<void> _handleAnswer(dynamic data) async {
-    if (_disposed || data is! Map) return;
+  Future<void> _handleAnswer(dynamic raw) async {
+    if (_disposed) return;
+    final data = _toMap(raw);
+    if (data == null) return;
     final answerMap = data['answer'];
     if (answerMap == null || answerMap is! Map) return;
     final pc = _pc;
@@ -1137,6 +1183,7 @@ class VideoCallController extends ChangeNotifier {
         return;
       }
       _settingRemoteAnswerPending = true;
+      _logEvent('answer_received', {'sdpLength': answerMap['sdp']?.toString().length ?? 0});
       await pc.setRemoteDescription(RTCSessionDescription(
         answerMap['sdp'] as String?,
         answerMap['type'] as String?,
@@ -1146,17 +1193,25 @@ class VideoCallController extends ChangeNotifier {
       _markInCall();
     } catch (err) {
       debugPrint('[video-call] answer error: $err');
+      _logEvent('answer_error', {'error': err.toString()});
     } finally {
       _settingRemoteAnswerPending = false;
     }
   }
 
-  Future<void> _handleIce(dynamic data) async {
-    if (_disposed || data is! Map) return;
+  Future<void> _handleIce(dynamic raw) async {
+    if (_disposed) return;
+    final data = _toMap(raw);
+    if (data == null) return;
     final candidateMap = data['candidate'];
     if (candidateMap == null || candidateMap is! Map) return;
     final pc = _pc;
     if (pc == null) return;
+
+    final rawCandidate = candidateMap['candidate']?.toString() ?? '';
+    _logEvent('ice_candidate_received', {
+      'type': rawCandidate.isNotEmpty ? _iceCandidateType(rawCandidate) : 'end-of-candidates',
+    });
 
     final remoteDesc = await pc.getRemoteDescription();
     if (remoteDesc == null) {
@@ -1182,9 +1237,11 @@ class VideoCallController extends ChangeNotifier {
     await _createAndSendOffer(iceRestart: true);
   }
 
-  void _handlePeerJoined(dynamic data) {
+  void _handlePeerJoined(dynamic raw) {
     if (_disposed) return;
-    final resumedCall = (data is Map) && data['resumedCall'] == true;
+    _clearJoinTimeout();
+    final data = _toMap(raw);
+    final resumedCall = data?['resumedCall'] == true;
     peerJoined = true;
     peerLeft = false;
     notifyListeners();
@@ -1218,6 +1275,7 @@ class VideoCallController extends ChangeNotifier {
 
   void _handleParticipantLeft(dynamic _) {
     if (_disposed) return;
+    _clearJoinTimeout();
     peerJoined = false;
     isRemoteConnected = false;
     connectionState = 'disconnected';
@@ -1226,25 +1284,42 @@ class VideoCallController extends ChangeNotifier {
     _clearReconnectStallWatch();
   }
 
-  void _handleChatMessage(dynamic data) {
-    if (_disposed || data is! Map) return;
-    messages.add(ChatMessage.fromJson(Map<String, dynamic>.from(data)));
+  void _handleChatMessage(dynamic raw) {
+    if (_disposed) return;
+    final data = _toMap(raw);
+    if (data == null) {
+      debugPrint('[video-call] chat_message received with non-Map data: $raw');
+      return;
+    }
+    _logEvent('chat_received', {'senderId': data['senderId'], 'hasText': data['text'] is String && (data['text'] as String).isNotEmpty});
+    messages.add(ChatMessage.fromJson(data));
     if (!chatOpen) unreadCount++;
     notifyListeners();
   }
 
-  void _handleChatHistory(dynamic data) {
-    if (_disposed || data is! Map) return;
-    if (data['appointmentId'] != appointmentId) return;
+  void _handleChatHistory(dynamic raw) {
+    if (_disposed) return;
+    final data = _toMap(raw);
+    if (data == null) {
+      debugPrint('[video-call] chat_history received with non-Map data: $raw');
+      return;
+    }
+    if (data['appointmentId'] != appointmentId) {
+      debugPrint('[video-call] chat_history mismatched appointmentId: expected=$appointmentId got=${data['appointmentId']}');
+      return;
+    }
     final list = data['messages'] as List<dynamic>? ?? [];
+    _logEvent('chat_history_received', {'count': list.length});
     messages
       ..clear()
       ..addAll(list.map((m) => ChatMessage.fromJson(Map<String, dynamic>.from(m as Map))));
     notifyListeners();
   }
 
-  void _handleApptUpdated(dynamic data) {
-    if (_disposed || data is! Map) return;
+  void _handleApptUpdated(dynamic raw) {
+    if (_disposed) return;
+    final data = _toMap(raw);
+    if (data == null) return;
     final status = data['status'];
     if ((status == 'complete' || status == 'completed') && !isDoctor) {
       showCompletedOverlay = true;
@@ -1255,8 +1330,10 @@ class VideoCallController extends ChangeNotifier {
     }
   }
 
-  void _handleNewPrescription(dynamic data) {
-    if (_disposed || isDoctor || data is! Map) return;
+  void _handleNewPrescription(dynamic raw) {
+    if (_disposed || isDoctor) return;
+    final data = _toMap(raw);
+    if (data == null) return;
     prescriptionNotif = {'diagnosis': data['diagnosis']};
     notifyListeners();
     _prescriptionTimer?.cancel();
@@ -1304,6 +1381,7 @@ class VideoCallController extends ChangeNotifier {
     _socket.on('duplicate-session', _handleDuplicateSession);
     _socket.on('connect', _handleSocketConnect);
     _socket.on('disconnect', _handleSocketDisconnect);
+    _socket.on('connect_error', _handleSocketConnectError);
     _socket.onManager('reconnect', _handleSocketReconnect);
   }
 
@@ -1322,6 +1400,7 @@ class VideoCallController extends ChangeNotifier {
     _socket.off('duplicate-session', _handleDuplicateSession);
     _socket.off('connect', _handleSocketConnect);
     _socket.off('disconnect', _handleSocketDisconnect);
+    _socket.off('connect_error', _handleSocketConnectError);
     _socket.offManager('reconnect', _handleSocketReconnect);
   }
 
@@ -1334,6 +1413,8 @@ class VideoCallController extends ChangeNotifier {
       connectionState = 'connecting';
       notifyListeners();
     }
+
+    _startJoinTimeout();
 
     final activeUserId = isDoctor ? doctorId : userId;
     final activeRole = isDoctor ? 'doctor' : 'user';
@@ -1381,6 +1462,17 @@ class VideoCallController extends ChangeNotifier {
     connectionState = 'disconnected';
     isRemoteConnected = false;
     notifyListeners();
+  }
+
+  void _handleSocketConnectError(dynamic err) {
+    if (_disposed) return;
+    _logEvent('socket_connect_error', {'error': err.toString()});
+    if (!isReady) {
+      _showInlineMessage(
+        'Connection to the call service failed. Please check your internet and try again.',
+        const Duration(seconds: 8),
+      );
+    }
   }
 
   void _handleSocketReconnect(dynamic _) {
@@ -1622,10 +1714,21 @@ class VideoCallController extends ChangeNotifier {
   void sendMessage(String text) {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
+    final senderId = currentUser['id'] ?? '';
+    final senderName = currentUser['name'] ?? '';
+    messages.add(ChatMessage(
+      senderId: senderId,
+      senderName: senderName,
+      text: trimmed,
+      createdAt: DateTime.now().toIso8601String(),
+    ));
+    if (!chatOpen) unreadCount++;
+    notifyListeners();
+    _logEvent('chat_send', {'text': trimmed.length > 50 ? '${trimmed.substring(0, 50)}...' : trimmed});
     _socket.emit('appointment-message', {
       'appointmentId': appointmentId,
-      'senderId': currentUser['id'],
-      'senderName': currentUser['name'],
+      'senderId': senderId,
+      'senderName': senderName,
       'text': trimmed,
     });
   }
@@ -1639,10 +1742,24 @@ class VideoCallController extends ChangeNotifier {
     notifyListeners();
     try {
       final uploaded = await uploadFileDirectToS3(file);
+      final senderId = currentUser['id'] ?? '';
+      final senderName = currentUser['name'] ?? '';
+      messages.add(ChatMessage(
+        senderId: senderId,
+        senderName: senderName,
+        text: '',
+        fileUrl: uploaded.key,
+        fileName: uploaded.name,
+        fileType: uploaded.type,
+        createdAt: DateTime.now().toIso8601String(),
+      ));
+      if (!chatOpen) unreadCount++;
+      notifyListeners();
+      _logEvent('chat_attach', {'name': uploaded.name, 'type': uploaded.type});
       _socket.emit('appointment-message', {
         'appointmentId': appointmentId,
-        'senderId': currentUser['id'],
-        'senderName': currentUser['name'],
+        'senderId': senderId,
+        'senderName': senderName,
         'text': '',
         'fileUrl': uploaded.key,
         'fileName': uploaded.name,
@@ -1686,6 +1803,7 @@ class VideoCallController extends ChangeNotifier {
     _ignoreOfferResetTimer = null;
     _reconnectStallTimer?.cancel();
     _reconnectStallTimer = null;
+    _clearJoinTimeout();
     _stopStatsCollection();
 
     if (leaveRoom && _joinedSocketId.isNotEmpty && _socket.connected) {
