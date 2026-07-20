@@ -221,6 +221,7 @@ class VideoCallController extends ChangeNotifier {
   bool _makingOffer = false;
   bool _ignoreOffer = false;
   bool _settingRemoteAnswerPending = false;
+  bool _pendingOfferWhenStable = false;
   final List<dynamic> _pendingRemoteCandidates = [];
   Timer? _ignoreOfferResetTimer;
 
@@ -435,6 +436,7 @@ class VideoCallController extends ChangeNotifier {
     pc.onIceCandidate = _handleLocalIceCandidate;
     pc.onConnectionState = _handleConnectionStateChange;
     pc.onIceConnectionState = _handleIceConnectionStateChange;
+    pc.onSignalingState = _handleSignalingStateChange;
 
     _registerSocketListeners();
 
@@ -745,6 +747,7 @@ class VideoCallController extends ChangeNotifier {
 
   void _handleConnectionStateChange(RTCPeerConnectionState state) {
     if (_disposed) return;
+    _logEvent('connection_state_changed', {'state': state.toString()});
     if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
       _iceRestartTimer?.cancel();
       _iceRestartTimer = null;
@@ -770,6 +773,20 @@ class VideoCallController extends ChangeNotifier {
       isRemoteConnected = false;
       notifyListeners();
       _scheduleIceRestart();
+    }
+  }
+
+  void _handleSignalingStateChange(RTCSignalingState state) {
+    if (_disposed) return;
+    _logEvent('signaling_state_changed', {'state': state.toString()});
+    final pc = _pc;
+    // If an offer was requested while the pc was initializing, create it
+    // now that the signaling state is stable.
+    if (state == RTCSignalingState.RTCSignalingStateStable && _pendingOfferWhenStable && pc != null && !_makingOffer) {
+      _pendingOfferWhenStable = false;
+      if (isReady && peerJoined && !_isConnectedState(pc)) {
+        unawaited(_createAndSendOffer(iceRestart: inCall));
+      }
     }
   }
 
@@ -883,10 +900,25 @@ class VideoCallController extends ChangeNotifier {
       debugPrint('[video-call] offer skipped: not ready');
       return false;
     }
-    if (pc.signalingState != RTCSignalingState.RTCSignalingStateStable) {
+    // On some platforms (particularly Flutter web) the RTCPeerConnection's
+    // signalingState getter in the flutter_webrtc Dart wrapper returns null
+    // even though the underlying JS connection is valid.  Poll briefly, then
+    // proceed anyway — a null signalingState is treated as equivalent to
+    // stable so the offer/answer exchange can still happen.
+    if (pc.signalingState == null && _pc == pc) {
+      const delays = [100, 500];
+      for (final ms in delays) {
+        await Future.delayed(Duration(milliseconds: ms));
+        if (_disposed || _pc != pc) return false;
+        if (pc.signalingState != null) break;
+      }
+    }
+    if (pc.signalingState != RTCSignalingState.RTCSignalingStateStable &&
+        pc.signalingState != null) {
       debugPrint('[video-call] offer skipped: signalingState=${pc.signalingState}');
       return false;
     }
+    _pendingOfferWhenStable = false;
 
     try {
       _makingOffer = true;
@@ -1119,9 +1151,12 @@ class VideoCallController extends ChangeNotifier {
       notifyListeners();
 
       final signalingState = pc.signalingState;
+      // Treat null signalingState (flutter_webrtc web wrapper quirk) as
+      // stable so the offer is accepted and the call can proceed.
+      final isStable = signalingState == null ||
+          signalingState == RTCSignalingState.RTCSignalingStateStable;
       final readyForOffer = !_makingOffer &&
-          (signalingState == RTCSignalingState.RTCSignalingStateStable ||
-              _settingRemoteAnswerPending);
+          (isStable || _settingRemoteAnswerPending);
       final offerCollision = !readyForOffer;
       final shouldIgnoreOffer = !_isPolitePeer && offerCollision;
 
@@ -1179,7 +1214,8 @@ class VideoCallController extends ChangeNotifier {
     if (pc == null) return;
 
     try {
-      if (pc.signalingState != RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
+      if (pc.signalingState != RTCSignalingState.RTCSignalingStateHaveLocalOffer &&
+          pc.signalingState != null) {
         return;
       }
       _settingRemoteAnswerPending = true;
@@ -1242,6 +1278,7 @@ class VideoCallController extends ChangeNotifier {
     _clearJoinTimeout();
     final data = _toMap(raw);
     final resumedCall = data?['resumedCall'] == true;
+    _logEvent('peer_joined', {'resumedCall': resumedCall, 'isReady': isReady});
     peerJoined = true;
     peerLeft = false;
     notifyListeners();
@@ -1292,7 +1329,29 @@ class VideoCallController extends ChangeNotifier {
       return;
     }
     _logEvent('chat_received', {'senderId': data['senderId'], 'hasText': data['text'] is String && (data['text'] as String).isNotEmpty});
-    messages.add(ChatMessage.fromJson(data));
+
+    // Deduplicate immediate local echoes: the client adds the message
+    // locally before emitting and the server echoes it back to the room.
+    // If the sender is this user and the most recent message matches, skip
+    // adding the echoed copy to avoid showing the message twice.
+    try {
+      final incoming = ChatMessage.fromJson(data);
+      final senderId = incoming.senderId;
+      final text = incoming.text;
+      if (senderId == (currentUser['id'] ?? '')) {
+        if (messages.isNotEmpty) {
+          final last = messages.last;
+          if (last.senderId == senderId && last.text == text && last.fileUrl == incoming.fileUrl) {
+            return;
+          }
+        }
+      }
+      messages.add(incoming);
+    } catch (err) {
+      debugPrint('[video-call] chat_message parse failed: $err');
+      return;
+    }
+
     if (!chatOpen) unreadCount++;
     notifyListeners();
   }
@@ -1834,6 +1893,24 @@ class VideoCallController extends ChangeNotifier {
     _joinedSocketId = '';
     _ignoreOffer = false;
     _restartRequestInFlight = false;
+
+    // Reset all call state so a subsequent startCallSession (via
+    // forceReconnect) starts fresh — stale isReady or peerJoined caused
+    // premature offer attempts with a newly created RTCPeerConnection
+    // whose signalingState may not have initialized yet.
+    isReady = false;
+    peerJoined = false;
+    peerLeft = false;
+    inCall = false;
+    isRemoteConnected = false;
+    hasConnectedOnce = false;
+    camError = false;
+    camErrorReason = '';
+    deviceCheckStatus = 'idle';
+    connectionState = 'idle';
+    _iceRecoveryAttempts = 0;
+    _lastIceRecoveryAt = DateTime.fromMillisecondsSinceEpoch(0);
+    _makingOffer = false;
   }
 
   /// [emitLeave] mirrors React's `pageUnloadingRef` gate on the
