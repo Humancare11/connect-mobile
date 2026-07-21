@@ -76,6 +76,10 @@ dependencies:
   # which doesn't need it — see video_call_controller.dart's screen-sharing
   # section.
   flutter_background: ^1.3.1
+  # Runtime permission requests (Android 12+ requires BLUETOOTH_CONNECT to be
+  # granted explicitly, unlike the legacy BLUETOOTH permission it replaces —
+  # see video_call_controller.dart's call-start sequence).
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:

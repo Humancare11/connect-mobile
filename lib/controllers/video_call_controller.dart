@@ -18,6 +18,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_background/flutter_background.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:permission_handler/permission_handler.dart' as ph;
 
 import '../services/api_service.dart';
 import '../services/ice_server_config.dart';
@@ -51,6 +52,7 @@ const int kIceMaxRecoveryAttempts = 4;
 const int kIceRecoveryCooldownMs = 30000;
 const int kStatsIntervalMs = 30000;
 const int kPeerJoinTimeoutMs = 20000;
+const int kMediaAcquireTimeoutMs = 20000;
 
 class ChatMessage {
   final String senderId;
@@ -383,7 +385,35 @@ class VideoCallController extends ChangeNotifier {
   // WebRTC + socket session
   // ─────────────────────────────────────────────────────────────────────
 
+  /// Android 12+ (API 31) split the legacy `BLUETOOTH` permission (granted
+  /// automatically at install) into runtime-gated permissions, including
+  /// `BLUETOOTH_CONNECT`. Native WebRTC's audio device manager queries paired
+  /// Bluetooth devices when setting up the call's audio route (for headset
+  /// support); on Android 12+ that query fails silently — or throws,
+  /// depending on OEM/AOSP version — if the permission was only declared in
+  /// the manifest and never actually granted, since flutter_webrtc itself
+  /// only requests CAMERA/RECORD_AUDIO, not Bluetooth. Requesting it here,
+  /// before any audio/peer-connection setup begins, closes that gap. This is
+  /// a no-op on iOS/web and on Android < 12 (permission_handler resolves it
+  /// as already-granted there).
+  Future<void> _ensureAndroidRuntimePermissions() async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      final status = await ph.Permission.bluetoothConnect.status;
+      if (!status.isGranted) {
+        await ph.Permission.bluetoothConnect.request();
+      }
+    } catch (err) {
+      // Never let a Bluetooth-permission hiccup block the call itself —
+      // worst case the audio route falls back to the phone speaker/mic.
+      debugPrint('[video-call] bluetoothConnect permission request failed: $err');
+    }
+  }
+
   Future<void> startCallSession() async {
+    await _ensureAndroidRuntimePermissions();
+    if (_disposed) return;
+
     if (_fetchingIceConfig) return;
     _fetchingIceConfig = true;
     final iceSetup = await fetchIceServerConfig();
@@ -461,7 +491,7 @@ class VideoCallController extends ChangeNotifier {
       notifyListeners();
       _logEvent('device_check', summary);
 
-      final stream = await _getConsultationMediaStream();
+      final stream = await _acquireMediaWithTimeout();
       if (_disposed || _pc != pc) {
         for (final t in stream.getTracks()) {
           await t.stop();
@@ -563,6 +593,9 @@ class VideoCallController extends ChangeNotifier {
   }
 
   String _mediaErrorMessage(Object err) {
+    if (err is TimeoutException) {
+      return 'Camera/microphone access is taking too long. Check app permissions and try again.';
+    }
     final msg = err.toString();
     if (msg.contains('NotAllowedError') || msg.contains('PermissionDeniedError')) {
       return 'Camera/microphone permission was denied. Allow access in your device settings, then retry.';
@@ -574,6 +607,18 @@ class VideoCallController extends ChangeNotifier {
       return 'Your camera or microphone is already in use by another app. Close it and retry.';
     }
     return 'Camera or microphone access failed. Check app permissions and reload.';
+  }
+
+  /// Wraps [_getConsultationMediaStream] with a hard deadline: on some Android
+  /// devices a stuck permission dialog or a native `getUserMedia` call that
+  /// never resolves can otherwise leave the caller awaiting forever with no
+  /// visible error — this turns that into an actionable, catchable failure
+  /// after `kMediaAcquireTimeoutMs` instead of an unexplained infinite spinner.
+  Future<MediaStream> _acquireMediaWithTimeout() {
+    return _getConsultationMediaStream().timeout(
+      const Duration(milliseconds: kMediaAcquireTimeoutMs),
+      onTimeout: () => throw TimeoutException('getUserMedia timed out'),
+    );
   }
 
   Future<bool> _attachLocalMediaStream(MediaStream stream, RTCPeerConnection pc) async {
@@ -1089,7 +1134,7 @@ class VideoCallController extends ChangeNotifier {
       deviceCheckSpeaker = summary['speaker'] ?? 'unknown';
       _logEvent('media_retry_started', summary);
 
-      final stream = await _getConsultationMediaStream();
+      final stream = await _acquireMediaWithTimeout();
       await _attachLocalMediaStream(stream, pc);
 
       isReady = true;
