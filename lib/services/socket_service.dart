@@ -37,7 +37,23 @@ class SocketService {
   static Map<String, dynamic> _buildOptions() {
     return io.OptionBuilder()
         .setPath('/socket.io/')
-        .setTransports(['polling', 'websocket'])
+        // On native platforms (Android/iOS/desktop), this package's
+        // transport factory (lib/src/engine/transport/io_transports.dart)
+        // always instantiates a raw WebSocket regardless of the requested
+        // transport name, but the request's `transport` query parameter
+        // still reflects whichever name was requested first — so listing
+        // 'polling' first sends a genuine WebSocket upgrade mislabeled as
+        // `transport=polling`. The server's Engine.IO layer picks its
+        // handshake handling based on that query param, so the mismatch
+        // leaves the socket stuck at the raw-upgrade layer (HTTP 101)
+        // without ever completing the Engine.IO-level handshake — every
+        // connection attempt times out and retries, indefinitely. Native
+        // builds request 'websocket' only, fixing the label from the very
+        // first attempt (nothing lost — 'polling' was never actually
+        // reachable there anyway). Web keeps the original list unchanged:
+        // it has its own real polling implementation and is unaffected by
+        // any of this.
+        .setTransports(kIsWeb ? ['polling', 'websocket'] : ['websocket'])
         .disableAutoConnect()
         .enableReconnection()
         .setReconnectionAttempts(double.infinity)
