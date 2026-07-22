@@ -39,6 +39,12 @@
 	<string>Humancare Connect needs camera access for video consultations with your doctor.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Humancare Connect needs microphone access for audio during video consultations with your doctor.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Humancare Connect uses the local network to establish a direct connection for video consultations when possible.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

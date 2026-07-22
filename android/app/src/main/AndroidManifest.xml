@@ -14,6 +14,12 @@
          of a screen capture, or getDisplayMedia throws a SecurityException. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- Required (Android 14+) for the ongoing-call foreground service below,
+         which keeps the socket/RTCPeerConnection alive while the app is
+         backgrounded during a live consultation (screen lock, app switch, a
+         Wi-Fi/cellular handoff) instead of being suspended by the OS. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
@@ -69,6 +75,17 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+        <!-- Ongoing-call notification/foreground service — see
+             CallForegroundService.kt. Kept separate from the service above
+             (which is scoped to screen-share's MediaProjection session) so a
+             plain audio/video call is never started with the "mediaProjection"
+             type, which Android 14+ only allows immediately after an active
+             MediaProjection grant. -->
+        <service
+            android:name=".CallForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="camera|microphone" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

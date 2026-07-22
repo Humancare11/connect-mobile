@@ -21,6 +21,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 
 import '../services/api_service.dart';
+import '../services/call_foreground_service.dart';
 import '../services/ice_server_config.dart';
 import '../services/socket_service.dart';
 import '../services/token_storage_service.dart';
@@ -878,6 +879,12 @@ class VideoCallController extends ChangeNotifier {
     inCall = true;
     notifyListeners();
 
+    final localTracks = _localStream?.getTracks() ?? const [];
+    unawaited(CallForegroundService.start(
+      hasAudio: localTracks.any((t) => t.kind == 'audio'),
+      hasVideo: localTracks.any((t) => t.kind == 'video'),
+    ));
+
     _callTimer?.cancel();
     _callTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       callDuration++;
@@ -1455,14 +1462,18 @@ class VideoCallController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _handleDuplicateSession(dynamic data) {
+  Future<void> _handleDuplicateSession(dynamic data) async {
     if (_disposed) return;
-    final pc = _pc;
-    if (pc != null && pc.signalingState != RTCSignalingState.RTCSignalingStateClosed) {
-      unawaited(pc.close());
-    }
-    _localStream?.getTracks().forEach((t) => unawaited(t.stop()));
-    _localStream = null;
+    // A newer session for this appointment has taken over. Tear this stale
+    // session all the way down — tracks, timers, socket room, peer
+    // connection, the Android ongoing-call notification — instead of only
+    // closing the PC, so nothing (call timer, stats polling, socket
+    // listeners, the foreground service) keeps running behind the "Access
+    // Denied" screen this triggers. Mirrors VideoCall.jsx's
+    // handleDuplicateSession, which calls performCleanup() for the same
+    // reason.
+    await performCleanup();
+    if (_disposed) return;
     final msg = (data is Map) ? data['msg']?.toString() : null;
     apptError = msg ?? 'Another consultation session was started elsewhere.';
     notifyListeners();
@@ -1537,7 +1548,22 @@ class VideoCallController extends ChangeNotifier {
   /// token is normally enough on its own — this is defense-in-depth so
   /// per-event identity resolution stays correct if that ever changes.
   Future<void> _emitOnlineAndJoinRoomPayload(String activeUserId, String role) async {
-    final token = await const TokenStorageService().getToken() ?? '';
+    // `_joinedSocketId` was already marked "joined" synchronously by the
+    // caller before this ran (see its comment) — if the secure-storage read
+    // below throws (a real Android failure mode: Keystore invalidated by an
+    // OS backup/restore or biometric reset) without this try/catch, both
+    // emits below would be skipped but the dedup marker would stay set,
+    // permanently blocking every future join attempt on this socket
+    // connection. Falling back to an empty token instead still lets the
+    // join through — the connection-time handshake token (see
+    // SocketService's authFn) is normally sufficient on its own; this
+    // per-event token is defense-in-depth, not the only identity signal.
+    String token = '';
+    try {
+      token = await const TokenStorageService().getToken() ?? '';
+    } catch (err) {
+      debugPrint('[video-call] token fetch for room join failed, joining without it: $err');
+    }
 
     if (activeUserId.isNotEmpty) {
       _socket.emit('user-online', {
@@ -1933,6 +1959,7 @@ class VideoCallController extends ChangeNotifier {
     _screenShareStartInProgress = false;
     _screenShareStopInProgress = false;
     await _stopBackgroundExecutionForScreenShare();
+    await CallForegroundService.stop();
 
     _pendingRemoteCandidates.clear();
     _joinedSocketId = '';
