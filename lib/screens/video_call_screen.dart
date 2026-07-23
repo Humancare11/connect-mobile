@@ -136,6 +136,17 @@ class _C {
   static const livePillBorder = Color(0x3822C55E); // rgba(34,197,94,.22)
   static const livePillText = Color(0xFF22C55E);
 
+  // Quality pill — same per-bucket colors as .hc-vc__quality-pill--{good,weak,poor}
+  static const qualityGoodBg = Color(0x1222C55E); // rgba(34,197,94,.07)
+  static const qualityGoodBorder = Color(0x3822C55E); // rgba(34,197,94,.22)
+  static const qualityGoodText = Color(0xFF22C55E);
+  static const qualityWeakBg = Color(0x1AEAB308); // rgba(234,179,8,.1)
+  static const qualityWeakBorder = Color(0x4DEAB308); // rgba(234,179,8,.3)
+  static const qualityWeakText = Color(0xFFEAB308);
+  static const qualityPoorBg = Color(0x1AEF4444); // rgba(239,68,68,.1)
+  static const qualityPoorBorder = Color(0x4DEF4444); // rgba(239,68,68,.3)
+  static const qualityPoorText = Color(0xFFEF4444);
+
   static const modalBg = Color(0xFF0D1F35);
   static const modalBorder = Color(0x1AFFFFFF); // rgba(255,255,255,.1)
   static const modalTitle = Color(0xFFF1F5F9);
@@ -1331,6 +1342,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
               onTap: _controller.isReady ? _controller.toggleScreenShare : null,
             ),
             if (_controller.inCall) _livePill(),
+            if (_controller.inCall && _controller.connectionQuality != 'unknown')
+              _qualityPill(_controller.connectionQuality),
             _ctrlButton(
               icon: _isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
               label: _isFullscreen ? 'Exit' : 'Full',
@@ -1379,6 +1392,49 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
           const SizedBox(width: 7),
           Text('LIVE', style: _sora(size: 11, weight: FontWeight.w700, color: _C.livePillText, letterSpacing: 0.5)),
         ],
+      ),
+    );
+  }
+
+  // Same three buckets/colors/tooltip copy as VideoCall.jsx's
+  // .hc-vc__quality-pill--{good,weak,poor} — driven by
+  // VideoCallController.connectionQuality (see deriveConnectionQuality).
+  Widget _qualityPill(String quality) {
+    final Color bg;
+    final Color border;
+    final Color color;
+    final String tooltip;
+    switch (quality) {
+      case 'poor':
+        bg = _C.qualityPoorBg;
+        border = _C.qualityPoorBorder;
+        color = _C.qualityPoorText;
+        tooltip = 'Poor connection — the call may drop';
+        break;
+      case 'weak':
+        bg = _C.qualityWeakBg;
+        border = _C.qualityWeakBorder;
+        color = _C.qualityWeakText;
+        tooltip = 'Unstable connection — video quality may drop';
+        break;
+      default:
+        bg = _C.qualityGoodBg;
+        border = _C.qualityGoodBorder;
+        color = _C.qualityGoodText;
+        tooltip = 'Good connection';
+    }
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        width: 40,
+        height: 40,
+        margin: const EdgeInsets.symmetric(horizontal: 5),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: border),
+        ),
+        child: Icon(Icons.wifi, color: color, size: 18),
       ),
     );
   }

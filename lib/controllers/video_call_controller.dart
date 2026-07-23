@@ -54,6 +54,42 @@ const int kIceRecoveryCooldownMs = 30000;
 const int kStatsIntervalMs = 30000;
 const int kPeerJoinTimeoutMs = 20000;
 const int kMediaAcquireTimeoutMs = 20000;
+// Telemetry events queued while the socket is disconnected are replayed once
+// it reconnects — see VideoCallController._logEvent/_flushTelemetryQueue.
+// Capped so a long outage can't grow this without bound (mirrors
+// VideoCall.jsx's TELEMETRY_QUEUE_MAX).
+const int kTelemetryQueueMax = 50;
+
+// Turns the stats already gathered by _startStatsCollection into a coarse,
+// user-facing quality bucket. Ported from VideoCall.jsx's
+// deriveConnectionQuality: packet loss is derived from the DELTA between
+// this poll and the previous one (not the raw cumulative counter) — using
+// the cumulative value directly would mean a single lost packet early in a
+// long call marks the connection "poor" for its entire remaining duration.
+String deriveConnectionQuality(
+  Map<String, dynamic> diagnostics,
+  Map<String, num>? previousSample,
+) {
+  final rtt = diagnostics['rtt'];
+  if (rtt is! num) return 'unknown';
+
+  var lossRatio = 0.0;
+  if (previousSample != null) {
+    final sentNow = diagnostics['packetsSent'];
+    final lostNow = diagnostics['packetsLost'];
+    if (sentNow is num && lostNow is num) {
+      final deltaSent = sentNow - (previousSample['packetsSent'] ?? 0);
+      final deltaLost = lostNow - (previousSample['packetsLost'] ?? 0);
+      if (deltaSent > 0 && deltaLost > 0) {
+        lossRatio = deltaLost / (deltaSent + deltaLost);
+      }
+    }
+  }
+
+  if (rtt > 400 || lossRatio > 0.08) return 'poor';
+  if (rtt > 200 || lossRatio > 0.03) return 'weak';
+  return 'good';
+}
 
 class ChatMessage {
   final String senderId;
@@ -255,6 +291,14 @@ class VideoCallController extends ChangeNotifier {
   bool inCall = false;
   bool isRemoteConnected = false;
   String connectionState = 'idle';
+  // good | weak | poor | unknown — mirrors VideoCall.jsx's `connectionQuality`
+  // state, derived from stats polling in _startStatsCollection below.
+  String connectionQuality = 'unknown';
+  // Previous stats poll's packet counters, so quality is derived from the
+  // delta between polls (see _deriveConnectionQuality) rather than a
+  // misleading cumulative total — same reasoning as VideoCall.jsx's
+  // lastStatsSampleRef.
+  Map<String, num>? _lastStatsSample;
   int callDuration = 0;
   bool isMuted = false;
   bool isCamOff = false;
@@ -2040,6 +2084,8 @@ class VideoCallController extends ChangeNotifier {
   void _stopStatsCollection() {
     _statsTimer?.cancel();
     _statsTimer = null;
+    _lastStatsSample = null;
+    connectionQuality = 'unknown';
   }
 
   void _startStatsCollection(RTCPeerConnection pc) {
@@ -2101,6 +2147,16 @@ class VideoCallController extends ChangeNotifier {
 
           debugPrint('[webrtc-stats] $diagnostics');
           _logEvent('webrtc_stats', diagnostics);
+
+          final quality = deriveConnectionQuality(diagnostics, _lastStatsSample);
+          _lastStatsSample = {
+            'packetsSent': diagnostics['packetsSent'] as num,
+            'packetsLost': diagnostics['packetsLost'] as num,
+          };
+          if (!_disposed) {
+            connectionQuality = quality;
+            notifyListeners();
+          }
         } catch (err) {
           debugPrint('[webrtc-stats] getStats failed: $err');
         }
@@ -2109,17 +2165,41 @@ class VideoCallController extends ChangeNotifier {
   }
 
   // ── Lightweight telemetry ────────────────────────────────────────────
+  // Events fired while the socket is disconnected (e.g. during a network
+  // blip mid-call — exactly the scenario the ICE-restart machinery handles)
+  // are queued and replayed once it reconnects, rather than lost — mirrors
+  // VideoCall.jsx's telemetryQueueRef/flushTelemetryQueue.
+  final List<Map<String, dynamic>> _telemetryQueue = [];
+
+  void _flushTelemetryQueue() {
+    if (!_socket.connected || _telemetryQueue.isEmpty) return;
+    final queued = List<Map<String, dynamic>>.from(_telemetryQueue);
+    _telemetryQueue.clear();
+    for (final payload in queued) {
+      _socket.emit('video-telemetry', payload);
+    }
+  }
 
   void _logEvent(String event, Map<String, dynamic> details) {
     debugPrint('[video-call] $event $details');
-    if (_socket.connected && appointmentId.isNotEmpty) {
-      _socket.emit('video-telemetry', {
-        'appointmentId': appointmentId,
-        'event': event,
-        'role': isDoctor ? 'doctor' : 'user',
-        'timestamp': DateTime.now().toIso8601String(),
-        'details': details,
-      });
+    if (appointmentId.isEmpty) return;
+
+    final payload = {
+      'appointmentId': appointmentId,
+      'event': event,
+      'role': isDoctor ? 'doctor' : 'user',
+      'timestamp': DateTime.now().toIso8601String(),
+      'details': details,
+    };
+
+    if (_socket.connected) {
+      _flushTelemetryQueue();
+      _socket.emit('video-telemetry', payload);
+    } else {
+      _telemetryQueue.add(payload);
+      if (_telemetryQueue.length > kTelemetryQueueMax) {
+        _telemetryQueue.removeAt(0);
+      }
     }
   }
 }
