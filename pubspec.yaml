@@ -80,6 +80,10 @@ dependencies:
   # granted explicitly, unlike the legacy BLUETOOTH permission it replaces —
   # see video_call_controller.dart's call-start sequence).
   permission_handler: ^11.3.1
+  # Device-level connectivity-loss detection for the video call screen —
+  # mirrors VideoCall.jsx's window online/offline listeners, which have no
+  # direct Flutter equivalent.
+  connectivity_plus: ^6.1.5
 
 dev_dependencies:
   flutter_test:

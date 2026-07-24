@@ -14,7 +14,9 @@
 
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:math';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_background/flutter_background.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -51,7 +53,14 @@ const int kIceRestartDelayMs = 2500;
 const int kConnectionFailTimeoutMs = 25000;
 const int kIceMaxRecoveryAttempts = 4;
 const int kIceRecoveryCooldownMs = 30000;
+// How long to wait for a video-answer after sending an offer before treating
+// it as lost — mirrors VideoCall.jsx's OFFER_ANSWER_TIMEOUT_MS. Without this,
+// a dropped/never-arriving answer leaves the RTCPeerConnection permanently
+// wedged in "have-local-offer", since nothing else ever rolls back a
+// self-initiated offer.
+const int kOfferAnswerTimeoutMs = 8000;
 const int kStatsIntervalMs = 30000;
+const int kChatSendCooldownMs = 300;
 const int kPeerJoinTimeoutMs = 20000;
 const int kMediaAcquireTimeoutMs = 20000;
 // Telemetry events queued while the socket is disconnected are replayed once
@@ -263,6 +272,18 @@ class VideoCallController extends ChangeNotifier {
   bool _pendingOfferWhenStable = false;
   final List<dynamic> _pendingRemoteCandidates = [];
   Timer? _ignoreOfferResetTimer;
+  final Random _idRng = Random();
+  // The offerId of our own most recent outstanding offer, echoed back by the
+  // peer's answer so a stale/replayed answer (e.g. socket.io reconnect
+  // replay) can be told apart from a genuine fresh one — mirrors
+  // VideoCall.jsx's pendingOfferIdRef.
+  String? _pendingOfferId;
+  Timer? _offerAnswerTimeoutTimer;
+  // The offerId of the most recent remote offer we accepted — echoed back in
+  // our video-answer so the offerer can correlate it. Also used by
+  // retryMediaPermissions() when it answers a remote offer that arrived
+  // before local media was ready — mirrors lastReceivedOfferIdRef.
+  String? _lastReceivedOfferId;
 
   // ── Reconnect / ICE-restart machinery ───────────────────────────────
   Timer? _iceRestartTimer;
@@ -274,6 +295,13 @@ class VideoCallController extends ChangeNotifier {
   String _joinedSocketId = '';
   Timer? _joinTimeoutTimer;
   bool reconnectStalled = false;
+
+  // ── Device connectivity ──────────────────────────────────────────────
+  // Mirrors VideoCall.jsx's window online/offline listeners: a fully
+  // offline device otherwise only surfaces indirectly, once the socket/ICE
+  // timeouts eventually fire many seconds later.
+  bool isOffline = false;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   // Mirrors VideoCall.jsx's hasConnectedOnceRef — distinguishes the first
   // "Establishing secure connection..." from a later "Reconnecting..." on
   // the waiting overlay.
@@ -324,6 +352,8 @@ class VideoCallController extends ChangeNotifier {
   final List<ChatMessage> messages = [];
   int unreadCount = 0;
   bool uploadingFile = false;
+  bool chatSendCoolingDown = false;
+  Timer? _chatSendCooldownTimer;
 
   // ── Prescription notification (patient-facing toast) ───────────────────
   Map<String, dynamic>? prescriptionNotif;
@@ -342,6 +372,8 @@ class VideoCallController extends ChangeNotifier {
     _rendererReady = true;
     if (_disposed) return;
 
+    unawaited(_initConnectivityWatch());
+
     if (appt != null) {
       apptLoading = false;
       notifyListeners();
@@ -350,9 +382,30 @@ class VideoCallController extends ChangeNotifier {
     await fetchAppointment();
   }
 
+  Future<void> _initConnectivityWatch() async {
+    try {
+      final initial = await Connectivity().checkConnectivity();
+      if (_disposed) return;
+      isOffline = initial.every((r) => r == ConnectivityResult.none);
+      notifyListeners();
+    } catch (_) {
+      // Best-effort — if the platform channel isn't available, the offline
+      // banner simply never shows, same as VideoCall.jsx on a browser
+      // without connectivity APIs.
+    }
+    _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
+      if (_disposed) return;
+      final offline = results.every((r) => r == ConnectivityResult.none);
+      if (offline == isOffline) return;
+      isOffline = offline;
+      notifyListeners();
+    });
+  }
+
   @override
   void dispose() {
     _disposed = true;
+    unawaited(_connectivitySub?.cancel());
     unawaited(performCleanup());
     if (_rendererReady) {
       mainRenderer.dispose();
@@ -360,6 +413,7 @@ class VideoCallController extends ChangeNotifier {
     }
     _inlineErrorTimer?.cancel();
     _prescriptionTimer?.cancel();
+    _chatSendCooldownTimer?.cancel();
     super.dispose();
   }
 
@@ -477,6 +531,9 @@ class VideoCallController extends ChangeNotifier {
     _pendingRemoteCandidates.clear();
     _ignoreOffer = false;
     _settingRemoteAnswerPending = false;
+    _pendingOfferId = null;
+    _lastReceivedOfferId = null;
+    _clearOfferAnswerTimeout();
     _iceRestartTimer?.cancel();
     _iceRestartTimer = null;
     _ignoreOfferResetTimer?.cancel();
@@ -700,6 +757,7 @@ class VideoCallController extends ChangeNotifier {
         activeSender,
         maxBitrate: kind == 'video' ? kCameraBitrate : kVoiceBitrate,
         maxFramerate: kind == 'video' ? 30 : null,
+        maintainResolution: kind == 'video',
       );
     }
 
@@ -753,6 +811,7 @@ class VideoCallController extends ChangeNotifier {
     RTCRtpSender sender, {
     int? maxBitrate,
     int? maxFramerate,
+    bool maintainResolution = false,
   }) async {
     if (sender.track == null) return;
     try {
@@ -761,6 +820,10 @@ class VideoCallController extends ChangeNotifier {
       final encoding = encodings.isNotEmpty ? encodings.first : RTCRtpEncoding();
       if (maxBitrate != null) encoding.maxBitrate = maxBitrate;
       if (maxFramerate != null) encoding.maxFramerate = maxFramerate;
+      if (maintainResolution) {
+        params.degradationPreference = RTCDegradationPreference.MAINTAIN_RESOLUTION;
+        encoding.scaleResolutionDownBy ??= 1.0;
+      }
       params.encodings = [encoding, ...encodings.skip(1)];
       await sender.setParameters(params);
     } catch (_) {
@@ -1028,12 +1091,16 @@ class VideoCallController extends ChangeNotifier {
         return false;
       }
       await pc.setLocalDescription(offer);
+      final offerId = _makeOfferId();
+      _pendingOfferId = offerId;
       _logEvent('offer_sent', {'iceRestart': iceRestart, 'sdpLength': offer.sdp?.length ?? 0});
       _socket.emit('video-offer', {
         'appointmentId': appointmentId,
         'offer': {'sdp': offer.sdp, 'type': offer.type},
+        'offerId': offerId,
       });
       if (iceRestart) _logEvent('ice_restart_offer_sent', {});
+      _armOfferAnswerTimeout(pc, offerId);
       return true;
     } catch (err) {
       debugPrint('[video-call] ${iceRestart ? "ICE restart offer" : "offer"} failed: $err');
@@ -1042,6 +1109,50 @@ class VideoCallController extends ChangeNotifier {
     } finally {
       _makingOffer = false;
     }
+  }
+
+  String _makeOfferId() =>
+      'offer-${DateTime.now().microsecondsSinceEpoch}-${_idRng.nextInt(1 << 32)}';
+
+  void _clearOfferAnswerTimeout() {
+    _offerAnswerTimeoutTimer?.cancel();
+    _offerAnswerTimeoutTimer = null;
+  }
+
+  /// Self-heals if this specific offer never gets answered (dropped
+  /// signaling message, peer mid-reconnect, replayed/rejected stale answer,
+  /// etc.) — otherwise the RTCPeerConnection stays wedged in
+  /// "have-local-offer" forever, since nothing else ever rolls back our own
+  /// offer. Mirrors VideoCall.jsx's offerAnswerTimeoutRef watchdog.
+  void _armOfferAnswerTimeout(RTCPeerConnection pc, String offerId) {
+    _clearOfferAnswerTimeout();
+    _offerAnswerTimeoutTimer = Timer(const Duration(milliseconds: kOfferAnswerTimeoutMs), () async {
+      _offerAnswerTimeoutTimer = null;
+      if (_disposed || _pc != pc || pc.signalingState == RTCSignalingState.RTCSignalingStateClosed) {
+        return;
+      }
+      if (_pendingOfferId != offerId) return; // already resolved or superseded
+      if (pc.signalingState != RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
+        _pendingOfferId = null;
+        return;
+      }
+      _logEvent('offer_answer_timeout_rollback', {'offerId': offerId});
+      debugPrint('[video-call] no answer received for offer $offerId within ${kOfferAnswerTimeoutMs}ms — rolling back to retry.');
+      try {
+        await pc.setLocalDescription(RTCSessionDescription('', 'rollback'));
+        _pendingOfferId = null;
+        // Retry directly rather than via _scheduleIceRestart(): that helper
+        // bails out early whenever the connection already reads
+        // "connected" — which is exactly the misleading state this timeout
+        // is designed to catch. _createAndSendOffer's own guards (disposed,
+        // signalingState, isReady) still apply, so this can't fire against a
+        // closed/torn-down pc.
+        unawaited(_createAndSendOffer(iceRestart: true));
+      } catch (err) {
+        _pendingOfferId = null;
+        debugPrint('[video-call] rollback after offer-answer timeout failed: $err');
+      }
+    });
   }
 
   // ── Connection watchdog / ICE-restart recovery ──────────────────────
@@ -1209,6 +1320,7 @@ class VideoCallController extends ChangeNotifier {
         _socket.emit('video-answer', {
           'appointmentId': appointmentId,
           'answer': {'sdp': answer.sdp, 'type': answer.type},
+          'offerId': _lastReceivedOfferId,
         });
       }
     } catch (err) {
@@ -1239,6 +1351,7 @@ class VideoCallController extends ChangeNotifier {
     if (data == null) return;
     final offerMap = data['offer'];
     if (offerMap == null || offerMap is! Map) return;
+    final incomingOfferId = data['offerId'] as String?;
     final pc = _pc;
     if (pc == null) return;
 
@@ -1264,6 +1377,11 @@ class VideoCallController extends ChangeNotifier {
 
       if (offerCollision && signalingState == RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
         await pc.setLocalDescription(RTCSessionDescription('', 'rollback'));
+        // Our own outstanding offer was just discarded — any answer that
+        // still shows up for it later is stale and must be rejected, and
+        // the answer-timeout watchdog for it is no longer relevant.
+        _pendingOfferId = null;
+        _clearOfferAnswerTimeout();
       } else if (offerCollision) {
         return;
       }
@@ -1272,6 +1390,11 @@ class VideoCallController extends ChangeNotifier {
         offerMap['sdp'] as String?,
         offerMap['type'] as String?,
       ));
+      // Record which offer we just accepted as soon as it's applied, not
+      // only once we get around to answering it — if local media isn't
+      // ready yet, retryMediaPermissions() answers this same remote
+      // description later, and needs the right id to echo back then too.
+      _lastReceivedOfferId = incomingOfferId;
       _resetIgnoredOffer();
       await _flushPendingIceCandidates();
 
@@ -1293,6 +1416,7 @@ class VideoCallController extends ChangeNotifier {
       _socket.emit('video-answer', {
         'appointmentId': appointmentId,
         'answer': {'sdp': answer.sdp, 'type': answer.type},
+        'offerId': incomingOfferId,
       });
       _markInCall();
     } catch (err) {
@@ -1306,6 +1430,7 @@ class VideoCallController extends ChangeNotifier {
     if (data == null) return;
     final answerMap = data['answer'];
     if (answerMap == null || answerMap is! Map) return;
+    final receivedOfferId = data['offerId'] as String?;
     final pc = _pc;
     if (pc == null) return;
 
@@ -1314,12 +1439,29 @@ class VideoCallController extends ChangeNotifier {
           pc.signalingState != null) {
         return;
       }
+      // Guards against a stale/replayed video-answer being applied to a
+      // newer offer — e.g. a socket.io reconnect redelivering an
+      // already-consumed answer. signalingState alone can't tell a genuine
+      // fresh answer apart from that, since a replayed one arrives while
+      // we're legitimately in have-local-offer waiting for a real one.
+      final expectedOfferId = _pendingOfferId;
+      if (expectedOfferId == null || receivedOfferId != expectedOfferId) {
+        _logEvent('answer_rejected_stale', {
+          'expectedOfferId': expectedOfferId,
+          'receivedOfferId': receivedOfferId,
+        });
+        debugPrint('[video-call] rejecting answer: offerId mismatch (expected $expectedOfferId, got $receivedOfferId)');
+        return;
+      }
       _settingRemoteAnswerPending = true;
       _logEvent('answer_received', {'sdpLength': answerMap['sdp']?.toString().length ?? 0});
       await pc.setRemoteDescription(RTCSessionDescription(
         answerMap['sdp'] as String?,
         answerMap['type'] as String?,
       ));
+      _pendingOfferId = null;
+      _clearOfferAnswerTimeout();
+      _logEvent('answer_accepted', {'offerId': receivedOfferId});
       _resetIgnoredOffer();
       await _flushPendingIceCandidates();
       _markInCall();
@@ -1363,8 +1505,20 @@ class VideoCallController extends ChangeNotifier {
     }
   }
 
+  // The doctor still never self-initiates an offer as a matter of course
+  // (see _handlePeerJoined) — but if the PATIENT explicitly asks for a
+  // restart because it just exhausted its own recovery attempts (see
+  // _scheduleIceRestart's exhaustion branch), it needs the doctor to
+  // actually act on that request. This used to return early for isDoctor
+  // (this app is always the patient, so it was a no-op here in practice),
+  // but that guard has drifted from VideoCall.jsx's handleIceRestartRequest,
+  // which deliberately dropped it — _createAndSendOffer/_handleOffer's
+  // existing collision handling (impolite ignores, polite rolls back)
+  // already resolves the rare case where both sides end up offering at once.
   Future<void> _handleIceRestartRequest(dynamic _) async {
-    if (_disposed || isDoctor || !isReady) return;
+    final pc = _pc;
+    if (_disposed || pc == null || !isReady) return;
+    if (_isConnectedState(pc)) return;
     _logEvent('ice_restart_request_received', {});
     await _createAndSendOffer(iceRestart: true);
   }
@@ -1426,23 +1580,13 @@ class VideoCallController extends ChangeNotifier {
     }
     _logEvent('chat_received', {'senderId': data['senderId'], 'hasText': data['text'] is String && (data['text'] as String).isNotEmpty});
 
-    // Deduplicate immediate local echoes: the client adds the message
-    // locally before emitting and the server echoes it back to the room.
-    // If the sender is this user and the most recent message matches, skip
-    // adding the echoed copy to avoid showing the message twice.
+    // Own messages are only added here, once the server actually echoes
+    // them back to the room — never optimistically on send (see
+    // sendMessage/attachFile). VideoCall.jsx's handleChatMessage works the
+    // same way: if the server silently drops a message (rate limiter,
+    // socket hiccup), the sender never sees a false "delivered" state.
     try {
-      final incoming = ChatMessage.fromJson(data);
-      final senderId = incoming.senderId;
-      final text = incoming.text;
-      if (senderId == (currentUser['id'] ?? '')) {
-        if (messages.isNotEmpty) {
-          final last = messages.last;
-          if (last.senderId == senderId && last.text == text && last.fileUrl == incoming.fileUrl) {
-            return;
-          }
-        }
-      }
-      messages.add(incoming);
+      messages.add(ChatMessage.fromJson(data));
     } catch (err) {
       debugPrint('[video-call] chat_message parse failed: $err');
       return;
@@ -1795,7 +1939,7 @@ class VideoCallController extends ChangeNotifier {
       }
 
       await sender.replaceTrack(screenTrack);
-      await _tuneSenderQuality(sender, maxBitrate: kScreenShareBitrate, maxFramerate: 30);
+      await _tuneSenderQuality(sender, maxBitrate: kScreenShareBitrate, maxFramerate: 30, maintainResolution: true);
 
       _screenStream = screen;
       isScreenSharing = true;
@@ -1860,7 +2004,7 @@ class VideoCallController extends ChangeNotifier {
         : null;
     await sender.replaceTrack(camTrack);
     if (camTrack != null) {
-      await _tuneSenderQuality(sender, maxBitrate: kCameraBitrate, maxFramerate: 30);
+      await _tuneSenderQuality(sender, maxBitrate: kCameraBitrate, maxFramerate: 30, maintainResolution: true);
     }
     _assignStreams(isSwapped);
   }
@@ -1885,25 +2029,31 @@ class VideoCallController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// First line of defense against a stuck Enter key / paste-loop flooding
+  /// chat — the server has its own rate limit (chatMessageLimiter in
+  /// backend/server.js), this just keeps the UI itself from firing faster
+  /// than a human can type. Mirrors VideoCall.jsx's CHAT_SEND_COOLDOWN_MS.
   void sendMessage(String text) {
+    if (chatSendCoolingDown) return;
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
     final senderId = currentUser['id'] ?? '';
     final senderName = currentUser['name'] ?? '';
-    messages.add(ChatMessage(
-      senderId: senderId,
-      senderName: senderName,
-      text: trimmed,
-      createdAt: DateTime.now().toIso8601String(),
-    ));
-    if (!chatOpen) unreadCount++;
-    notifyListeners();
     _logEvent('chat_send', {'text': trimmed.length > 50 ? '${trimmed.substring(0, 50)}...' : trimmed});
     _socket.emit('appointment-message', {
       'appointmentId': appointmentId,
       'senderId': senderId,
       'senderName': senderName,
       'text': trimmed,
+    });
+    chatSendCoolingDown = true;
+    notifyListeners();
+    _chatSendCooldownTimer?.cancel();
+    _chatSendCooldownTimer = Timer(const Duration(milliseconds: kChatSendCooldownMs), () {
+      _chatSendCooldownTimer = null;
+      if (_disposed) return;
+      chatSendCoolingDown = false;
+      notifyListeners();
     });
   }
 
@@ -1918,17 +2068,6 @@ class VideoCallController extends ChangeNotifier {
       final uploaded = await uploadFileDirectToS3(file);
       final senderId = currentUser['id'] ?? '';
       final senderName = currentUser['name'] ?? '';
-      messages.add(ChatMessage(
-        senderId: senderId,
-        senderName: senderName,
-        text: '',
-        fileUrl: uploaded.key,
-        fileName: uploaded.name,
-        fileType: uploaded.type,
-        createdAt: DateTime.now().toIso8601String(),
-      ));
-      if (!chatOpen) unreadCount++;
-      notifyListeners();
       _logEvent('chat_attach', {'name': uploaded.name, 'type': uploaded.type});
       _socket.emit('appointment-message', {
         'appointmentId': appointmentId,
@@ -2009,6 +2148,9 @@ class VideoCallController extends ChangeNotifier {
     _joinedSocketId = '';
     _ignoreOffer = false;
     _restartRequestInFlight = false;
+    _pendingOfferId = null;
+    _lastReceivedOfferId = null;
+    _clearOfferAnswerTimeout();
 
     // Reset all call state so a subsequent startCallSession (via
     // forceReconnect) starts fresh — stale isReady or peerJoined caused

@@ -182,6 +182,8 @@ class _C {
   static const rxNotifBg = Color(0x24A855F7); // rgba(168,85,247,.14)
   static const rxNotifBorder = Color(0x66A855F7); // rgba(168,85,247,.4)
   static const rxNotifText = Color(0xFFDDD6FE);
+
+  static const offlineBannerBg = Color(0xFF7C2D12);
 }
 
 TextStyle _sora({
@@ -327,6 +329,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
   }
 
   void _sendMessage() {
+    if (_controller.chatSendCoolingDown) return;
     final text = _chatInputCtrl.text;
     if (text.trim().isEmpty) return;
     _controller.sendMessage(text);
@@ -437,6 +440,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
                     },
                   ),
                 if (_controller.showCompletedOverlay && !_controller.isDoctor) _completedOverlay(),
+                if (_controller.isOffline)
+                  const Positioned(top: 0, left: 0, right: 0, child: _OfflineBanner()),
               ],
             ),
           ),
@@ -1291,13 +1296,16 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
                 ),
                 const SizedBox(width: 8),
                 GestureDetector(
-                  onTap: _sendMessage,
-                  child: Container(
-                    width: 38,
-                    height: 38,
-                    decoration: BoxDecoration(color: _C.teal, borderRadius: BorderRadius.circular(10)),
-                    alignment: Alignment.center,
-                    child: const Icon(Icons.send, color: _C.msgMineText, size: 17),
+                  onTap: _controller.chatSendCoolingDown ? null : _sendMessage,
+                  child: Opacity(
+                    opacity: _controller.chatSendCoolingDown ? 0.5 : 1,
+                    child: Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(color: _C.teal, borderRadius: BorderRadius.circular(10)),
+                      alignment: Alignment.center,
+                      child: const Icon(Icons.send, color: _C.msgMineText, size: 17),
+                    ),
                   ),
                 ),
               ],
@@ -1628,6 +1636,41 @@ class _BlinkState extends State<_Blink> {
         width: widget.size,
         height: widget.size,
         decoration: BoxDecoration(color: widget.color, shape: BoxShape.circle),
+      ),
+    );
+  }
+}
+
+/// Ported from videocall.css's `.hc-vc__offline-banner` — a fixed top-of-screen
+/// bar shown when [VideoCallController.isOffline] is true, mirroring
+/// VideoCall.jsx's `window.online`/`offline` listeners (no direct Flutter
+/// equivalent; the controller watches `connectivity_plus` instead).
+class _OfflineBanner extends StatelessWidget {
+  const _OfflineBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        color: _C.offlineBannerBg,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.white, size: 16),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                "You're offline. Reconnecting once your internet is back.",
+                textAlign: TextAlign.center,
+                style: _sora(size: 13, weight: FontWeight.w600, color: Colors.white),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
