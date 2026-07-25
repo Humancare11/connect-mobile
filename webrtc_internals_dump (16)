@@ -1,0 +1,86 @@
+{
+ "deviceMemory": 16,
+ "hardwareConcurrency": 12,
+ "timestamp": 1784975110081,
+ "getUserMedia": [
+  {
+   "audio": "{\"sampleRate\": {\"ideal\": 48000}, \"sampleSize\": {\"ideal\": 16}, \"echoCancellation\": {\"ideal\": true}, \"autoGainControl\": {\"ideal\": true}, \"noiseSuppression\": {\"ideal\": true}, \"channelCount\": {\"ideal\": 2}}",
+   "origin": "http://localhost:54291",
+   "pid": 18048,
+   "request_id": 0,
+   "request_type": "getUserMedia",
+   "rid": 5,
+   "timestamp": 1784975078757.133,
+   "url": "http://localhost:54291/",
+   "video": "{\"width\": {\"max\": 1920, \"ideal\": 1280}, \"height\": {\"max\": 1080, \"ideal\": 720}, \"frameRate\": {\"max\": 30, \"ideal\": 30}, \"facingMode\": {\"ideal\": [\"user\"]}}"
+  },
+  {
+   "audio_track_info": "{\"id\":\"5e6cb493-78b2-4667-9c2a-edfff0394c0c\",\"label\":\"Microphone (Realtek(R) Audio)\"}",
+   "pid": 18048,
+   "request_id": 0,
+   "request_type": "getUserMedia",
+   "rid": 5,
+   "stream_id": "64f3f727-10bb-4b0b-a25d-881cc0410f33",
+   "timestamp": 1784975087565.861,
+   "video_track_info": "{\"id\":\"65c4707c-5e22-4361-8f82-e73360d2c3e5\",\"label\":\"Integrated Webcam (0bda:567e)\"}"
+  }
+ ],
+ "PeerConnections": {
+  "5-1": {
+   "pid": 18048,
+   "rtcConfiguration": "{\"iceServers\":[{\"urls\":[\"stun:stun.l.google.com:19302\"]},{\"urls\":[\"turn:turn.humancareconnect.co:3478?transport=udp\",\"turn:turn.humancareconnect.co:3478?transport=tcp\"]},{\"urls\":[\"turn:turn2.humancareconnect.co:3478?transport=udp\",\"turn:turn2.humancareconnect.co:3478?transport=tcp\"]}],\"iceCandidatePoolSize\":10,\"bundlePolicy\":\"max-bundle\",\"alwaysNegotiateDataChannels\":false}",
+   "stats": {},
+   "updateLog": [
+    {
+     "type": "onsignalingstatechange",
+     "value": "\"stable\"",
+     "timestamp": 1784975105963.415
+    },
+    {
+     "type": "oniceconnectionstatechange",
+     "value": "\"new\"",
+     "timestamp": 1784975105964.318
+    },
+    {
+     "type": "onconnectionstatechange",
+     "value": "\"new\"",
+     "timestamp": 1784975105964.338
+    }
+   ],
+   "url": "http://localhost:54291/"
+  }
+ },
+ "UserAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+ "UserAgentData": {
+  "brands": [
+   {
+    "brand": "Not;A=Brand",
+    "version": "8"
+   },
+   {
+    "brand": "Chromium",
+    "version": "150"
+   },
+   {
+    "brand": "Google Chrome",
+    "version": "150"
+   }
+  ],
+  "fullVersionList": [
+   {
+    "brand": "Not;A=Brand",
+    "version": "8.0.0.0"
+   },
+   {
+    "brand": "Chromium",
+    "version": "150.0.7871.182"
+   },
+   {
+    "brand": "Google Chrome",
+    "version": "150.0.7871.182"
+   }
+  ],
+  "mobile": false,
+  "platform": "Windows"
+ }
+}

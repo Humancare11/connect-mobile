@@ -513,6 +513,17 @@ class VideoCallController extends ChangeNotifier {
     await _ensureAndroidRuntimePermissions();
     if (_disposed) return;
 
+    // Best-effort: a token that's gone stale while the app was backgrounded
+    // would otherwise fail the ICE-config fetch and the room join below.
+    // Non-fatal — if this fails, proceed with whatever's in storage, same
+    // as before this existed.
+    try {
+      await ApiService.instance.refreshAccessToken(isDoctor ? 'doctor' : 'user');
+    } catch (_) {
+      // Ignore — fall through with the existing stored token.
+    }
+    if (_disposed) return;
+
     if (_fetchingIceConfig) return;
     _fetchingIceConfig = true;
     final iceSetup = await fetchIceServerConfig();
@@ -1004,8 +1015,8 @@ class VideoCallController extends ChangeNotifier {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(const Duration(minutes: 4), (_) {
       ApiService.instance
-          .post('/api/auth/refresh', {'authRole': isDoctor ? 'doctor' : 'user'})
-          .catchError((_) => null);
+          .refreshAccessToken(isDoctor ? 'doctor' : 'user')
+          .catchError((_) => false);
     });
   }
 
@@ -1111,8 +1122,16 @@ class VideoCallController extends ChangeNotifier {
     }
   }
 
+  // `_idRng.nextInt(1 << 32)` used to be the max here, but on Flutter Web
+  // (dart2js/dartdevc) shifting by exactly the int bit-width silently
+  // truncates to 0, so `nextInt(0)` throws `RangeError: max must be in
+  // range 0 < max ≤ 2^32, was 0` — thrown *after* setLocalDescription()
+  // already moved signalingState to have-local-offer but *before*
+  // _pendingOfferId/_armOfferAnswerTimeout ever run, permanently wedging
+  // the call (nothing left to roll the offer back). `1 << 31` stays well
+  // under nextInt's 2^32 limit without hitting that shift-width edge case.
   String _makeOfferId() =>
-      'offer-${DateTime.now().microsecondsSinceEpoch}-${_idRng.nextInt(1 << 32)}';
+      'offer-${DateTime.now().microsecondsSinceEpoch}-${_idRng.nextInt(1 << 31)}';
 
   void _clearOfferAnswerTimeout() {
     _offerAnswerTimeoutTimer?.cancel();

@@ -23,6 +23,11 @@ class ApiService {
     return _unwrap(result);
   }
 
+  /// See [ApiClient.refreshAccessToken] — the only call in the app that
+  /// authenticates with the refresh token instead of the access token.
+  Future<bool> refreshAccessToken(String role) =>
+      _client.refreshAccessToken(role);
+
   String _normalizePath(String path) {
     final normalized = path.trim();
     if (normalized.startsWith('/api/')) {

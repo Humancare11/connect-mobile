@@ -127,6 +127,52 @@ class ApiClient {
     }
   }
 
+  /// Refreshes the access token using the stored refresh token, persisting
+  /// the rotated pair on success. This is the only call in the app that
+  /// sends the refresh token as a bearer credential — every other request
+  /// keeps using the access token via [get]/[post]/[put]/[patch], unchanged.
+  /// Non-fatal on any failure (missing/expired refresh token, network
+  /// error): callers proceed with whatever's already in storage.
+  Future<bool> refreshAccessToken(String role) async {
+    final refreshToken = await _tokenStorage.getRefreshToken();
+    if (refreshToken == null || refreshToken.isEmpty) return false;
+
+    try {
+      final uri = Uri.parse('${ApiConfig.baseUrl}/api/auth/refresh');
+      final response = await _client
+          .post(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Authorization': 'Bearer $refreshToken',
+              'X-Auth-Role': role,
+            },
+            body: jsonEncode({'role': role}),
+          )
+          .timeout(const Duration(seconds: 15));
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        return false;
+      }
+
+      final data = _asMap(
+        response.body.isNotEmpty ? jsonDecode(response.body) : {},
+      );
+      final newAccessToken = data['accessToken']?.toString() ?? '';
+      if (newAccessToken.isEmpty) return false;
+
+      await _tokenStorage.saveToken(newAccessToken);
+      final newRefreshToken = data['refreshToken']?.toString() ?? '';
+      if (newRefreshToken.isNotEmpty) {
+        await _tokenStorage.saveRefreshToken(newRefreshToken);
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Parses a successful HTTP exchange (any status code) into an [ApiResult].
   ApiResult<Map<String, dynamic>> _handleResponse(
     String method,
