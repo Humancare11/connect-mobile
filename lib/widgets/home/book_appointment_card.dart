@@ -290,9 +290,9 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
       itemCount: categories.length,
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: 2,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-        childAspectRatio: 4.0,
+        mainAxisSpacing: 9,
+        crossAxisSpacing: 9,
+        childAspectRatio: 3.3,
       ),
       itemBuilder: (context, index) {
         final category = categories[index];
@@ -307,23 +307,23 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
             splashColor: accent.withValues(alpha: 0.18),
             onTap: () => _openAppointmentPage(categoryTitle: title),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 11),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(AppRadius.sm),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
               ),
               child: Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(6),
+                    padding: const EdgeInsets.all(7),
                     decoration: BoxDecoration(
                       color: accent.withValues(alpha: 0.22),
                       shape: BoxShape.circle,
                     ),
                     child: _CategoryIcon(icon: category.icon),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 9),
                   Expanded(
                     child: Text(
                       title,

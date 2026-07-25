@@ -1,5 +1,6 @@
 // Section 1 — HomeHeader
-// Premium redesign: gradient avatar, pill location row, rounded notification
+// Premium redesign v2: refined typography, tappable location chip,
+// cohesive icon buttons. All original logic (FutureBuilder / resolvers) kept intact.
 
 import 'package:flutter/material.dart';
 import '../../config/app_design_system.dart';
@@ -19,23 +20,15 @@ class HomeHeader extends StatelessWidget {
         final profile = snapshot.data ?? const <String, String>{};
         final displayName = _resolveName(profile);
         final displayLocation = _resolveLocation(profile);
-        final avatarInitial = displayName.isNotEmpty
-            ? displayName[0].toUpperCase()
-            : 'U';
+        final avatarInitial =
+            displayName.isNotEmpty ? displayName[0].toUpperCase() : 'U';
 
         return Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // ── Logo container ────────────────────────────────────────────────
-            Container(
-              width: 110,
-              // height: 100,
-              // padding: const EdgeInsets.all(7),
-              // decoration: BoxDecoration(
-              //   color: AppColors.surface,
-              //   borderRadius: BorderRadius.circular(AppRadius.md),
-              //   boxShadow: AppShadows.card,
-              // ),
+            // ── Logo ──────────────────────────────────────────────────────────
+            SizedBox(
+              width: 104,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(AppRadius.xs),
                 child: Image.asset('assets/Logo.png', fit: BoxFit.contain),
@@ -48,9 +41,11 @@ class HomeHeader extends StatelessWidget {
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   // Greeting
                   RichText(
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     text: TextSpan(
                       children: [
@@ -58,57 +53,72 @@ class HomeHeader extends StatelessWidget {
                           text: 'Hello, $displayName ',
                           style: const TextStyle(
                             fontFamily: AppFonts.family,
-                            fontSize: 15,
+                            fontSize: 16,
                             fontWeight: FontWeight.w700,
                             color: AppColors.textPrimary,
-                            letterSpacing: 0,
+                            letterSpacing: -0.3,
+                            height: 1.15,
                           ),
                         ),
                         const TextSpan(
                           text: '👋',
-                          style: TextStyle(fontSize: 18),
+                          style: TextStyle(fontSize: 16),
                         ),
                       ],
                     ),
                   ),
 
-                  const SizedBox(height: 5),
+                  const SizedBox(height: 7),
 
-                  // Location row
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(
+                  // Location chip (tappable)
+                  Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(AppRadius.pill),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(AppRadius.pill),
+                      splashColor: AppColors.primary.withValues(alpha: 0.12),
+                      onTap: () {
+                        // TODO: open location picker
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(8, 5, 7, 5),
+                        decoration: BoxDecoration(
                           color: AppColors.primaryLight,
-                          shape: BoxShape.circle,
+                          borderRadius: BorderRadius.circular(AppRadius.pill),
                         ),
-                        child: const Icon(
-                          Icons.location_on_rounded,
-                          size: 11,
-                          color: AppColors.primary,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.location_on_rounded,
+                              size: 13,
+                              color: AppColors.primary,
+                            ),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                displayLocation,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontFamily: AppFonts.family,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textSecondary,
+                                  height: 1,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 1),
+                            const Icon(
+                              Icons.keyboard_arrow_down_rounded,
+                              size: 15,
+                              color: AppColors.primary,
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 5),
-                      Flexible(
-                        child: Text(
-                          displayLocation,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontFamily: AppFonts.family,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w500,
-                            color: AppColors.textSecondary,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 2),
-                      const Icon(
-                        Icons.keyboard_arrow_down_rounded,
-                        size: 16,
-                        color: AppColors.primary,
-                      ),
-                    ],
+                    ),
                   ),
                 ],
               ),
@@ -117,67 +127,46 @@ class HomeHeader extends StatelessWidget {
             const SizedBox(width: 10),
 
             // ── Notification bell ─────────────────────────────────────────────
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(AppRadius.sm),
-                    boxShadow: AppShadows.card,
-                  ),
-                  child: const Icon(
-                    Icons.notifications_none_rounded,
-                    color: AppColors.primary,
-                    size: 22,
-                  ),
-                ),
-                // Unread dot
-                Positioned(
-                  top: 9,
-                  right: 9,
-                  child: Container(
-                    width: 9,
-                    height: 9,
-                    decoration: BoxDecoration(
-                      color: AppColors.error,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: AppColors.surface, width: 1.5),
-                    ),
-                  ),
-                ),
-              ],
+            _IconButtonBox(
+              icon: Icons.notifications_none_rounded,
+              hasBadge: true,
+              onTap: () {
+                // TODO: open notifications
+              },
             ),
 
             const SizedBox(width: 10),
 
             // ── Avatar ────────────────────────────────────────────────────────
-            GestureDetector(
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AccountScreen()),
-              ),
-              child: Container(
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: const LinearGradient(
-                    colors: [AppColors.primary, AppColors.accent],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: AppColors.primary.withOpacity(0.35),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
+            Material(
+              color: Colors.transparent,
+              shape: const CircleBorder(),
+              child: InkWell(
+                customBorder: const CircleBorder(),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AccountScreen()),
                 ),
-                child: CircleAvatar(
-                  radius: 22,
-                  backgroundColor: Colors.transparent,
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(
+                      colors: [AppColors.primary, AppColors.accent],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    border: Border.all(color: AppColors.surface, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.35),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  alignment: Alignment.center,
                   child: Text(
                     avatarInitial,
                     style: const TextStyle(
@@ -224,5 +213,60 @@ class HomeHeader extends StatelessWidget {
 
     if (parts.isEmpty) return 'Location not set';
     return parts.join(', ');
+  }
+}
+
+// ── Reusable rounded icon button with optional unread badge ──────────────────
+class _IconButtonBox extends StatelessWidget {
+  const _IconButtonBox({
+    required this.icon,
+    this.hasBadge = false,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final bool hasBadge;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Material(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            child: Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+                border: Border.all(color: AppColors.border, width: 1),
+                boxShadow: AppShadows.card,
+              ),
+              alignment: Alignment.center,
+              child: Icon(icon, color: AppColors.primary, size: 22),
+            ),
+          ),
+        ),
+        if (hasBadge)
+          Positioned(
+            top: 9,
+            right: 9,
+            child: Container(
+              width: 9,
+              height: 9,
+              decoration: BoxDecoration(
+                color: AppColors.error,
+                shape: BoxShape.circle,
+                border: Border.all(color: AppColors.surface, width: 1.5),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 }

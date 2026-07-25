@@ -13,6 +13,7 @@ class SearchBarWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       height: 54,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
         color:        AppColors.surface,
         borderRadius: BorderRadius.circular(AppRadius.md),
@@ -22,7 +23,6 @@ class SearchBarWidget extends StatelessWidget {
       child: Row(
         children: [
           // ── Search icon ────────────────────────────────────────────────
-          const SizedBox(width: 16),
           const Icon(
             Icons.search_rounded,
             color: AppColors.primary,
@@ -35,6 +35,7 @@ class SearchBarWidget extends StatelessWidget {
           Expanded(
             child: TextField(
               onChanged: onChanged,
+              cursorColor: AppColors.primary,
               decoration: InputDecoration(
                 hintText: 'Search doctors, services, specialties...',
                 hintStyle: TextStyle(
@@ -55,26 +56,6 @@ class SearchBarWidget extends StatelessWidget {
               ),
             ),
           ),
-
-          // ── Filter pill button ─────────────────────────────────────────
-         
-            // child: Row(
-            //   mainAxisSize: MainAxisSize.min,
-            //   children: const [
-            //     Icon(Icons.tune_rounded, color: Colors.white, size: 15),
-            //     SizedBox(width: 5),
-            //     Text(
-            //       'Filter',
-            //       style: TextStyle(
-            //         fontFamily: AppFonts.family,
-            //         color:       Colors.white,
-            //         fontSize:    12.5,
-            //         fontWeight:  FontWeight.w600,
-            //       ),
-            //     ),
-            //   ],
-            // ),
-          
         ],
       ),
     );

@@ -154,14 +154,19 @@ class _ExploreSpecialtiesSectionState extends State<ExploreSpecialtiesSection> {
               _openAppointmentPage(context, showAllSpecialties: true),
         ),
         const SizedBox(height: AppSpacing.md),
-        SizedBox(height: 140, child: _buildContent(context)),
+        SizedBox(height: 148, child: _buildContent(context)),
       ],
     );
   }
 
   Widget _buildContent(BuildContext context) {
     if (_loadingSpecialties) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: CircularProgressIndicator(
+          strokeWidth: 2.5,
+          color: AppColors.primary,
+        ),
+      );
     }
 
     if (_specialtyError != null) {
@@ -219,8 +224,11 @@ class _SpecialtyCard extends StatelessWidget {
         splashColor: item.accent.withValues(alpha: 0.12),
         onTap: onTap,
         child: Container(
-          width: 108,
-          padding: const EdgeInsets.all(AppSpacing.md),
+          width: 112,
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm,
+            vertical: AppSpacing.md,
+          ),
           decoration: BoxDecoration(
             color: AppColors.surface,
             borderRadius: BorderRadius.circular(AppRadius.lg),
@@ -231,8 +239,8 @@ class _SpecialtyCard extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Container(
-                width: 52,
-                height: 52,
+                width: 54,
+                height: 54,
                 decoration: BoxDecoration(
                   color: item.bgColor,
                   shape: BoxShape.circle,

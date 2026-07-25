@@ -150,7 +150,12 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
     if (_loading) {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
-        child: Center(child: CircularProgressIndicator()),
+        child: Center(
+          child: CircularProgressIndicator(
+            strokeWidth: 2.5,
+            color: AppColors.primary,
+          ),
+        ),
       );
     }
 
@@ -182,9 +187,9 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
       gridDelegate:
           const SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount:   2,
-        crossAxisSpacing: 10,
-        mainAxisSpacing:  10,
-        childAspectRatio: 2.05,
+        crossAxisSpacing: 11,
+        mainAxisSpacing:  11,
+        childAspectRatio: 1.95,
       ),
       itemBuilder: (context, index) {
         return _ServiceTile(item: services[index]);
@@ -230,7 +235,7 @@ class _ServiceTile extends StatelessWidget {
       borderRadius: BorderRadius.circular(AppRadius.md),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.md),
-        splashColor:  item.accent.withOpacity(0.10),
+        splashColor:  item.accent.withValues(alpha: 0.10),
         onTap:        () => _openBookingForm(context),
         child: Container(
           padding: const EdgeInsets.all(AppSpacing.md),
@@ -244,8 +249,8 @@ class _ServiceTile extends StatelessWidget {
             children: [
               // Rounded-square icon container (distinct from circle in Sec 4)
               Container(
-                width:  44,
-                height: 44,
+                width:  46,
+                height: 46,
                 decoration: BoxDecoration(
                   color:        item.bgColor,
                   borderRadius: BorderRadius.circular(AppRadius.sm),
@@ -255,7 +260,7 @@ class _ServiceTile extends StatelessWidget {
                 ),
               ),
 
-              const SizedBox(width: AppSpacing.sm + 2),
+              const SizedBox(width: AppSpacing.sm + 3),
 
               // Text column
               Expanded(
