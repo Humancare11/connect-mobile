@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../config/app_design_system.dart';
 import 'home_page.dart';
 import 'appointments_screen.dart';
 import 'book_appointment_screen.dart';
+import 'my_records_screen.dart';
 import 'account_screen.dart';
 import '../widgets/footer/app_footer.dart';
 
@@ -30,18 +32,27 @@ class _MainScreenState extends State<MainScreen> {
   @override
   void initState() {
     super.initState();
-    selectedIndex = widget.initialIndex.clamp(0, 3);
+    selectedIndex = widget.initialIndex.clamp(0, 4);
     _pages = [
-      const HomeScreen(), // 0
+      // Built once here (not in build) so the tab keeps its State; the
+      // callback lets Home move the shell to the Appointments tab.
+      HomeScreen(
+        onOpenAppointments: () => setState(() => selectedIndex = 1),
+      ), // 0
       AppointmentsScreen(activityId: widget.appointmentId), // 1
       const AppointmentBookingPage(), // 2 (Book Button)
-      const AccountScreen(), // 3
+      // Records was previously an orphan screen with no route into it; the
+      // footer now exposes it as a tab. Account moved 3 → 4 as a result, which
+      // is safe because no caller passes initialIndex above 2.
+      const MyRecordsPage(), // 3
+      const AccountScreen(), // 4
     ];
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.background,
       body: IndexedStack(index: selectedIndex, children: _pages),
       // AppFooter's nav items now report indices directly in this same
       // page-index space (see app_footer.dart), so no translation is

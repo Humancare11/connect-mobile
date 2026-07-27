@@ -1,5 +1,6 @@
 // Section 2 — SearchBarWidget
-// Premium redesign: primary-tinted shadow, filter button, consistent font
+// Flat white field on the tinted page background: hairline border, soft lift,
+// muted icon so the placeholder rather than the chrome reads first.
 
 import 'package:flutter/material.dart';
 import '../../config/app_design_system.dart';
@@ -12,47 +13,43 @@ class SearchBarWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 54,
+      height: 52,
       padding: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
-        color:        AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border:       Border.all(color: AppColors.border, width: 1.2),
-        boxShadow:    AppShadows.card,
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.field),
+        border: Border.all(color: AppColors.border),
+        boxShadow: AppShadows.subtle,
       ),
       child: Row(
         children: [
-          // ── Search icon ────────────────────────────────────────────────
           const Icon(
             Icons.search_rounded,
-            color: AppColors.primary,
-            size:  22,
+            color: AppColors.textSecondary,
+            size: 20,
           ),
 
           const SizedBox(width: 10),
 
-          // ── Input field ────────────────────────────────────────────────
           Expanded(
             child: TextField(
               onChanged: onChanged,
               cursorColor: AppColors.primary,
               decoration: InputDecoration(
-                hintText: 'Search doctors, services, specialties...',
-                hintStyle: TextStyle(
-                  fontFamily: AppFonts.family,
-                  color:       AppColors.textTertiary,
-                  fontSize:    14,
-                  fontWeight:  FontWeight.w400,
+                hintText: 'Search doctors, services, specialties',
+                hintStyle: AppType.body(
+                  size: 14.5,
+                  weight: FontWeight.w400,
+                  color: AppColors.textTertiary,
                 ),
-                border:         InputBorder.none,
-                isDense:        true,
+                border: InputBorder.none,
+                isDense: true,
                 contentPadding: EdgeInsets.zero,
               ),
-              style: TextStyle(
-                fontFamily: AppFonts.family,
-                fontSize:   14,
-                fontWeight: FontWeight.w500,
-                color:      AppColors.textPrimary,
+              style: AppType.body(
+                size: 14.5,
+                weight: FontWeight.w500,
+                color: AppColors.textPrimary,
               ),
             ),
           ),
