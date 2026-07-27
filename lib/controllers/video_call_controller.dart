@@ -68,6 +68,16 @@ const int kMediaAcquireTimeoutMs = 20000;
 // Capped so a long outage can't grow this without bound (mirrors
 // VideoCall.jsx's TELEMETRY_QUEUE_MAX).
 const int kTelemetryQueueMax = 50;
+// Chat messages sent while we can't be sure join-appointment-room has
+// actually completed server-side are queued here and flushed once
+// appointment-chat-history confirms it — see _roomJoinConfirmed/
+// _flushChatQueue. Capped for the same reason as kTelemetryQueueMax.
+const int kChatQueueMax = 20;
+// ICE candidates received before the remote description is set are queued
+// here until it is. Capped for the same reason as kTelemetryQueueMax — a
+// long-delayed remote description (e.g. a stuck media-permission prompt)
+// shouldn't let this grow without bound; drops the oldest once full.
+const int kPendingCandidatesMax = 50;
 
 // Turns the stats already gathered by _startStatsCollection into a coarse,
 // user-facing quality bucket. Ported from VideoCall.jsx's
@@ -269,7 +279,6 @@ class VideoCallController extends ChangeNotifier {
   bool _makingOffer = false;
   bool _ignoreOffer = false;
   bool _settingRemoteAnswerPending = false;
-  bool _pendingOfferWhenStable = false;
   final List<dynamic> _pendingRemoteCandidates = [];
   Timer? _ignoreOfferResetTimer;
   final Random _idRng = Random();
@@ -306,6 +315,11 @@ class VideoCallController extends ChangeNotifier {
   // "Establishing secure connection..." from a later "Reconnecting..." on
   // the waiting overlay.
   bool hasConnectedOnce = false;
+  // Set when the connection drops (disconnected/failed) after having been
+  // up at least once, and consumed the next time either connection-state
+  // handler below reports "connected"/"completed" again — see
+  // _refreshRemoteStreamBinding.
+  bool _remoteRebindPending = false;
   bool retryingMedia = false;
 
   // ── Call lifecycle ────────────────────────────────────────────────────
@@ -335,6 +349,7 @@ class VideoCallController extends ChangeNotifier {
   MediaStream? _screenStream;
   bool _screenShareStartInProgress = false;
   bool _screenShareStopInProgress = false;
+  bool _reconnectInProgress = false;
   bool camError = false;
   String camErrorReason = '';
   // idle | checking | ready | failed — mirrors React's `deviceCheck.status`.
@@ -382,10 +397,22 @@ class VideoCallController extends ChangeNotifier {
     await fetchAppointment();
   }
 
+  List<ConnectivityResult> _lastConnectivityResults = const [];
+
+  bool _connectivityResultsChanged(
+    List<ConnectivityResult> a,
+    List<ConnectivityResult> b,
+  ) {
+    final setA = a.toSet();
+    final setB = b.toSet();
+    return setA.length != setB.length || !setA.containsAll(setB);
+  }
+
   Future<void> _initConnectivityWatch() async {
     try {
       final initial = await Connectivity().checkConnectivity();
       if (_disposed) return;
+      _lastConnectivityResults = initial;
       isOffline = initial.every((r) => r == ConnectivityResult.none);
       notifyListeners();
     } catch (_) {
@@ -396,9 +423,26 @@ class VideoCallController extends ChangeNotifier {
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       if (_disposed) return;
       final offline = results.every((r) => r == ConnectivityResult.none);
-      if (offline == isOffline) return;
-      isOffline = offline;
-      notifyListeners();
+      final networkChanged = _connectivityResultsChanged(
+        results,
+        _lastConnectivityResults,
+      );
+      _lastConnectivityResults = results;
+
+      if (offline != isOffline) {
+        isOffline = offline;
+        notifyListeners();
+      }
+
+      // A network handoff (e.g. WiFi -> cellular) can silently degrade an
+      // already-established connection well before libwebrtc's own ICE
+      // consent-check notices (that can take ~20-30s). Nudge a restart
+      // proactively instead of waiting it out — _scheduleIceRestart() is a
+      // no-op if the connection turns out fine by the time its own 2.5s
+      // debounce timer fires.
+      if (!offline && networkChanged && _pc != null) {
+        _scheduleIceRestart();
+      }
     });
   }
 
@@ -847,6 +891,25 @@ class VideoCallController extends ChangeNotifier {
     pipRenderer.srcObject = swapped ? _remoteStream : _localStream;
   }
 
+  // Recovering from a dropped connection (network switch, brief outage)
+  // reuses the SAME transceiver/track — pc.onTrack never fires again, so it
+  // never gets a chance to rebind the renderer. RTCVideoRenderer can fail
+  // to resume painting a track that stalled for a stretch of time even
+  // though the underlying MediaStream reference and its tracks never
+  // changed — force the renderer currently showing the remote stream to
+  // detach and reattach so it treats it as a genuine source change,
+  // mirroring the same fix VideoCall.jsx applies via a fresh MediaStream
+  // object. Called only on a genuine recovery (see _remoteRebindPending),
+  // never on the very first connect, which is already handled correctly by
+  // the real onTrack callback.
+  void _refreshRemoteStreamBinding() {
+    if (_disposed || _remoteStream == null) return;
+    final remoteRenderer = isSwapped ? pipRenderer : mainRenderer;
+    remoteRenderer.srcObject = null;
+    remoteRenderer.srcObject = _remoteStream;
+    _logEvent('remote_stream_rebind_after_recovery', {});
+  }
+
   Future<void> _handleTrack(RTCTrackEvent event, MediaStream remoteStream) async {
     final incoming = event.streams.isNotEmpty
         ? event.streams.expand((s) => s.getTracks()).toList()
@@ -926,6 +989,10 @@ class VideoCallController extends ChangeNotifier {
       _markInCall();
       final pc = _pc;
       if (pc != null) _startStatsCollection(pc);
+      if (_remoteRebindPending) {
+        _remoteRebindPending = false;
+        _refreshRemoteStreamBinding();
+      }
     } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnecting) {
       connectionState = 'connecting';
       notifyListeners();
@@ -935,6 +1002,7 @@ class VideoCallController extends ChangeNotifier {
       _logEvent('peer_connection_unhealthy', {'state': state.toString()});
       connectionState = 'disconnected';
       isRemoteConnected = false;
+      if (hasConnectedOnce) _remoteRebindPending = true;
       notifyListeners();
       _scheduleIceRestart();
     }
@@ -943,15 +1011,6 @@ class VideoCallController extends ChangeNotifier {
   void _handleSignalingStateChange(RTCSignalingState state) {
     if (_disposed) return;
     _logEvent('signaling_state_changed', {'state': state.toString()});
-    final pc = _pc;
-    // If an offer was requested while the pc was initializing, create it
-    // now that the signaling state is stable.
-    if (state == RTCSignalingState.RTCSignalingStateStable && _pendingOfferWhenStable && pc != null && !_makingOffer) {
-      _pendingOfferWhenStable = false;
-      if (isReady && peerJoined && !_isConnectedState(pc)) {
-        unawaited(_createAndSendOffer(iceRestart: inCall));
-      }
-    }
   }
 
   // Fallback for platforms where onConnectionState fires late or not at all.
@@ -972,6 +1031,10 @@ class VideoCallController extends ChangeNotifier {
       _markInCall();
       final pc = _pc;
       if (pc != null) _startStatsCollection(pc);
+      if (_remoteRebindPending) {
+        _remoteRebindPending = false;
+        _refreshRemoteStreamBinding();
+      }
     } else if (state == RTCIceConnectionState.RTCIceConnectionStateChecking) {
       if (!inCall) {
         connectionState = 'connecting';
@@ -982,11 +1045,13 @@ class VideoCallController extends ChangeNotifier {
       _logEvent('ice_connection_failed', {});
       connectionState = 'disconnected';
       isRemoteConnected = false;
+      if (hasConnectedOnce) _remoteRebindPending = true;
       notifyListeners();
       _scheduleIceRestart();
     } else if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
       _logEvent('ice_connection_disconnected', {});
       connectionState = 'connecting';
+      if (hasConnectedOnce) _remoteRebindPending = true;
       notifyListeners();
       _scheduleIceRestart();
     }
@@ -1088,7 +1153,6 @@ class VideoCallController extends ChangeNotifier {
       debugPrint('[video-call] offer skipped: signalingState=${pc.signalingState}');
       return false;
     }
-    _pendingOfferWhenStable = false;
 
     try {
       _makingOffer = true;
@@ -1273,10 +1337,16 @@ class VideoCallController extends ChangeNotifier {
   /// rejoins the room from scratch. Mirrors `forceReconnect`'s nonce bump in
   /// VideoCall.jsx.
   Future<void> forceReconnect() async {
+    if (_reconnectInProgress) return;
+    _reconnectInProgress = true;
     reconnectStalled = false;
     notifyListeners();
-    await _teardownSession(leaveRoom: false);
-    await startCallSession();
+    try {
+      await _teardownSession(leaveRoom: false);
+      await startCallSession();
+    } finally {
+      _reconnectInProgress = false;
+    }
   }
 
   /// No direct React equivalent (browser tabs don't get suspended the same
@@ -1286,11 +1356,33 @@ class VideoCallController extends ChangeNotifier {
   /// kicking the socket on resume starts recovery immediately instead of
   /// waiting out whatever backoff delay was in flight when the app was
   /// backgrounded.
+  bool _resumeReconnectInProgress = false;
+
   void handleAppResumed() {
     final pc = _pc;
     if (_disposed || pc == null) return;
     if (_isConnectedState(pc)) return;
-    _socket.connect();
+    if (_resumeReconnectInProgress) return;
+    unawaited(_reconnectAfterResume());
+  }
+
+  Future<void> _reconnectAfterResume() async {
+    _resumeReconnectInProgress = true;
+    try {
+      // The access token can have expired while backgrounded (15-minute
+      // TTL) — refresh it before reconnecting so the rejoin isn't rejected
+      // as unauthenticated. Non-fatal: proceed with whatever's in storage
+      // on failure, same as before this existed.
+      try {
+        await ApiService.instance.refreshAccessToken(isDoctor ? 'doctor' : 'user');
+      } catch (_) {
+        // Ignore — fall through with the existing stored token.
+      }
+      if (_disposed) return;
+      _socket.connect();
+    } finally {
+      _resumeReconnectInProgress = false;
+    }
   }
 
   Future<void> retryMediaPermissions() async {
@@ -1509,6 +1601,9 @@ class VideoCallController extends ChangeNotifier {
     final remoteDesc = await pc.getRemoteDescription();
     if (remoteDesc == null) {
       if (_ignoreOffer) return;
+      if (_pendingRemoteCandidates.length >= kPendingCandidatesMax) {
+        _pendingRemoteCandidates.removeAt(0);
+      }
       _pendingRemoteCandidates.add(candidateMap);
       return;
     }
@@ -1631,6 +1726,13 @@ class VideoCallController extends ChangeNotifier {
     messages
       ..clear()
       ..addAll(list.map((m) => ChatMessage.fromJson(Map<String, dynamic>.from(m as Map))));
+    // Only reached on a fully successful join (a denied join emits
+    // room-access-denied instead and never gets here) — the reliable signal
+    // that it's now safe to send queued chat, unlike socket.connected
+    // alone, which flips true well before the async, DB-backed join
+    // finishes processing server-side.
+    _roomJoinConfirmed = true;
+    _flushChatQueue();
     notifyListeners();
   }
 
@@ -1794,6 +1896,7 @@ class VideoCallController extends ChangeNotifier {
 
   void _handleSocketDisconnect(dynamic reason) {
     _joinedSocketId = '';
+    _roomJoinConfirmed = false;
     if (_disposed) return;
     _logEvent('socket_disconnected_during_call', {'inCall': inCall});
     connectionState = 'disconnected';
@@ -2059,12 +2162,26 @@ class VideoCallController extends ChangeNotifier {
     final senderId = currentUser['id'] ?? '';
     final senderName = currentUser['name'] ?? '';
     _logEvent('chat_send', {'text': trimmed.length > 50 ? '${trimmed.substring(0, 50)}...' : trimmed});
-    _socket.emit('appointment-message', {
+    final payload = {
       'appointmentId': appointmentId,
       'senderId': senderId,
       'senderName': senderName,
       'text': trimmed,
-    });
+    };
+    if (_socket.connected && _roomJoinConfirmed) {
+      _socket.emit('appointment-message', payload);
+    } else {
+      // Not confirmed joined yet (disconnected, or reconnecting but the
+      // server hasn't finished processing join-appointment-room) — queue
+      // instead of emitting now. socket_io_client would otherwise
+      // auto-buffer this and flush it before our own reconnect handler
+      // re-joins the room, which the server silently drops since it isn't
+      // a room member yet.
+      _chatQueue.add(payload);
+      if (_chatQueue.length > kChatQueueMax) {
+        _chatQueue.removeAt(0);
+      }
+    }
     chatSendCoolingDown = true;
     notifyListeners();
     _chatSendCooldownTimer?.cancel();
@@ -2181,6 +2298,7 @@ class VideoCallController extends ChangeNotifier {
     inCall = false;
     isRemoteConnected = false;
     hasConnectedOnce = false;
+    _remoteRebindPending = false;
     camError = false;
     camErrorReason = '';
     deviceCheckStatus = 'idle';
@@ -2338,6 +2456,23 @@ class VideoCallController extends ChangeNotifier {
     _telemetryQueue.clear();
     for (final payload in queued) {
       _socket.emit('video-telemetry', payload);
+    }
+  }
+
+  // True only once appointment-chat-history has confirmed join-appointment-room
+  // fully completed for the CURRENT connection — socket.connected alone isn't
+  // enough, since that flips true before the server's async, DB-backed join
+  // finishes processing (the exact race that used to silently drop a chat
+  // message sent right at reconnect). See _handleChatHistory/_flushChatQueue.
+  bool _roomJoinConfirmed = false;
+  final List<Map<String, dynamic>> _chatQueue = [];
+
+  void _flushChatQueue() {
+    if (!_socket.connected || _chatQueue.isEmpty) return;
+    final queued = List<Map<String, dynamic>>.from(_chatQueue);
+    _chatQueue.clear();
+    for (final payload in queued) {
+      _socket.emit('appointment-message', payload);
     }
   }
 
