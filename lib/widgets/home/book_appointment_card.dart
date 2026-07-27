@@ -137,9 +137,13 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
                   // there is not enough room for the pill's copy, and it would
                   // ellipsize.
                   Row(
+                    // spaceBetween, not a plain gap: the status line sizes to
+                    // its text, so without this the chevron would hug the end
+                    // of the copy instead of sitting against the card's edge.
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Flexible(
-                        child: _LivePill(
+                        child: _LiveStatus(
                           label: 'Available 24/7 · HIPAA Compliant',
                         ),
                       ),
@@ -414,47 +418,41 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
 
 // ── Hero sub-widgets ─────────────────────────────────────────────────────────
 
-class _LivePill extends StatelessWidget {
-  const _LivePill({required this.label});
+/// Availability line: a live dot and the label, with no chip behind it. A
+/// translucent pill on top of the gradient added a second edge competing with
+/// the card's own, which is why the design leaves the text bare.
+class _LiveStatus extends StatelessWidget {
+  const _LiveStatus({required this.label});
 
   final String label;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      // No outline — the design relies on the translucent fill alone, and a
-      // hairline border on a gradient reads as a seam rather than an edge.
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(AppRadius.pill),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: const BoxDecoration(
-              color: AppColors.teal,
-              shape: BoxShape.circle,
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 6,
+          height: 6,
+          decoration: const BoxDecoration(
+            color: AppColors.teal,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 7),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppType.body(
+              size: 11.5,
+              weight: FontWeight.w600,
+              color: const Color(0xFFEDEFFB),
             ),
           ),
-          const SizedBox(width: 7),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppType.body(
-                size: 11,
-                weight: FontWeight.w500,
-                color: const Color(0xFFEDEFFB),
-              ),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

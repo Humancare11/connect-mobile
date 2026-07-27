@@ -335,8 +335,24 @@ class _ServiceIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final value = icon.trim();
+
     if (value.isNotEmpty && _isGlyph(value)) {
       return Text(value, style: const TextStyle(fontSize: 20, height: 1));
+    }
+
+    // ServicePrice.icon is free text, and ServiceModel also fills it from
+    // `iconUrl`/`image`, so it can legitimately hold a URL. Fall through to the
+    // name-derived icon if the image fails rather than leaving a blank tile.
+    final uri = Uri.tryParse(value);
+    if (uri != null && uri.hasScheme && uri.host.isNotEmpty) {
+      return Image.network(
+        value,
+        width: 22,
+        height: 22,
+        fit: BoxFit.contain,
+        errorBuilder: (_, _, _) =>
+            Icon(_iconForName(name), size: 21, color: color),
+      );
     }
 
     return Icon(_iconForName(name), size: 21, color: color);
