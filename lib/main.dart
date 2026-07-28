@@ -17,6 +17,21 @@ Future<void> main() async {
 
   const appEnv = String.fromEnvironment('APP_ENV', defaultValue: 'local');
 
+  // 'local' is the unset default meant for `flutter run` during development.
+  // A release build is only ever produced to hand to testers or to ship, so
+  // silently falling back to 'local' (-> .env -> the UAT backend) there would
+  // mean a `flutter build ... --release` run without an explicit --dart-define
+  // ships pointing at the wrong backend without anyone noticing. Fail loudly
+  // instead: release builds must explicitly choose 'uat' (staging release) or
+  // 'production'.
+  if (kReleaseMode && appEnv == 'local') {
+    throw StateError(
+      'Release builds must set APP_ENV explicitly (it defaults to "local", '
+      'which is for `flutter run` only). Build with '
+      '--dart-define=APP_ENV=production (or =uat for a staging release).',
+    );
+  }
+
   final envFile = switch (appEnv) {
     'production' => '.env.production',
     'uat' => '.env.uat',

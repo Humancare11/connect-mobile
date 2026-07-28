@@ -159,7 +159,7 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
           const Text("Category", style: TextStyle(fontWeight: FontWeight.w800)),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
-            value: category,
+            initialValue: category,
             items: categories.map((c) {
               return DropdownMenuItem<String>(
                 value: c["value"],
@@ -676,6 +676,7 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
 
     await _saveTickets();
 
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -862,7 +863,7 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
       borderRadius: BorderRadius.circular(18),
       boxShadow: [
         BoxShadow(
-          color: Colors.black.withOpacity(0.04),
+          color: Colors.black.withValues(alpha: 0.04),
           blurRadius: 12,
           offset: const Offset(0, 6),
         ),

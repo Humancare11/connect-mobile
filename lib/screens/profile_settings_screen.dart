@@ -223,7 +223,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.55),
+        color: Colors.white.withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: Colors.white),
       ),
@@ -385,7 +385,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
         _label("Gender"),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
-          value: gender.isEmpty ? null : gender,
+          initialValue: gender.isEmpty ? null : gender,
           items: const [
             DropdownMenuItem(value: "Male", child: Text("Male")),
             DropdownMenuItem(value: "Female", child: Text("Female")),
@@ -415,7 +415,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
             width: double.infinity,
             padding: const EdgeInsets.all(15),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.65),
+              color: Colors.white.withValues(alpha: 0.65),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: Colors.black12),
             ),
@@ -507,14 +507,14 @@ class _EditProfilePageState extends State<EditProfilePage> {
       ),
       hintText: hint,
       filled: true,
-      fillColor: Colors.white.withOpacity(0.65),
+      fillColor: Colors.white.withValues(alpha: 0.65),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
         borderSide: BorderSide.none,
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: Colors.black.withOpacity(0.08)),
+        borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.08)),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
@@ -755,12 +755,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   BoxDecoration _glassBox() {
     return BoxDecoration(
-      color: Colors.white.withOpacity(0.75),
+      color: Colors.white.withValues(alpha: 0.75),
       borderRadius: BorderRadius.circular(22),
       border: Border.all(color: Colors.white),
       boxShadow: [
         BoxShadow(
-          color: Colors.blue.withOpacity(0.08),
+          color: Colors.blue.withValues(alpha: 0.08),
           blurRadius: 24,
           offset: const Offset(0, 8),
         ),

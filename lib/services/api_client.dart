@@ -17,6 +17,16 @@ class ApiClient {
   final http.Client _client;
   final TokenStorageService _tokenStorage;
 
+  // debugPrint() (unlike assert) still runs in release builds, and request/
+  // response bodies here carry patient PII/medical data beyond what
+  // _redactSecrets covers (only token/secret/authorization keys are
+  // redacted). Gating on kDebugMode keeps these logs for local development
+  // without writing that data to the release build's system log (readable
+  // via `adb logcat`).
+  void _log(String message) {
+    if (kDebugMode) debugPrint(message);
+  }
+
   Future<ApiResult<Map<String, dynamic>>> post(
     String path,
     Map<String, dynamic> body,
@@ -32,7 +42,7 @@ class ApiClient {
       };
 
       final uri = Uri.parse('${ApiConfig.baseUrl}$path');
-      debugPrint(
+      _log(
         'POST $uri authToken=${token.isNotEmpty ? "present" : "missing"} '
         'body=${jsonEncode(_redactSecrets(body))}',
       );
@@ -63,7 +73,7 @@ class ApiClient {
       if (params != null && params.isNotEmpty) {
         uri = uri.replace(queryParameters: params);
       }
-      debugPrint('GET $uri');
+      _log('GET $uri');
 
       final response = await _client
           .get(uri, headers: headers)
@@ -89,7 +99,7 @@ class ApiClient {
       };
 
       final uri = Uri.parse('${ApiConfig.baseUrl}$path');
-      debugPrint('PUT $uri');
+      _log('PUT $uri');
 
       final response = await _client
           .put(uri, headers: headers, body: jsonEncode(body))
@@ -115,7 +125,7 @@ class ApiClient {
       };
 
       final uri = Uri.parse('${ApiConfig.baseUrl}$path');
-      debugPrint('PATCH $uri');
+      _log('PATCH $uri');
 
       final response = await _client
           .patch(uri, headers: headers, body: jsonEncode(body))
@@ -179,8 +189,8 @@ class ApiClient {
     String path,
     http.Response response,
   ) {
-    debugPrint('$method $path status: ${response.statusCode}');
-    debugPrint(
+    _log('$method $path status: ${response.statusCode}');
+    _log(
       '$method $path raw response: ${_redactedResponseBody(response.body)}',
     );
 
@@ -200,7 +210,7 @@ class ApiClient {
         statusCode: response.statusCode,
       );
     } on FormatException catch (error) {
-      debugPrint('$method $path invalid JSON: $error');
+      _log('$method $path invalid JSON: $error');
       return ApiResult<Map<String, dynamic>>(
         success: false,
         message: _unexpectedResponseMessage(response),
@@ -232,8 +242,8 @@ class ApiClient {
     Object error,
     StackTrace stackTrace,
   ) {
-    debugPrint('$method $path failed: $error');
-    debugPrint('$stackTrace');
+    _log('$method $path failed: $error');
+    _log('$stackTrace');
 
     return ApiResult<Map<String, dynamic>>(
       success: false,

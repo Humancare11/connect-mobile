@@ -84,6 +84,9 @@ dependencies:
   # mirrors VideoCall.jsx's window online/offline listeners, which have no
   # direct Flutter equivalent.
   connectivity_plus: ^6.1.5
+  # Opens the privacy policy link from the Account screen in an external
+  # browser (Play Store requires a reachable privacy policy).
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:

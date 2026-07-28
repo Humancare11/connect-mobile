@@ -50,13 +50,13 @@ class AppFooter extends StatelessWidget {
                   borderRadius: BorderRadius.circular(26),
                   boxShadow: [
                     BoxShadow(
-                      color:      _primary.withOpacity(0.10),
+                      color:      _primary.withValues(alpha: 0.10),
                       blurRadius: 24,
                       spreadRadius: 0,
                       offset:     const Offset(0, 4),
                     ),
                     BoxShadow(
-                      color:      _primary.withOpacity(0.06),
+                      color:      _primary.withValues(alpha: 0.06),
                       blurRadius: 8,
                       offset:     const Offset(0, -2),
                     ),
@@ -139,7 +139,7 @@ class AppFooter extends StatelessWidget {
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color:        _primary.withOpacity(0.38),
+                              color:        _primary.withValues(alpha: 0.38),
                               blurRadius:   18,
                               spreadRadius: 0,
                               offset:       const Offset(0, 7),

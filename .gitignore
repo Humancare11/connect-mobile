@@ -8,6 +8,7 @@
 *.class
 *.log
 *.pyc
+webrtc_internals_dump*
 *.swp
 .DS_Store
 .atom/

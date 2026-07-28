@@ -112,11 +112,11 @@ class TicketService {
 
     return ApiResult<List<Map<String, dynamic>>>(
       success: false,
-      message: lastFailure?.message.isNotEmpty == true
-          ? lastFailure!.message
+      message: lastFailure.message.isNotEmpty == true
+          ? lastFailure.message
           : 'Unable to load tickets.',
-      raw: lastFailure?.raw ?? const <String, dynamic>{},
-      statusCode: lastFailure?.statusCode ?? 0,
+      raw: lastFailure.raw,
+      statusCode: lastFailure.statusCode,
     );
   }
 

@@ -325,7 +325,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   height: 180,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _primary.withOpacity(0.06),
+                    color: _primary.withValues(alpha: 0.06),
                   ),
                 ),
               ),
@@ -339,7 +339,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   height: 140,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: _primary.withOpacity(0.04),
+                    color: _primary.withValues(alpha: 0.04),
                   ),
                 ),
               ),
@@ -465,7 +465,7 @@ class _LoginScreenState extends State<LoginScreen> {
               _label('Gender'),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                value: _selectedGender.isEmpty ? null : _selectedGender,
+                initialValue: _selectedGender.isEmpty ? null : _selectedGender,
                 decoration: _inputDecoration(
                   hint: 'Select gender',
                   icon: Icons.wc_outlined,
@@ -482,7 +482,7 @@ class _LoginScreenState extends State<LoginScreen> {
               _label('Country'),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                value: _selectedCountry.isEmpty ? null : _selectedCountry,
+                initialValue: _selectedCountry.isEmpty ? null : _selectedCountry,
                 decoration: _inputDecoration(
                   hint: 'Select country',
                   icon: Icons.public_outlined,
@@ -544,15 +544,15 @@ class _LoginScreenState extends State<LoginScreen> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.black.withOpacity(0.04)),
+        border: Border.all(color: Colors.black.withValues(alpha: 0.04)),
         boxShadow: [
           BoxShadow(
-            color: _primary.withOpacity(0.06),
+            color: _primary.withValues(alpha: 0.06),
             blurRadius: 30,
             offset: const Offset(0, 12),
           ),
           BoxShadow(
-            color: Colors.black.withOpacity(0.03),
+            color: Colors.black.withValues(alpha: 0.03),
             blurRadius: 8,
             offset: const Offset(0, 2),
           ),
@@ -677,7 +677,7 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: Colors.black.withOpacity(0.06)),
+        borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.06)),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
@@ -794,7 +794,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ? []
                 : [
                     BoxShadow(
-                      color: _primary.withOpacity(0.35),
+                      color: _primary.withValues(alpha: 0.35),
                       blurRadius: 18,
                       offset: const Offset(0, 8),
                     ),
@@ -845,7 +845,7 @@ class _LoginScreenState extends State<LoginScreen> {
     return Row(
       children: [
         Expanded(
-          child: Container(height: 1, color: Colors.black.withOpacity(0.08)),
+          child: Container(height: 1, color: Colors.black.withValues(alpha: 0.08)),
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -855,13 +855,13 @@ class _LoginScreenState extends State<LoginScreen> {
               fontFamily: 'Satoshi',
               fontSize: 11,
               fontWeight: FontWeight.w700,
-              color: Colors.black.withOpacity(0.4),
+              color: Colors.black.withValues(alpha: 0.4),
               letterSpacing: 1,
             ),
           ),
         ),
         Expanded(
-          child: Container(height: 1, color: Colors.black.withOpacity(0.08)),
+          child: Container(height: 1, color: Colors.black.withValues(alpha: 0.08)),
         ),
       ],
     );
@@ -889,7 +889,7 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.black.withOpacity(0.1)),
+              border: Border.all(color: Colors.black.withValues(alpha: 0.1)),
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -977,7 +977,7 @@ class _LoginScreenState extends State<LoginScreen> {
             fontFamily: 'Satoshi',
             fontSize: 14,
             fontWeight: FontWeight.w500,
-            color: Colors.black.withOpacity(0.6),
+            color: Colors.black.withValues(alpha: 0.6),
           ),
         ),
         GestureDetector(

@@ -19,10 +19,12 @@ String _getDobError(String dob) {
   if (dob.isEmpty) return 'Select Date of Birth';
   final parsed = DateTime.tryParse(dob);
   if (parsed == null) return 'Enter a valid Date of Birth';
-  if (parsed.isAfter(DateTime.now()))
+  if (parsed.isAfter(DateTime.now())) {
     return 'Date of Birth cannot be in the future';
-  if (parsed.isBefore(DateTime(1900)))
+  }
+  if (parsed.isBefore(DateTime(1900))) {
     return 'Date of Birth must be in or after 1900';
+  }
   return '';
 }
 
@@ -849,7 +851,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: Colors.black.withOpacity(0.09)),
+        borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.09)),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(14),
@@ -1057,8 +1059,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
               final val = v?.trim() ?? '';
               if (val.isEmpty) return 'Enter your full name';
               if (val.length < 2) return 'Please enter your full name';
-              if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(val))
+              if (!RegExp(r'^[a-zA-Z\s]+$').hasMatch(val)) {
                 return 'Name must contain only letters';
+              }
               return null;
             },
           ),
@@ -1072,8 +1075,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
             decoration: _dec(label: 'Email Address', icon: Icons.mail_outline),
             validator: (v) {
               if ((v?.trim() ?? '').isEmpty) return 'Enter your email address';
-              if (!AuthValidators.isValidEmail(v!))
+              if (!AuthValidators.isValidEmail(v!)) {
                 return 'Enter a valid email address';
+              }
               return null;
             },
           ),
@@ -1378,8 +1382,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
             ),
             validator: (v) {
               if ((v?.trim() ?? '').isEmpty) return 'Confirm your password';
-              if (v != _passwordController.text)
+              if (v != _passwordController.text) {
                 return 'Passwords do not match';
+              }
               return null;
             },
           ),
@@ -1420,7 +1425,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 backgroundColor: const Color(0xff1a3a5c),
                 disabledBackgroundColor: const Color(
                   0xff1a3a5c,
-                ).withOpacity(0.6),
+                ).withValues(alpha: 0.6),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(14),
                 ),
@@ -1629,7 +1634,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.05),
+                color: Colors.black.withValues(alpha: 0.05),
                 blurRadius: 16,
                 offset: const Offset(0, 6),
               ),

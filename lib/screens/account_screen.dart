@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../services/auth_repository.dart';
 import 'profile_settings_screen.dart';
@@ -12,7 +13,6 @@ import 'login_screen.dart';
 // everywhere. Tweak these two values to shift the whole screen's tone.
 class _Palette {
   static const Color darkBlue = Color(0xff0B2545);
-  static const Color darkBlueSoft = Color(0xff13355E);
   static const Color background = Color(0xffF5F7FB);
   static const Color card = Colors.white;
   static const Color iconBg = Color(0xffEAF0FA);
@@ -25,7 +25,26 @@ class _Palette {
 class AccountScreen extends StatelessWidget {
   const AccountScreen({super.key, this.authRepository});
 
+  static final Uri _privacyPolicyUri = Uri.parse(
+    'https://humancareconnect.co/privacy',
+  );
+
   final AuthRepository? authRepository;
+
+  Future<void> _openPrivacyPolicy(BuildContext context) async {
+    final launched = await launchUrl(
+      _privacyPolicyUri,
+      mode: LaunchMode.externalApplication,
+    );
+
+    if (!launched && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to open the privacy policy right now.'),
+        ),
+      );
+    }
+  }
 
   Future<void> _confirmLogout(BuildContext context) async {
     final confirmed = await showDialog<bool>(
@@ -122,6 +141,12 @@ class AccountScreen extends StatelessWidget {
         title: 'FAQs',
         subtitle: 'Answers to common questions',
         builder: (_) => const FaqScreen(),
+      ),
+      _AccountOption(
+        icon: Icons.privacy_tip_outlined,
+        title: 'Privacy Policy',
+        subtitle: 'How we handle your data',
+        onTap: () => _openPrivacyPolicy(context),
       ),
     ];
 
@@ -238,7 +263,15 @@ class _AccountTile extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: () {
-          Navigator.push(context, MaterialPageRoute(builder: option.builder));
+          final onTap = option.onTap;
+          if (onTap != null) {
+            onTap();
+            return;
+          }
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: option.builder!),
+          );
         },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -325,12 +358,18 @@ class _AccountOption {
   final IconData icon;
   final String title;
   final String subtitle;
-  final WidgetBuilder builder;
+  final WidgetBuilder? builder;
+  final VoidCallback? onTap;
 
   const _AccountOption({
     required this.icon,
     required this.title,
     required this.subtitle,
-    required this.builder,
-  });
+    this.builder,
+    this.onTap,
+  }) : assert(
+         builder != null || onTap != null,
+         'Provide either builder (in-app navigation) or onTap (e.g. an '
+         'external link).',
+       );
 }

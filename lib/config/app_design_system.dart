@@ -141,7 +141,7 @@ abstract class AppShadows {
   /// Subtle card lift — white cards on #F7F9FC background.
   static List<BoxShadow> get card => [
     BoxShadow(
-      color:      AppColors.primary.withOpacity(0.07),
+      color:      AppColors.primary.withValues(alpha: 0.07),
       blurRadius: 16,
       offset:     const Offset(0, 6),
     ),
@@ -150,7 +150,7 @@ abstract class AppShadows {
   /// Elevated CTA card — hero sections, gradient cards.
   static List<BoxShadow> get elevated => [
     BoxShadow(
-      color:      AppColors.primary.withOpacity(0.28),
+      color:      AppColors.primary.withValues(alpha: 0.28),
       blurRadius: 28,
       offset:     const Offset(0, 12),
     ),
@@ -159,7 +159,7 @@ abstract class AppShadows {
   /// Micro-lift — grid items, small tiles.
   static List<BoxShadow> get subtle => [
     BoxShadow(
-      color:      AppColors.primary.withOpacity(0.05),
+      color:      AppColors.primary.withValues(alpha: 0.05),
       blurRadius: 8,
       offset:     const Offset(0, 3),
     ),
