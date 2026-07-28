@@ -6,6 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 
 import 'firebase_options.dart';
 import 'config/api_config.dart';
+import 'config/app_design_system.dart';
 import 'screens/auth_gate_screen.dart';
 import 'screens/book_appointment_form_screen.dart';
 import 'screens/book_appointment_payment_screen.dart';
@@ -104,6 +105,18 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       navigatorKey: NotificationService.navigatorKey,
       debugShowCheckedModeBanner: false,
+      // Screens that set no explicit fontFamily inherit Inter from here.
+      // Headings opt into Plus Jakarta Sans via AppType.display.
+      theme: ThemeData(
+        useMaterial3: true,
+        scaffoldBackgroundColor: AppColors.background,
+        fontFamily: AppFonts.body,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: AppColors.primary,
+          primary: AppColors.primary,
+          surface: AppColors.surface,
+        ),
+      ),
       home: const AuthGateScreen(),
       routes: {
         "/appointment-form": (context) => const AppointmentFormPage(),

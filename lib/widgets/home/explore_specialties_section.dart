@@ -1,3 +1,11 @@
+// Section 5 — ExploreSpecialtiesSection
+//
+// Horizontally scrolling row of narrow specialty tiles. The row deliberately
+// bleeds past the page gutter (the header is padded, the list is not) so cards
+// run to the screen edge and read as scrollable; the list applies the gutter as
+// its own leading/trailing padding to keep the first and last card aligned with
+// everything else.
+
 import 'package:flutter/material.dart';
 
 import '../../config/app_design_system.dart';
@@ -38,27 +46,6 @@ class _ExploreSpecialtiesSectionState extends State<ExploreSpecialtiesSection> {
   String? _specialtyError;
   List<_SpecialtyItem> _specialties = const [];
 
-  static const List<Color> _accentColors = [
-    AppColors.catHeart,
-    AppColors.catBrain,
-    AppColors.catMental,
-    AppColors.catWomen,
-    AppColors.catChild,
-    AppColors.catRespire,
-    AppColors.catGenetics,
-    AppColors.catBones,
-  ];
-
-  static const List<Color> _bgColors = [
-    Color(0xFFEFF6FF),
-    Color(0xFFF5EFFF),
-    Color(0xFFEFFAF6),
-    Color(0xFFFFF0F6),
-    Color(0xFFFFFBEB),
-    Color(0xFFF0FFF3),
-    Color(0xFFEFF9FF),
-  ];
-
   @override
   void initState() {
     super.initState();
@@ -93,14 +80,16 @@ class _ExploreSpecialtiesSectionState extends State<ExploreSpecialtiesSection> {
         final name = specialty.name.trim();
         if (name.isEmpty) continue;
 
-        final index = items.length;
+        // Accent/tint are cycled positionally and always taken from the same
+        // index, so an icon tile's background and its ink stay a matched pair.
+        final index = items.length % AppColors.accentInks.length;
         items.add(
           _SpecialtyItem(
             icon: specialty.icon,
-            title: _displayTitle(name),
+            title: name,
             appointmentName: name,
-            accent: _accentColors[index % _accentColors.length],
-            bgColor: _bgColors[index % _bgColors.length],
+            accent: AppColors.accentInks[index],
+            bgColor: AppColors.accentTints[index],
           ),
         );
       }
@@ -116,14 +105,6 @@ class _ExploreSpecialtiesSectionState extends State<ExploreSpecialtiesSection> {
       return _normalizeSearchText(item.title).contains(query) ||
           _normalizeSearchText(item.appointmentName).contains(query);
     }).toList();
-  }
-
-  String _displayTitle(String value) {
-    final words = value.replaceAll(RegExp(r'\s+'), ' ').trim().split(' ');
-    if (words.length < 2 || value.length <= 12) return value;
-
-    final midpoint = (words.length / 2).ceil();
-    return '${words.take(midpoint).join(' ')}\n${words.skip(midpoint).join(' ')}';
   }
 
   void _openAppointmentPage(
@@ -147,14 +128,17 @@ class _ExploreSpecialtiesSectionState extends State<ExploreSpecialtiesSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        AppSectionHeader(
-          title: 'Explore Specialties',
-          seeAllLabel: 'See all',
-          onSeeAll: () =>
-              _openAppointmentPage(context, showAllSpecialties: true),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.gutter),
+          child: AppSectionHeader(
+            title: 'Explore specialties',
+            seeAllLabel: 'See all',
+            onSeeAll: () =>
+                _openAppointmentPage(context, showAllSpecialties: true),
+          ),
         ),
         const SizedBox(height: AppSpacing.md),
-        SizedBox(height: 148, child: _buildContent(context)),
+        SizedBox(height: 124, child: _buildContent(context)),
       ],
     );
   }
@@ -162,50 +146,63 @@ class _ExploreSpecialtiesSectionState extends State<ExploreSpecialtiesSection> {
   Widget _buildContent(BuildContext context) {
     if (_loadingSpecialties) {
       return const Center(
-        child: CircularProgressIndicator(
-          strokeWidth: 2.5,
-          color: AppColors.primary,
+        child: SizedBox(
+          width: 22,
+          height: 22,
+          child: CircularProgressIndicator(
+            strokeWidth: 2.5,
+            color: AppColors.primary,
+          ),
         ),
       );
     }
 
     if (_specialtyError != null) {
-      return _InlineState(
-        message: _specialtyError!.isEmpty
-            ? 'Unable to load specialties.'
-            : _specialtyError!,
-        actionLabel: 'Retry',
-        onAction: _loadSpecialties,
+      return _gutter(
+        _InlineState(
+          message: _specialtyError!.isEmpty
+              ? 'Unable to load specialties.'
+              : _specialtyError!,
+          actionLabel: 'Retry',
+          onAction: _loadSpecialties,
+        ),
       );
     }
 
     final specialties = _filteredSpecialties;
 
     if (specialties.isEmpty) {
-      if (_specialties.isNotEmpty && widget.searchQuery.trim().isNotEmpty) {
-        return const _InlineState(message: 'No specialties match your search.');
-      }
-
-      return const _InlineState(message: 'No specialties available.');
+      final searched =
+          _specialties.isNotEmpty && widget.searchQuery.trim().isNotEmpty;
+      return _gutter(
+        _InlineState(
+          message: searched
+              ? 'No specialties match your search.'
+              : 'No specialties available.',
+        ),
+      );
     }
 
     return ListView.separated(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.gutter),
       itemCount: specialties.length,
-      separatorBuilder: (_, _) => const SizedBox(width: 10),
+      separatorBuilder: (_, _) => const SizedBox(width: 12),
       itemBuilder: (context, index) {
         final item = specialties[index];
         return _SpecialtyCard(
           item: item,
-          onTap: () => _openAppointmentPage(
-            context,
-            specialtyName: item.appointmentName,
-          ),
+          onTap: () =>
+              _openAppointmentPage(context, specialtyName: item.appointmentName),
         );
       },
     );
   }
+
+  Widget _gutter(Widget child) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: AppSpacing.gutter),
+    child: child,
+  );
 }
 
 class _SpecialtyCard extends StatelessWidget {
@@ -216,75 +213,66 @@ class _SpecialtyCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(AppRadius.lg),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppRadius.lg),
-        splashColor: item.accent.withValues(alpha: 0.12),
+    return SizedBox(
+      width: 92,
+      child: AppCard(
         onTap: onTap,
-        child: Container(
-          width: 112,
-          padding: const EdgeInsets.symmetric(
-            horizontal: AppSpacing.sm,
-            vertical: AppSpacing.md,
-          ),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(AppRadius.lg),
-            border: Border.all(color: AppColors.border, width: 1.2),
-            boxShadow: AppShadows.card,
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 54,
-                height: 54,
-                decoration: BoxDecoration(
-                  color: item.bgColor,
-                  shape: BoxShape.circle,
-                ),
-                child: Center(child: _SpecialtyIcon(icon: item.icon)),
+        padding: const EdgeInsets.fromLTRB(10, 16, 10, 14),
+        splashColor: item.accent.withValues(alpha: 0.12),
+        child: Column(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: item.bgColor,
+                borderRadius: BorderRadius.circular(AppRadius.md),
               ),
-              const SizedBox(height: AppSpacing.sm + 2),
-              Text(
+              alignment: Alignment.center,
+              child: _SpecialtyIcon(icon: item.icon, color: item.accent),
+            ),
+            const SizedBox(height: 10),
+            Expanded(
+              child: Text(
                 item.title,
                 textAlign: TextAlign.center,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontFamily: AppFonts.family,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
+                style: AppType.body(
+                  size: 11.5,
+                  weight: FontWeight.w600,
                   color: AppColors.textPrimary,
                   height: 1.25,
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
+/// Specialty icons arrive from the backend as a string (usually an emoji).
+/// Falls back to a neutral glyph tinted with the tile's accent so an entry
+/// with no icon still fills its tile instead of leaving a blank square.
 class _SpecialtyIcon extends StatelessWidget {
-  const _SpecialtyIcon({required this.icon});
+  const _SpecialtyIcon({required this.icon, required this.color});
 
   final String icon;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
     final value = icon.trim();
     if (value.isEmpty) {
-      return const SizedBox.shrink();
+      return Icon(Icons.local_hospital_outlined, size: 22, color: color);
     }
 
     return Text(
       value,
       textAlign: TextAlign.center,
-      style: const TextStyle(fontSize: 24, height: 1),
+      style: const TextStyle(fontSize: 22, height: 1),
     );
   }
 }
@@ -304,8 +292,8 @@ class _InlineState extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(AppRadius.lg),
-        border: Border.all(color: AppColors.border, width: 1.2),
-        boxShadow: AppShadows.card,
+        border: Border.all(color: AppColors.border),
+        boxShadow: AppShadows.subtle,
       ),
       child: Row(
         children: [
@@ -314,12 +302,7 @@ class _InlineState extends StatelessWidget {
               message,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontFamily: AppFonts.family,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: AppColors.textSecondary,
-              ),
+              style: AppType.body(size: 12),
             ),
           ),
           if (actionLabel != null && onAction != null) ...[

@@ -1,11 +1,11 @@
 // Section 6 — MedicalServicesSection
-// Premium redesign: 2-col grid, rounded square icon containers with
-// per-service soft bg, subtitle row, consistent shadows + border.
-// Visually distinct from BookByService (circle icons, no subtitle)
-// and ExploreSpecialties (horizontal scroll).
 //
-// Services are fetched from GET /api/services at runtime instead of
-// being hardcoded.
+// Two-column grid of service tiles, stacked (icon above text) rather than the
+// side-by-side row used by the specialty strip, so the two sections stay
+// visually distinct while sharing the same card treatment.
+//
+// Services are fetched from GET /api/services at runtime instead of being
+// hardcoded.
 
 import 'package:flutter/material.dart';
 import '../../config/app_design_system.dart';
@@ -42,8 +42,7 @@ class MedicalServicesSection extends StatefulWidget {
   final String searchQuery;
 
   @override
-  State<MedicalServicesSection> createState() =>
-      _MedicalServicesSectionState();
+  State<MedicalServicesSection> createState() => _MedicalServicesSectionState();
 }
 
 class _MedicalServicesSectionState extends State<MedicalServicesSection> {
@@ -52,26 +51,6 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
   bool _loading = true;
   String? _error;
   List<_MedService> _services = const [];
-
-  // Cycled per-tile accent/background pair — mirrors the original
-  // hardcoded palette since the backend does not provide colors.
-  static const List<Color> _accentColors = [
-    Color(0xFF4CC3B3),
-    Color(0xFFF5B74E),
-    AppColors.catBrain,
-    Color(0xFF5B9EFF),
-    Color(0xFFFF7FA3),
-    Color(0xFF63C06B),
-  ];
-
-  static const List<Color> _bgColors = [
-    Color(0xFFEFF9F7),
-    Color(0xFFFFF9EE),
-    Color(0xFFF5EFFF),
-    Color(0xFFEFF5FF),
-    Color(0xFFFFF0F4),
-    Color(0xFFEFF8EF),
-  ];
 
   @override
   void initState() {
@@ -101,7 +80,9 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
   List<_MedService> _buildServices(List<ServiceModel> services) {
     final items = <_MedService>[];
     for (final service in services) {
-      final index = items.length;
+      // Same paired accent/tint cycling as the specialty strip — the backend
+      // does not send colors, so position decides the hue.
+      final index = items.length % AppColors.accentInks.length;
       items.add(
         _MedService(
           id: service.id,
@@ -109,8 +90,8 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
           title: service.name,
           subtitle: service.description,
           price: service.price,
-          accent: _accentColors[index % _accentColors.length],
-          bgColor: _bgColors[index % _bgColors.length],
+          accent: AppColors.accentInks[index],
+          bgColor: AppColors.accentTints[index],
         ),
       );
     }
@@ -132,11 +113,10 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── Section header ─────────────────────────────────────────────────
         AppSectionHeader(
-          title:       'Our Medical Services',
+          title: 'Medical services',
           seeAllLabel: 'View all',
-          onSeeAll:    () {},
+          onSeeAll: () {},
         ),
 
         const SizedBox(height: AppSpacing.md),
@@ -151,9 +131,13 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
       return const Padding(
         padding: EdgeInsets.symmetric(vertical: AppSpacing.lg),
         child: Center(
-          child: CircularProgressIndicator(
-            strokeWidth: 2.5,
-            color: AppColors.primary,
+          child: SizedBox(
+            width: 22,
+            height: 22,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.5,
+              color: AppColors.primary,
+            ),
           ),
         ),
       );
@@ -161,9 +145,7 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
 
     if (_error != null) {
       return _MessageState(
-        message: _error!.isEmpty
-            ? 'Unable to load medical services.'
-            : _error!,
+        message: _error!.isEmpty ? 'Unable to load medical services.' : _error!,
         actionLabel: 'Retry',
         onAction: _loadServices,
       );
@@ -179,23 +161,30 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
       );
     }
 
-    // ── 2-col service grid ───────────────────────────────────────────────
     return GridView.builder(
       shrinkWrap: true,
-      physics:    const NeverScrollableScrollPhysics(),
-      itemCount:  services.length,
-      gridDelegate:
-          const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount:   2,
-        crossAxisSpacing: 11,
-        mainAxisSpacing:  11,
-        childAspectRatio: 1.95,
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: services.length,
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: 14,
+        mainAxisSpacing: 14,
+        // A fixed pixel height, not childAspectRatio: the ratio derives height
+        // from the column width, so on a narrower phone the tile got shorter
+        // exactly when the wrapping description needed it to be taller, and
+        // the content overflowed. This height covers padding(14×2) +
+        // icon(44) + title + a two-line description plus breathing room, and
+        // scales with the user's text size so large-font settings do not clip.
+        mainAxisExtent: 148 * _textScale(context),
       ),
-      itemBuilder: (context, index) {
-        return _ServiceTile(item: services[index]);
-      },
+      itemBuilder: (context, index) => _ServiceTile(item: services[index]),
     );
   }
+
+  /// Clamped so an extreme accessibility text size grows the tile enough to
+  /// stay readable without pushing a two-column grid to absurd heights.
+  double _textScale(BuildContext context) =>
+      MediaQuery.textScalerOf(context).scale(1.0).clamp(1.0, 1.6);
 }
 
 // ── Service tile ──────────────────────────────────────────────────────────────
@@ -203,7 +192,13 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
 class _ServiceTile extends StatelessWidget {
   final _MedService item;
 
-  const _ServiceTile({super.key, required this.item});
+  const _ServiceTile({required this.item});
+
+  bool get _hasDistinctSubtitle {
+    final subtitle = _normalizeSearchText(item.subtitle);
+    return subtitle.isNotEmpty &&
+        subtitle != _normalizeSearchText(item.title);
+  }
 
   // Reuses the same "/appointment-form" → consent → "/appointment-payment"
   // → "/appointment-confirmation" flow already used for Category/Specialty/
@@ -230,95 +225,137 @@ class _ServiceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color:        Colors.transparent,
-      borderRadius: BorderRadius.circular(AppRadius.md),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        splashColor:  item.accent.withValues(alpha: 0.10),
-        onTap:        () => _openBookingForm(context),
-        child: Container(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          decoration: BoxDecoration(
-            color:        AppColors.surface,
-            borderRadius: BorderRadius.circular(AppRadius.md),
-            border:       Border.all(color: AppColors.border, width: 1.2),
-            boxShadow:    AppShadows.subtle,
+    return AppCard(
+      onTap: () => _openBookingForm(context),
+      radius: AppRadius.field,
+      padding: const EdgeInsets.all(14),
+      bordered: false,
+      splashColor: item.accent.withValues(alpha: 0.10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: item.bgColor,
+              borderRadius: BorderRadius.circular(AppRadius.md - 2),
+            ),
+            alignment: Alignment.center,
+            child: _ServiceIcon(
+              icon: item.icon,
+              name: item.title,
+              color: item.accent,
+            ),
           ),
-          child: Row(
-            children: [
-              // Rounded-square icon container (distinct from circle in Sec 4)
-              Container(
-                width:  46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color:        item.bgColor,
-                  borderRadius: BorderRadius.circular(AppRadius.sm),
-                ),
-                child: Center(
-                  child: _ServiceIcon(icon: item.icon, color: item.accent),
+
+          // Text block sits against the bottom edge with the icon pinned to
+          // the top, so tiles line up along both edges regardless of whether a
+          // description runs to one line or two.
+          const Spacer(),
+
+          Text(
+            item.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: AppType.display(size: 14, letterSpacing: -0.1, height: 1.25),
+          ),
+
+          // Several services come back with `description` set to the same
+          // string as `name`, which rendered the title twice in two different
+          // colours. Show the description only when it actually adds something.
+          if (_hasDistinctSubtitle) ...[
+            const SizedBox(height: 3),
+            Flexible(
+              child: Text(
+                item.subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                // Accent rather than neutral grey — it is what ties the copy
+                // back to the icon above it.
+                style: AppType.body(
+                  size: 12,
+                  weight: FontWeight.w500,
+                  color: item.accent,
+                  height: 1.3,
                 ),
               ),
-
-              const SizedBox(width: AppSpacing.sm + 3),
-
-              // Text column
-              Expanded(
-                child: Column(
-                  mainAxisAlignment:  MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.title,
-                      maxLines:  1,
-                      overflow:  TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontFamily:    AppFonts.family,
-                        fontSize:      12.5,
-                        fontWeight:    FontWeight.w700,
-                        color:         AppColors.textPrimary,
-                        letterSpacing: -0.1,
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      item.subtitle,
-                      maxLines:  1,
-                      overflow:  TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontFamily: AppFonts.family,
-                        fontSize:   10.5,
-                        fontWeight: FontWeight.w400,
-                        color:      AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
+            ),
+          ],
+        ],
       ),
     );
   }
 }
 
-// Backend icons arrive as a string (emoji/glyph); fall back to a generic
-// icon so the tile still reads correctly when a service has none set.
+// The backend's `icon` field is only sometimes a real glyph — in practice it
+// often holds a stray letter, which rendered as a bare "t" or "F" sitting in
+// the tile. So a value is only drawn as text when it actually contains a
+// pictographic rune; anything else falls back to a line icon derived from the
+// service name, which is both meaningful and consistent with the rest of the
+// page.
 class _ServiceIcon extends StatelessWidget {
-  const _ServiceIcon({required this.icon, required this.color});
+  const _ServiceIcon({
+    required this.icon,
+    required this.name,
+    required this.color,
+  });
 
   final String icon;
+  final String name;
   final Color color;
+
+  /// True for emoji and misc-symbol ranges, false for ASCII letters/digits.
+  static bool _isGlyph(String value) =>
+      value.runes.any((rune) => rune > 0x2100);
+
+  static IconData _iconForName(String name) {
+    final value = name.toLowerCase();
+
+    // Ordered most specific first — "general consultation" must not be caught
+    // by a broader "care" rule.
+    const rules = <List<String>, IconData>{
+      ['fly', 'travel', 'flight']: Icons.flight_takeoff_rounded,
+      ['note', 'record', 'report', 'summary']: Icons.description_outlined,
+      ['consult', 'talk', 'chat', 'advice']: Icons.chat_bubble_outline_rounded,
+      ['prescription', 'medicine', 'medication']: Icons.medication_outlined,
+      ['test', 'lab', 'screen', 'diagnos']: Icons.biotech_outlined,
+      ['mental', 'therapy', 'counsel']: Icons.psychology_outlined,
+      ['vaccin', 'immun']: Icons.vaccines_outlined,
+      ['chronic', 'ongoing', 'follow']: Icons.autorenew_rounded,
+      ['care', 'health', 'wellness']: Icons.favorite_border_rounded,
+    };
+
+    for (final entry in rules.entries) {
+      if (entry.key.any(value.contains)) return entry.value;
+    }
+    return Icons.medical_services_outlined;
+  }
 
   @override
   Widget build(BuildContext context) {
     final value = icon.trim();
-    if (value.isEmpty) {
-      return Icon(Icons.medical_services_outlined, size: 22, color: color);
+
+    if (value.isNotEmpty && _isGlyph(value)) {
+      return Text(value, style: const TextStyle(fontSize: 20, height: 1));
     }
 
-    return Text(value, style: const TextStyle(fontSize: 20, height: 1));
+    // ServicePrice.icon is free text, and ServiceModel also fills it from
+    // `iconUrl`/`image`, so it can legitimately hold a URL. Fall through to the
+    // name-derived icon if the image fails rather than leaving a blank tile.
+    final uri = Uri.tryParse(value);
+    if (uri != null && uri.hasScheme && uri.host.isNotEmpty) {
+      return Image.network(
+        value,
+        width: 22,
+        height: 22,
+        fit: BoxFit.contain,
+        errorBuilder: (_, _, _) =>
+            Icon(_iconForName(name), size: 21, color: color),
+      );
+    }
+
+    return Icon(_iconForName(name), size: 21, color: color);
   }
 }
 
@@ -335,24 +372,19 @@ class _MessageState extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(AppSpacing.md),
       decoration: BoxDecoration(
-        color:        AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.md),
-        border:       Border.all(color: AppColors.border, width: 1.2),
-        boxShadow:    AppShadows.subtle,
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.lg),
+        border: Border.all(color: AppColors.border),
+        boxShadow: AppShadows.subtle,
       ),
       child: Row(
         children: [
           Expanded(
             child: Text(
               message,
-              maxLines:  2,
-              overflow:  TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontFamily: AppFonts.family,
-                fontSize:   12,
-                fontWeight: FontWeight.w500,
-                color:      AppColors.textSecondary,
-              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: AppType.body(size: 12),
             ),
           ),
           if (actionLabel != null && onAction != null) ...[
