@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../config/app_design_system.dart';
 import '../services/ticket_service.dart';
 
 class RaiseTicketPage extends StatefulWidget {
@@ -20,6 +21,16 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
   bool loading = false;
   bool loadingTickets = true;
   String ticketLoadError = "";
+
+  // Scaffold tint — swap for AppColors.background if your system defines one.
+  static const Color _bgCanvas = Color(0xFFF3F6F5);
+
+  // Semantic status colours — reused across the app's status chips
+  // (amber/green/blue), kept distinct from the brand colour on purpose.
+  static const Color _statusOpen = Color(0xFFF5B74E);
+  static const Color _statusResolved = Color(0xFF63C06B);
+  static const Color _statusInProgress = Color(0xFF5B9EFF);
+  static const Color _statusNeutral = Color(0xFF8A94A6);
 
   final categories = const [
     {"value": "appointment", "label": "Appointment Issue"},
@@ -51,18 +62,19 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
     final displayed = _ticketsForFilter(filter);
 
     return Scaffold(
-      backgroundColor: const Color(0xfff6f8fb),
+      backgroundColor: _bgCanvas,
       appBar: AppBar(
         title: const Text("Help & Support"),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
         elevation: 0,
       ),
       body: SafeArea(
         child: RefreshIndicator(
+          color: AppColors.primary,
           onRefresh: _loadTickets,
           child: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppSpacing.md),
             children: [
               _header(),
               const SizedBox(height: 16),
@@ -79,39 +91,40 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
   Widget _header() {
     return Row(
       children: [
-        const Expanded(
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text("Support", style: TextStyle(color: Colors.blue)),
-              SizedBox(height: 4),
+              Text(
+                "Support",
+                style: AppType.body(size: 13, weight: FontWeight.w700)
+                    .copyWith(color: AppColors.primary),
+              ),
+              const SizedBox(height: 4),
               Text(
                 "Help & Support",
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+                style: AppType.display(size: 23, height: 1.1),
               ),
-              SizedBox(height: 4),
+              const SizedBox(height: 4),
               Text(
                 "Submit an issue or track your existing support requests.",
-                style: TextStyle(color: Colors.black54),
+                style: AppType.body(size: 13)
+                    .copyWith(color: AppColors.textSecondary),
               ),
             ],
           ),
         ),
+        const SizedBox(width: 10),
         Container(
           padding: const EdgeInsets.all(14),
           decoration: _box(),
           child: Column(
             children: [
+              Text("${tickets.length}", style: AppType.display(size: 22)),
               Text(
-                "${tickets.length}",
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const Text(
                 "Total tickets",
-                style: TextStyle(fontSize: 11, color: Colors.black54),
+                style: AppType.body(size: 11)
+                    .copyWith(color: AppColors.textSecondary),
               ),
             ],
           ),
@@ -128,26 +141,21 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            children: const [
+            children: [
               CircleAvatar(
-                backgroundColor: Color(0xffeef4fb),
-                child: Icon(Icons.edit, color: Color(0xff1a3a5c)),
+                backgroundColor: AppColors.primary.withValues(alpha: 0.10),
+                child: const Icon(Icons.edit, color: AppColors.primary),
               ),
-              SizedBox(width: 12),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      "New Ticket",
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
+                    Text("New Ticket", style: AppType.display(size: 18)),
                     Text(
                       "Describe your issue clearly for faster resolution.",
-                      style: TextStyle(color: Colors.black54),
+                      style: AppType.body(size: 13)
+                          .copyWith(color: AppColors.textSecondary),
                     ),
                   ],
                 ),
@@ -156,10 +164,13 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
           ),
           const SizedBox(height: 18),
 
-          const Text("Category", style: TextStyle(fontWeight: FontWeight.w800)),
+          Text("Category",
+              style: AppType.body(size: 13, weight: FontWeight.w800)),
           const SizedBox(height: 8),
           DropdownButtonFormField<String>(
             initialValue: category,
+            style: AppType.body(size: 14)
+                .copyWith(color: AppColors.textPrimary),
             items: categories.map((c) {
               return DropdownMenuItem<String>(
                 value: c["value"],
@@ -172,11 +183,14 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
 
           const SizedBox(height: 14),
 
-          const Text("Title *", style: TextStyle(fontWeight: FontWeight.w800)),
+          Text("Title *",
+              style: AppType.body(size: 13, weight: FontWeight.w800)),
           const SizedBox(height: 8),
           TextField(
             controller: titleCtrl,
             maxLength: 120,
+            style: AppType.body(size: 14)
+                .copyWith(color: AppColors.textPrimary),
             decoration: _inputDecoration(
               hint: "e.g. Unable to join video call",
             ),
@@ -184,15 +198,17 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
 
           const SizedBox(height: 8),
 
-          const Text(
+          Text(
             "Description *",
-            style: TextStyle(fontWeight: FontWeight.w800),
+            style: AppType.body(size: 13, weight: FontWeight.w800),
           ),
           const SizedBox(height: 8),
           TextField(
             controller: descCtrl,
             maxLines: 5,
             maxLength: 500,
+            style: AppType.body(size: 14)
+                .copyWith(color: AppColors.textPrimary),
             onChanged: (_) => setState(() {}),
             decoration: _inputDecoration(
               hint:
@@ -211,15 +227,19 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
                   ? const SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
                     )
                   : const Icon(Icons.send),
               label: Text(loading ? "Submitting..." : "Submit Ticket"),
               style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xff1a3a5c),
+                backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
+                elevation: 0,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
                 ),
               ),
             ),
@@ -230,15 +250,17 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
             width: double.infinity,
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: const Color(0xfffffbeb),
-              borderRadius: BorderRadius.circular(14),
+              color: const Color(0xFFFFFBEB),
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              border: Border.all(color: const Color(0xFFFDE68A)),
             ),
-            child: const Text(
+            child: Text(
               "💡 Tips for faster support\n"
               "• Include error messages or screenshots if possible\n"
               "• Mention the feature or page where you faced the issue\n"
               "• Describe steps that led to the problem",
-              style: TextStyle(height: 1.5),
+              style: AppType.body(size: 13, height: 1.5)
+                  .copyWith(color: const Color(0xFF92400E)),
             ),
           ),
         ],
@@ -255,15 +277,15 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
         children: [
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Text(
                   "Your Tickets",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                  style: AppType.display(size: 18),
                 ),
               ),
               IconButton(
                 onPressed: loadingTickets ? null : _loadTickets,
-                icon: const Icon(Icons.refresh),
+                icon: const Icon(Icons.refresh, color: AppColors.textSecondary),
                 tooltip: "Refresh tickets",
               ),
             ],
@@ -284,7 +306,7 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
             const Center(
               child: Padding(
                 padding: EdgeInsets.all(24),
-                child: CircularProgressIndicator(),
+                child: CircularProgressIndicator(color: AppColors.primary),
               ),
             )
           else if (ticketLoadError.isNotEmpty && tickets.isEmpty)
@@ -296,23 +318,35 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
                     Text(
                       ticketLoadError,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.black54),
+                      style: AppType.body(size: 13)
+                          .copyWith(color: AppColors.textSecondary),
                     ),
                     const SizedBox(height: 12),
                     OutlinedButton.icon(
                       onPressed: _loadTickets,
                       icon: const Icon(Icons.refresh),
                       label: const Text("Retry"),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        side: const BorderSide(color: AppColors.primary),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(AppRadius.sm),
+                        ),
+                      ),
                     ),
                   ],
                 ),
               ),
             )
           else if (displayed.isEmpty)
-            const Center(
+            Center(
               child: Padding(
-                padding: EdgeInsets.all(24),
-                child: Text("No tickets found."),
+                padding: const EdgeInsets.all(24),
+                child: Text(
+                  "No tickets found.",
+                  style: AppType.body(size: 13)
+                      .copyWith(color: AppColors.textSecondary),
+                ),
               ),
             )
           else
@@ -335,15 +369,13 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: active ? const Color(0xff1a3a5c) : const Color(0xfff3f4f6),
-          borderRadius: BorderRadius.circular(12),
+          color: active ? AppColors.primary : AppColors.primary.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(AppRadius.sm),
         ),
         child: Text(
           "$label  $count",
-          style: TextStyle(
-            color: active ? Colors.white : Colors.black87,
-            fontWeight: FontWeight.w800,
-            fontSize: 12,
+          style: AppType.body(size: 12, weight: FontWeight.w800).copyWith(
+            color: active ? Colors.white : AppColors.textPrimary,
           ),
         ),
       ),
@@ -422,16 +454,16 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
     }
   }
 
-  MaterialColor _statusColor(String status) {
+  Color _statusColor(String status) {
     switch (_statusKey(status)) {
       case "resolved":
-        return Colors.green;
+        return _statusResolved;
       case "open":
-        return Colors.orange;
+        return _statusOpen;
       case "in_progress":
-        return Colors.blue;
+        return _statusInProgress;
       default:
-        return Colors.blueGrey;
+        return _statusNeutral;
     }
   }
 
@@ -444,16 +476,17 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: const Color(0xfff9fafb),
-        borderRadius: BorderRadius.circular(16),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
         border: Border.all(
-          color: isOpen ? const Color(0xff1a3a5c) : Colors.black12,
+          color: isOpen ? AppColors.primary : AppColors.border,
+          width: isOpen ? 1.6 : 1.2,
         ),
       ),
       child: Column(
         children: [
           InkWell(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(AppRadius.md),
             onTap: () {
               setState(() {
                 expandedId = isOpen ? null : ticket["_id"];
@@ -465,10 +498,8 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
                 children: [
                   Text(
                     "#${(index + 1).toString().padLeft(3, "0")}",
-                    style: const TextStyle(
-                      color: Colors.black45,
-                      fontWeight: FontWeight.w900,
-                    ),
+                    style: AppType.body(size: 13, weight: FontWeight.w900)
+                        .copyWith(color: AppColors.textSecondary),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -477,17 +508,13 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
                       children: [
                         Text(
                           ticket["title"],
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w900,
-                          ),
+                          style: AppType.body(size: 14, weight: FontWeight.w900),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           "$catLabel · ${_formatDate(ticket["createdAt"])}",
-                          style: const TextStyle(
-                            color: Colors.black54,
-                            fontSize: 12,
-                          ),
+                          style: AppType.body(size: 12)
+                              .copyWith(color: AppColors.textSecondary),
                         ),
                       ],
                     ),
@@ -497,6 +524,7 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
                     isOpen
                         ? Icons.keyboard_arrow_up
                         : Icons.keyboard_arrow_down,
+                    color: AppColors.textSecondary,
                   ),
                 ],
               ),
@@ -509,28 +537,32 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Divider(),
-                  const Text(
+                  const Divider(color: AppColors.border),
+                  Text(
                     "Description",
-                    style: TextStyle(
-                      fontWeight: FontWeight.w900,
-                      color: Colors.black54,
-                    ),
+                    style: AppType.body(size: 12, weight: FontWeight.w900)
+                        .copyWith(color: AppColors.textSecondary),
                   ),
                   const SizedBox(height: 6),
-                  Text(ticket["description"] ?? ""),
+                  Text(
+                    ticket["description"] ?? "",
+                    style: AppType.body(size: 13.5)
+                        .copyWith(color: AppColors.textPrimary),
+                  ),
                   if (isResolved && _hasResolution(ticket)) ...[
                     const SizedBox(height: 12),
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.green.shade50,
-                        borderRadius: BorderRadius.circular(12),
+                        color: _statusResolved.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(AppRadius.sm),
                       ),
                       child: Text(
                         "Resolution\n${_resolutionText(ticket)}",
-                        style: TextStyle(color: Colors.green.shade800),
+                        style: AppType.body(size: 13).copyWith(
+                          color: const Color(0xFF15803D),
+                        ),
                       ),
                     ),
                   ],
@@ -549,16 +581,13 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
       margin: const EdgeInsets.only(right: 8),
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: color.shade50,
-        borderRadius: BorderRadius.circular(20),
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(AppRadius.chip),
       ),
       child: Text(
         _statusLabel(status),
-        style: TextStyle(
-          color: color.shade700,
-          fontSize: 11,
-          fontWeight: FontWeight.w900,
-        ),
+        style: AppType.body(size: 11, weight: FontWeight.w900)
+            .copyWith(color: color),
       ),
     );
   }
@@ -847,27 +876,32 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
   InputDecoration _inputDecoration({String? hint}) {
     return InputDecoration(
       hintText: hint,
+      hintStyle: AppType.body(size: 14)
+          .copyWith(color: AppColors.textSecondary),
       filled: true,
-      fillColor: const Color(0xfff9fafb),
+      fillColor: AppColors.surface,
       counterText: "",
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
         borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        borderSide: const BorderSide(color: AppColors.border),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
       ),
     );
   }
 
   BoxDecoration _box() {
     return BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(18),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.04),
-          blurRadius: 12,
-          offset: const Offset(0, 6),
-        ),
-      ],
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      border: Border.all(color: AppColors.border, width: 1.2),
+      boxShadow: AppShadows.subtle,
     );
   }
 }

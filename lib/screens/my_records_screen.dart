@@ -7,12 +7,26 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
+import '../config/app_design_system.dart';
 import '../models/medical_record_models.dart';
 import '../services/medical_records_service.dart';
 import '../services/socket_service.dart';
 import '../services/token_storage_service.dart';
 
 enum _RecordsTab { prescriptions, certificates }
+
+// ── Shared brand-colour helpers ───────────────────────────────────────────────
+// The "slip" facsimiles and the exported PDFs used to hardcode a blue medical
+// palette. Both now derive from AppColors.primary so the whole app — screen,
+// document preview, and downloaded PDF — shares one accent colour.
+Color get _brand => AppColors.primary;
+Color get _brandDeep => AppColors.primaryDeep;
+Color get _brandTint => AppColors.primary.withValues(alpha: 0.08);
+
+PdfColor _pdfColor(Color color) => PdfColor.fromInt(color.toARGB32());
+PdfColor get _pdfBrand => _pdfColor(_brand);
+PdfColor get _pdfBrandDeep => _pdfColor(_brandDeep);
+PdfColor get _pdfBrandTint => _pdfColor(_brand.withValues(alpha: 0.06));
 
 class MyRecordsPage extends StatefulWidget {
   const MyRecordsPage({super.key, this.initialTab = 'prescriptions'});
@@ -28,6 +42,14 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   final _recordsService = MedicalRecordsService();
   final _tokenStorage = const TokenStorageService();
   Timer? _refreshTimer;
+
+  // Scaffold tint — swap for AppColors.background if your system defines one.
+  static const Color _bgCanvas = Color(0xFFF3F6F5);
+  // Warning banner accent (kept distinct from the brand colour on purpose).
+  static const Color _warnBg = Color(0xFFFFF7ED);
+  static const Color _warnBorder = Color(0xFFFED7AA);
+  static const Color _warnIcon = Color(0xFFC2410C);
+  static const Color _warnText = Color(0xFF9A3412);
 
   _RecordsTab _activeTab = _RecordsTab.prescriptions;
   List<PrescriptionRecord> _prescriptions = const [];
@@ -136,19 +158,21 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF6F8FB),
+      backgroundColor: _bgCanvas,
       appBar: AppBar(
-        title: const Text(
+        title: Text(
           'My Medical Records',
-          style: TextStyle(fontWeight: FontWeight.w800),
+          style: AppType.body(size: 18, weight: FontWeight.w800)
+              .copyWith(color: AppColors.textPrimary),
         ),
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF0B2545),
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
       ),
       body: SafeArea(
         child: RefreshIndicator(
+          color: AppColors.primary,
           onRefresh: () => _loadRecords(withLoader: true),
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
@@ -172,31 +196,24 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   }
 
   Widget _buildHeader() {
-    return const Column(
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           'HUMANCARE CONNECT',
-          style: TextStyle(
-            color: Color(0xFF0D9488),
-            fontSize: 12,
-            fontWeight: FontWeight.w700,
-            letterSpacing: 1.1,
-          ),
+          style: AppType.body(size: 12, weight: FontWeight.w700)
+              .copyWith(color: AppColors.primary, letterSpacing: 1.1),
         ),
-        SizedBox(height: 6),
+        const SizedBox(height: 6),
         Text(
           'My Medical Records',
-          style: TextStyle(
-            color: Color(0xFF111827),
-            fontSize: 26,
-            fontWeight: FontWeight.w900,
-          ),
+          style: AppType.display(size: 25, height: 1.1),
         ),
-        SizedBox(height: 6),
+        const SizedBox(height: 6),
         Text(
           'Prescriptions and certificates from your consultations',
-          style: TextStyle(color: Color(0xFF64748B), fontSize: 14),
+          style: AppType.body(size: 14)
+              .copyWith(color: AppColors.textSecondary),
         ),
       ],
     );
@@ -252,7 +269,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     required String label,
   }) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(AppSpacing.md),
       decoration: _cardDecoration(),
       child: Row(
         children: [
@@ -260,29 +277,23 @@ class _MyRecordsPageState extends State<MyRecordsPage>
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: const Color(0xFFE8F0FE),
-              borderRadius: BorderRadius.circular(14),
+              color: _brandTint,
+              borderRadius: BorderRadius.circular(AppRadius.sm),
             ),
-            child: Icon(icon, color: const Color(0xFF0D47A1), size: 24),
+            child: Icon(icon, color: AppColors.primary, size: 24),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '$count',
-                  style: const TextStyle(
-                    color: Color(0xFF111827),
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
+                Text('$count', style: AppType.display(size: 22)),
                 Text(
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Color(0xFF64748B)),
+                  style: AppType.body(size: 13)
+                      .copyWith(color: AppColors.textSecondary),
                 ),
               ],
             ),
@@ -296,25 +307,24 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF7ED),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFFED7AA)),
+        color: _warnBg,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        border: Border.all(color: _warnBorder),
       ),
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded, color: Color(0xFFC2410C)),
+          const Icon(Icons.warning_amber_rounded, color: _warnIcon),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               _error,
-              style: const TextStyle(
-                color: Color(0xFF9A3412),
-                fontWeight: FontWeight.w600,
-              ),
+              style: AppType.body(size: 13, weight: FontWeight.w600)
+                  .copyWith(color: _warnText),
             ),
           ),
           TextButton(
             onPressed: () => _loadRecords(withLoader: true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.primary),
             child: const Text('Retry'),
           ),
         ],
@@ -326,9 +336,9 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     return Container(
       padding: const EdgeInsets.all(6),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         children: [
@@ -358,7 +368,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     final active = _activeTab == tab;
     return Expanded(
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
         onTap: () {
           setState(() {
             _activeTab = tab;
@@ -369,8 +379,8 @@ class _MyRecordsPageState extends State<MyRecordsPage>
           duration: const Duration(milliseconds: 160),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 11),
           decoration: BoxDecoration(
-            color: active ? const Color(0xFF0D47A1) : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
+            color: active ? AppColors.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(AppRadius.sm),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -378,7 +388,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
               Icon(
                 icon,
                 size: 17,
-                color: active ? Colors.white : const Color(0xFF334155),
+                color: active ? Colors.white : AppColors.textSecondary,
               ),
               const SizedBox(width: 6),
               Flexible(
@@ -386,28 +396,27 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                   label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: active ? Colors.white : const Color(0xFF334155),
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w800,
+                  style: AppType.body(size: 12.5, weight: FontWeight.w800)
+                      .copyWith(
+                    color: active ? Colors.white : AppColors.textSecondary,
                   ),
                 ),
               ),
               const SizedBox(width: 6),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: active
                       ? Colors.white.withValues(alpha: 0.18)
-                      : const Color(0xFFE8F0FE),
-                  borderRadius: BorderRadius.circular(999),
+                      : _brandTint,
+                  borderRadius: BorderRadius.circular(AppRadius.chip),
                 ),
                 child: Text(
                   '$count',
-                  style: TextStyle(
-                    color: active ? Colors.white : const Color(0xFF0D47A1),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
+                  style: AppType.body(size: 11, weight: FontWeight.w800)
+                      .copyWith(
+                    color: active ? Colors.white : AppColors.primary,
                   ),
                 ),
               ),
@@ -420,13 +429,17 @@ class _MyRecordsPageState extends State<MyRecordsPage>
 
   Widget _buildContent() {
     if (_loading) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 56),
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 56),
         child: Column(
           children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 12),
-            Text('Loading records...'),
+            const CircularProgressIndicator(color: AppColors.primary),
+            const SizedBox(height: 12),
+            Text(
+              'Loading records...',
+              style: AppType.body(size: 13)
+                  .copyWith(color: AppColors.textSecondary),
+            ),
           ],
         ),
       );
@@ -472,9 +485,8 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     return _recordCard(
       id: record.id,
       icon: Icons.medication_outlined,
-      iconColor: const Color(0xFF0D47A1),
       title: record.diagnosis.isNotEmpty ? record.diagnosis : '-',
-      subtitle: subtitleParts.join(' - '),
+      subtitle: subtitleParts.join(' · '),
       open: open,
       onDownload: () => _downloadPrescription(record),
       child: _PrescriptionSlip(record: record, patient: _patient),
@@ -491,10 +503,9 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     return _recordCard(
       id: record.id,
       icon: Icons.description_outlined,
-      iconColor: const Color(0xFF0F766E),
       title: record.diagnosis.isNotEmpty ? record.diagnosis : '-',
       subtitle:
-          '${doctorName.isNotEmpty ? 'Dr. $doctorName' : 'Dr. -'} - Issued: $issuedDate',
+          '${doctorName.isNotEmpty ? 'Dr. $doctorName' : 'Dr. -'} · Issued: $issuedDate',
       open: open,
       onDownload: () => _downloadCertificate(record),
       child: _CertificateSlip(record: record, patient: _patient),
@@ -504,7 +515,6 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   Widget _recordCard({
     required String id,
     required IconData icon,
-    required Color iconColor,
     required String title,
     required String subtitle,
     required bool open,
@@ -528,10 +538,10 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                     width: 44,
                     height: 44,
                     decoration: BoxDecoration(
-                      color: iconColor.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(13),
+                      color: _brandTint,
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
                     ),
-                    child: Icon(icon, color: iconColor, size: 24),
+                    child: Icon(icon, color: AppColors.primary, size: 24),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -542,21 +552,16 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                           title,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF111827),
-                          ),
+                          style: AppType.body(size: 16, weight: FontWeight.w800)
+                              .copyWith(color: AppColors.textPrimary),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           subtitle,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Color(0xFF64748B),
-                            fontSize: 12.5,
-                          ),
+                          style: AppType.body(size: 12.5)
+                              .copyWith(color: AppColors.textSecondary),
                         ),
                       ],
                     ),
@@ -573,7 +578,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                         : const Icon(Icons.download_rounded, size: 17),
                     label: const Text('PDF'),
                     style: TextButton.styleFrom(
-                      foregroundColor: const Color(0xFF0D47A1),
+                      foregroundColor: AppColors.primary,
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
@@ -581,7 +586,8 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                   AnimatedRotation(
                     turns: open ? 0.5 : 0,
                     duration: const Duration(milliseconds: 180),
-                    child: const Icon(Icons.keyboard_arrow_down_rounded),
+                    child: Icon(Icons.keyboard_arrow_down_rounded,
+                        color: AppColors.textSecondary),
                   ),
                 ],
               ),
@@ -613,18 +619,19 @@ class _MyRecordsPageState extends State<MyRecordsPage>
       decoration: _cardDecoration(),
       child: Column(
         children: [
-          Icon(icon, size: 48, color: const Color(0xFF94A3B8)),
+          Icon(icon, size: 48, color: AppColors.textSecondary),
           const SizedBox(height: 12),
           Text(
             title,
             textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+            style: AppType.display(size: 18),
           ),
           const SizedBox(height: 6),
           Text(
             message,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF64748B)),
+            style: AppType.body(size: 13)
+                .copyWith(color: AppColors.textSecondary),
           ),
         ],
       ),
@@ -712,7 +719,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
 
   Future<pw.MemoryImage?> _loadPdfLogo() async {
     try {
-      final bytes = await rootBundle.load('assets/Logo.png');
+      final bytes = await rootBundle.load('assets/logo-2.png');
       return pw.MemoryImage(bytes.buffer.asUint8List());
     } catch (_) {
       return null;
@@ -730,7 +737,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     final ageSex = _ageSex(_patient);
     return pw.Container(
       decoration: pw.BoxDecoration(
-        border: pw.Border.all(color: PdfColors.blue100),
+        border: pw.Border.all(color: _pdfBrandTint),
       ),
       child: pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.stretch,
@@ -764,7 +771,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
           pw.SizedBox(height: 20),
           pw.Text(
             'Rx',
-            style: pw.TextStyle(fontSize: 24, color: PdfColors.blue700),
+            style: pw.TextStyle(fontSize: 24, color: _pdfBrandDeep),
           ),
           pw.SizedBox(height: 6),
           _pdfMedicineTable(record.medicines),
@@ -801,7 +808,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
         : record.createdAt;
     return pw.Container(
       decoration: pw.BoxDecoration(
-        border: pw.Border.all(color: PdfColors.blue100),
+        border: pw.Border.all(color: _pdfBrandTint),
       ),
       child: pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.stretch,
@@ -835,9 +842,9 @@ class _MyRecordsPageState extends State<MyRecordsPage>
           pw.Container(
             padding: const pw.EdgeInsets.all(14),
             decoration: pw.BoxDecoration(
-              color: PdfColors.blue50,
+              color: _pdfBrandTint,
               border: pw.Border(
-                left: pw.BorderSide(color: PdfColors.blue700, width: 3),
+                left: pw.BorderSide(color: _pdfBrandDeep, width: 3),
               ),
             ),
             child: pw.Text(
@@ -861,9 +868,9 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   pw.Widget _pdfHeader(pw.MemoryImage? logo) {
     return pw.Container(
       padding: const pw.EdgeInsets.fromLTRB(20, 14, 20, 14),
-      decoration: const pw.BoxDecoration(
+      decoration: pw.BoxDecoration(
         border: pw.Border(
-          bottom: pw.BorderSide(color: PdfColors.blue100, width: 1.5),
+          bottom: pw.BorderSide(color: _pdfBrandTint, width: 1.5),
         ),
       ),
       child: pw.Row(
@@ -877,7 +884,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
               style: pw.TextStyle(
                 fontSize: 18,
                 fontWeight: pw.FontWeight.bold,
-                color: PdfColors.blue900,
+                color: _pdfBrandDeep,
               ),
             ),
           pw.Column(
@@ -887,12 +894,12 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                 'Global Health Passport',
                 style: pw.TextStyle(
                   fontSize: 9,
-                  color: PdfColors.blue700,
+                  color: _pdfBrand,
                   fontWeight: pw.FontWeight.bold,
                 ),
               ),
               pw.SizedBox(height: 5),
-              pw.Container(width: 44, height: 3, color: PdfColors.blue700),
+              pw.Container(width: 44, height: 3, color: _pdfBrand),
             ],
           ),
         ],
@@ -907,7 +914,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     required String date,
   }) {
     return pw.Container(
-      color: PdfColors.blue50,
+      color: _pdfBrandTint,
       padding: const pw.EdgeInsets.symmetric(horizontal: 20, vertical: 10),
       child: pw.Row(
         children: [
@@ -919,7 +926,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                   title,
                   style: pw.TextStyle(
                     fontSize: 13,
-                    color: PdfColors.blue900,
+                    color: _pdfBrandDeep,
                     fontWeight: pw.FontWeight.bold,
                   ),
                 ),
@@ -941,7 +948,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                 code,
                 style: pw.TextStyle(
                   fontSize: 10,
-                  color: PdfColors.blue900,
+                  color: _pdfBrandDeep,
                   fontWeight: pw.FontWeight.bold,
                 ),
               ),
@@ -964,7 +971,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     return pw.Container(
       padding: const pw.EdgeInsets.all(12),
       decoration: pw.BoxDecoration(
-        border: pw.Border.all(color: PdfColors.blue100),
+        border: pw.Border.all(color: _pdfBrandTint),
       ),
       child: pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -973,7 +980,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
             title.toUpperCase(),
             style: pw.TextStyle(
               fontSize: 9,
-              color: PdfColors.blue700,
+              color: _pdfBrand,
               fontWeight: pw.FontWeight.bold,
             ),
           ),
@@ -998,7 +1005,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                       textAlign: pw.TextAlign.right,
                       style: pw.TextStyle(
                         fontSize: 10,
-                        color: PdfColors.blue900,
+                        color: _pdfBrandDeep,
                         fontWeight: pw.FontWeight.bold,
                       ),
                     ),
@@ -1029,9 +1036,9 @@ class _MyRecordsPageState extends State<MyRecordsPage>
       },
       children: [
         pw.TableRow(
-          decoration: const pw.BoxDecoration(
+          decoration: pw.BoxDecoration(
             border: pw.Border(
-              bottom: pw.BorderSide(color: PdfColors.blue900, width: 1.2),
+              bottom: pw.BorderSide(color: _pdfBrandDeep, width: 1.2),
             ),
           ),
           children: ['No.', 'Medicine', 'Frequency', 'Duration', 'Notes']
@@ -1076,7 +1083,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
         text.isNotEmpty ? text : '-',
         style: pw.TextStyle(
           fontSize: 9,
-          color: bold ? PdfColors.blue900 : PdfColors.grey800,
+          color: bold ? _pdfBrandDeep : PdfColors.grey800,
           fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
         ),
       ),
@@ -1086,7 +1093,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   pw.Widget _pdfNoteBox(List<List<String>> rows) {
     return pw.Container(
       padding: const pw.EdgeInsets.all(12),
-      color: PdfColors.blue50,
+      color: _pdfBrandTint,
       child: pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.start,
         children: rows.map((row) {
@@ -1099,7 +1106,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                     text: '${row[0]}: ',
                     style: pw.TextStyle(
                       fontSize: 10,
-                      color: PdfColors.blue900,
+                      color: _pdfBrandDeep,
                       fontWeight: pw.FontWeight.bold,
                     ),
                   ),
@@ -1130,14 +1137,14 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     ];
 
     return pw.Table(
-      border: pw.TableBorder.all(color: PdfColors.blue200),
+      border: pw.TableBorder.all(color: _pdfBrandTint),
       columnWidths: const {
         0: pw.FlexColumnWidth(1.1),
         1: pw.FlexColumnWidth(2.2),
       },
       children: [
         pw.TableRow(
-          decoration: const pw.BoxDecoration(color: PdfColors.blue700),
+          decoration: pw.BoxDecoration(color: _pdfBrand),
           children: ['Field', 'Details']
               .map(
                 (text) => pw.Padding(
@@ -1173,7 +1180,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
         text.isNotEmpty ? text : '-',
         style: pw.TextStyle(
           fontSize: 10,
-          color: bold ? PdfColors.blue900 : PdfColors.grey800,
+          color: bold ? _pdfBrandDeep : PdfColors.grey800,
           fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
         ),
       ),
@@ -1184,12 +1191,12 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     final enrollment = record.enrollment;
     return pw.Container(
       decoration: pw.BoxDecoration(
-        border: pw.Border.all(color: PdfColors.blue100),
+        border: pw.Border.all(color: _pdfBrandTint),
       ),
       child: pw.Column(
         children: [
           pw.Container(
-            color: PdfColors.blue50,
+            color: _pdfBrandTint,
             padding: const pw.EdgeInsets.all(10),
             child: pw.Row(
               children: [
@@ -1201,7 +1208,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                         'Dr. $doctorName',
                         style: pw.TextStyle(
                           fontSize: 11,
-                          color: PdfColors.blue900,
+                          color: _pdfBrandDeep,
                           fontWeight: pw.FontWeight.bold,
                         ),
                       ),
@@ -1283,7 +1290,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   pw.Widget _pdfFooter() {
     return pw.Container(
       padding: const pw.EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-      color: PdfColors.blue900,
+      color: _pdfBrandDeep,
       child: pw.Text(
         'This document is generated electronically and is valid without a physical signature.  support@humancareconnect.co',
         textAlign: pw.TextAlign.center,
@@ -1350,15 +1357,10 @@ class _MyRecordsPageState extends State<MyRecordsPage>
 
   BoxDecoration _cardDecoration() {
     return BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.045),
-          blurRadius: 14,
-          offset: const Offset(0, 5),
-        ),
-      ],
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      border: Border.all(color: AppColors.border, width: 1.2),
+      boxShadow: AppShadows.subtle,
     );
   }
 }
@@ -1369,17 +1371,13 @@ class _PrescriptionSlip extends StatelessWidget {
   final PrescriptionRecord record;
   final Map<String, String> patient;
 
-  static const _primary = Color(0xFF0D47A1);
-  static const _accent = Color(0xFF1565C0);
-  static const _light = Color(0xFFE8F0FE);
-
   @override
   Widget build(BuildContext context) {
     return _SlipShell(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _SlipHeader(light: _light),
+          const _SlipHeader(),
           _Banner(
             title: 'Medical Prescription',
             subtitle: 'Diagnosis - ${record.diagnosis}',
@@ -1422,7 +1420,7 @@ class _PrescriptionSlip extends StatelessWidget {
               'Rx',
               style: TextStyle(
                 fontSize: 28,
-                color: _accent,
+                color: _brandDeep,
                 fontWeight: FontWeight.w700,
               ),
             ),
@@ -1434,9 +1432,9 @@ class _PrescriptionSlip extends StatelessWidget {
           Container(
             margin: const EdgeInsets.all(14),
             padding: const EdgeInsets.all(12),
-            decoration: const BoxDecoration(
-              color: _light,
-              border: Border(left: BorderSide(color: _accent, width: 3)),
+            decoration: BoxDecoration(
+              color: _brandTint,
+              border: Border(left: BorderSide(color: _brandDeep, width: 3)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1464,14 +1462,11 @@ class _PrescriptionSlip extends StatelessWidget {
   static Widget _richLine(String label, String value) {
     return RichText(
       text: TextSpan(
-        style: const TextStyle(color: Color(0xFF475569), fontSize: 12.5),
+        style: AppType.body(size: 12.5).copyWith(color: AppColors.textSecondary),
         children: [
           TextSpan(
             text: '$label: ',
-            style: const TextStyle(
-              color: _primary,
-              fontWeight: FontWeight.w800,
-            ),
+            style: TextStyle(color: _brand, fontWeight: FontWeight.w800),
           ),
           TextSpan(text: value),
         ],
@@ -1514,8 +1509,6 @@ class _CertificateSlip extends StatelessWidget {
   final MedicalCertificateRecord record;
   final Map<String, String> patient;
 
-  static const _light = Color(0xFFE8F0FE);
-
   @override
   Widget build(BuildContext context) {
     final patientName = (patient['name'] ?? '').isNotEmpty
@@ -1530,7 +1523,7 @@ class _CertificateSlip extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const _SlipHeader(light: _light),
+          const _SlipHeader(),
           _Banner(
             title: 'Medical Certificate',
             subtitle: 'Reason: ${record.diagnosis}',
@@ -1574,13 +1567,14 @@ class _CertificateSlip extends StatelessWidget {
             margin: const EdgeInsets.fromLTRB(14, 16, 14, 0),
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFF),
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: _light, width: 1.4),
+              border: Border.all(color: AppColors.border, width: 1.4),
             ),
             child: Text(
               'This is to certify that $patientName, $ageSex, has been examined and is suffering from ${record.diagnosis}.',
-              style: const TextStyle(height: 1.55, color: Color(0xFF1A1A2E)),
+              style: AppType.body(size: 13, height: 1.55)
+                  .copyWith(color: AppColors.textPrimary),
             ),
           ),
           Padding(
@@ -1596,16 +1590,13 @@ class _CertificateSlip extends StatelessWidget {
             padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: const Color(0xFFFFFBEB),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(AppRadius.sm),
               border: Border.all(color: const Color(0xFFFDE68A)),
             ),
-            child: const Text(
+            child: Text(
               'Note: This certificate is issued based on the medical examination conducted via Humancare Connect telehealth platform. It is valid as an official medical document for the purpose stated above.',
-              style: TextStyle(
-                color: Color(0xFF92400E),
-                fontSize: 11.5,
-                height: 1.4,
-              ),
+              style: AppType.body(size: 11.5, height: 1.4)
+                  .copyWith(color: const Color(0xFF92400E)),
             ),
           ),
           const _SlipFooter(lightFooter: true),
@@ -1629,8 +1620,8 @@ class _SlipShell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFE8F0FE),
-        borderRadius: BorderRadius.circular(12),
+        color: _brandTint,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
       ),
       padding: const EdgeInsets.all(10),
       child: SingleChildScrollView(
@@ -1638,14 +1629,9 @@ class _SlipShell extends StatelessWidget {
         child: Container(
           width: 760,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.surface,
             borderRadius: BorderRadius.circular(3),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 8,
-              ),
-            ],
+            boxShadow: AppShadows.subtle,
           ),
           clipBehavior: Clip.antiAlias,
           child: child,
@@ -1656,50 +1642,40 @@ class _SlipShell extends StatelessWidget {
 }
 
 class _SlipHeader extends StatelessWidget {
-  const _SlipHeader({this.light = const Color(0xFFE8F0FE)});
-
-  final Color light;
+  const _SlipHeader();
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.fromLTRB(22, 18, 22, 16),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: light, width: 2)),
+        border: Border(bottom: BorderSide(color: _brandTint, width: 2)),
       ),
       child: Row(
         children: [
           Image.asset(
-            'assets/Logo.png',
+            'assets/logo-2.png',
             height: 46,
             errorBuilder: (_, error, stackTrace) {
-              return const Text(
+              return Text(
                 'Humancare Connect',
-                style: TextStyle(
-                  color: Color(0xFF0D47A1),
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                ),
+                style: AppType.display(size: 18, color: _brandDeep),
               );
             },
           ),
           const Spacer(),
-          const Column(
+          Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
                 'Global Health Passport',
-                style: TextStyle(
-                  color: Color(0xFF1565C0),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.2,
-                ),
+                style: AppType.body(size: 11, weight: FontWeight.w900)
+                    .copyWith(color: _brand, letterSpacing: 1.2),
               ),
-              SizedBox(height: 5),
+              const SizedBox(height: 5),
               SizedBox(
                 width: 48,
-                child: Divider(color: Color(0xFF1565C0), thickness: 4),
+                child: Divider(color: _brand, thickness: 4),
               ),
             ],
           ),
@@ -1725,7 +1701,7 @@ class _Banner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: const Color(0xFFE8F0FE),
+      color: _brandTint,
       padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
       child: Row(
         children: [
@@ -1735,18 +1711,14 @@ class _Banner extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    color: Color(0xFF0D47A1),
-                    fontWeight: FontWeight.w900,
-                  ),
+                  style: AppType.body(size: 14, weight: FontWeight.w900)
+                      .copyWith(color: _brandDeep),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   subtitle,
-                  style: const TextStyle(
-                    color: Color(0xFF475569),
-                    fontSize: 12,
-                  ),
+                  style: AppType.body(size: 12)
+                      .copyWith(color: AppColors.textSecondary),
                 ),
               ],
             ),
@@ -1756,16 +1728,14 @@ class _Banner extends StatelessWidget {
             children: [
               Text(
                 code,
-                style: const TextStyle(
-                  color: Color(0xFF0D47A1),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                ),
+                style: AppType.body(size: 12, weight: FontWeight.w900)
+                    .copyWith(color: _brandDeep),
               ),
               const SizedBox(height: 2),
               Text(
                 date,
-                style: const TextStyle(color: Color(0xFF64748B), fontSize: 11),
+                style: AppType.body(size: 11)
+                    .copyWith(color: AppColors.textSecondary),
               ),
             ],
           ),
@@ -1785,20 +1755,14 @@ class _InfoPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        border: Border.all(color: const Color(0xFFE8F0FE)),
-      ),
+      decoration: BoxDecoration(border: Border.all(color: _brandTint)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label.toUpperCase(),
-            style: const TextStyle(
-              color: Color(0xFF1565C0),
-              fontSize: 10,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1,
-            ),
+            style: AppType.body(size: 10, weight: FontWeight.w900)
+                .copyWith(color: _brand, letterSpacing: 1),
           ),
           const SizedBox(height: 8),
           ...rows.map(
@@ -1808,21 +1772,16 @@ class _InfoPanel extends StatelessWidget {
                 children: [
                   Text(
                     row[0],
-                    style: const TextStyle(
-                      color: Color(0xFF64748B),
-                      fontSize: 12,
-                    ),
+                    style: AppType.body(size: 12)
+                        .copyWith(color: AppColors.textSecondary),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
                       row.length > 1 && row[1].isNotEmpty ? row[1] : '-',
                       textAlign: TextAlign.right,
-                      style: const TextStyle(
-                        color: Color(0xFF0D47A1),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                      ),
+                      style: AppType.body(size: 12, weight: FontWeight.w800)
+                          .copyWith(color: _brandDeep),
                     ),
                   ),
                 ],
@@ -1854,14 +1813,12 @@ class _MedicineTable extends StatelessWidget {
         4: FlexColumnWidth(),
       },
       border: const TableBorder(
-        horizontalInside: BorderSide(color: Color(0xFFE5E7EB)),
+        horizontalInside: BorderSide(color: AppColors.border),
       ),
       children: [
         TableRow(
-          decoration: const BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: Color(0xFF0D47A1), width: 1.5),
-            ),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: _brandDeep, width: 1.5)),
           ),
           children: [
             'No.',
@@ -1895,11 +1852,8 @@ class _MedicineTable extends StatelessWidget {
       padding: const EdgeInsets.all(8),
       child: Text(
         text.toUpperCase(),
-        style: const TextStyle(
-          color: Color(0xFF64748B),
-          fontSize: 10,
-          fontWeight: FontWeight.w900,
-        ),
+        style: AppType.body(size: 10, weight: FontWeight.w900)
+            .copyWith(color: AppColors.textSecondary),
       ),
     );
   }
@@ -1909,12 +1863,11 @@ class _MedicineTable extends StatelessWidget {
       padding: const EdgeInsets.all(8),
       child: Text(
         text.isEmpty ? '-' : text,
-        style: TextStyle(
-          color: bold ? const Color(0xFF0D47A1) : const Color(0xFF334155),
-          fontSize: 12,
-          fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
+        style: AppType.body(
+          size: 12,
+          weight: bold ? FontWeight.w800 : FontWeight.w500,
           height: 1.25,
-        ),
+        ).copyWith(color: bold ? _brandDeep : AppColors.textPrimary),
       ),
     );
   }
@@ -1937,21 +1890,18 @@ class _CertificateDetailsTable extends StatelessWidget {
     ];
 
     return Table(
-      border: TableBorder.all(color: const Color(0xFFC5D5F0)),
+      border: TableBorder.all(color: AppColors.border),
       columnWidths: const {0: FlexColumnWidth(1), 1: FlexColumnWidth(2.2)},
       children: [
         TableRow(
-          decoration: const BoxDecoration(color: Color(0xFF1565C0)),
+          decoration: BoxDecoration(color: _brand),
           children: ['Field', 'Details'].map((text) {
             return Padding(
               padding: const EdgeInsets.all(9),
               child: Text(
                 text.toUpperCase(),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                ),
+                style: AppType.body(size: 12, weight: FontWeight.w900)
+                    .copyWith(color: Colors.white),
               ),
             );
           }).toList(),
@@ -1969,12 +1919,11 @@ class _CertificateDetailsTable extends StatelessWidget {
       padding: const EdgeInsets.all(10),
       child: Text(
         text.isNotEmpty ? text : '-',
-        style: TextStyle(
-          color: bold ? const Color(0xFF0D47A1) : const Color(0xFF1A1A2E),
-          fontSize: 12.5,
-          fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
+        style: AppType.body(
+          size: 12.5,
+          weight: bold ? FontWeight.w800 : FontWeight.w500,
           height: 1.35,
-        ),
+        ).copyWith(color: bold ? _brandDeep : AppColors.textPrimary),
       ),
     );
   }
@@ -2006,20 +1955,20 @@ class _DoctorCertificateBox extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE8F0FE)),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        border: Border.all(color: _brandTint),
       ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
           Container(
-            color: const Color(0xFFE8F0FE),
+            color: _brandTint,
             padding: const EdgeInsets.all(12),
             child: Row(
               children: [
                 CircleAvatar(
                   radius: 17,
-                  backgroundColor: const Color(0xFF0D47A1),
+                  backgroundColor: _brand,
                   child: Text(
                     doctorName.substring(0, 1).toUpperCase(),
                     style: const TextStyle(
@@ -2035,18 +1984,14 @@ class _DoctorCertificateBox extends StatelessWidget {
                     children: [
                       Text(
                         'Dr. $doctorName',
-                        style: const TextStyle(
-                          color: Color(0xFF0D47A1),
-                          fontWeight: FontWeight.w900,
-                        ),
+                        style: AppType.body(size: 14, weight: FontWeight.w900)
+                            .copyWith(color: _brandDeep),
                       ),
                       if (subtitle.isNotEmpty)
                         Text(
                           subtitle,
-                          style: const TextStyle(
-                            color: Color(0xFF475569),
-                            fontSize: 11.5,
-                          ),
+                          style: AppType.body(size: 11.5)
+                              .copyWith(color: AppColors.textSecondary),
                         ),
                     ],
                   ),
@@ -2054,16 +1999,14 @@ class _DoctorCertificateBox extends StatelessWidget {
                 if (enrollment.medicalRegistrationNumber.isNotEmpty)
                   Text(
                     'Reg. No: ${enrollment.medicalRegistrationNumber}',
-                    style: const TextStyle(
-                      color: Color(0xFF64748B),
-                      fontSize: 11,
-                    ),
+                    style: AppType.body(size: 11)
+                        .copyWith(color: AppColors.textSecondary),
                   ),
               ],
             ),
           ),
           Container(
-            color: const Color(0xFFF8FAFF),
+            color: AppColors.surface,
             padding: const EdgeInsets.all(12),
             child: Row(
               children: [
@@ -2077,24 +2020,22 @@ class _DoctorCertificateBox extends StatelessWidget {
                           ? enrollment.clinicAddress
                           : '4 Peddlers Row #1091 Newark, DE 19702, United States',
                     ].join('\n'),
-                    style: const TextStyle(
-                      color: Color(0xFF64748B),
-                      fontSize: 12,
-                      height: 1.5,
-                    ),
+                    style: AppType.body(size: 12, height: 1.5)
+                        .copyWith(color: AppColors.textSecondary),
                   ),
                 ),
                 const SizedBox(width: 12),
-                const SizedBox(
+                SizedBox(
                   width: 210,
                   child: Text(
                     'This is a system-generated certificate and does not require a signature or stamp.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Color(0xFF64748B),
-                      fontSize: 11,
-                      fontStyle: FontStyle.italic,
+                    style: AppType.body(
+                      size: 11,
                       height: 1.45,
+                    ).copyWith(
+                      color: AppColors.textSecondary,
+                      fontStyle: FontStyle.italic,
                     ),
                   ),
                 ),
@@ -2117,19 +2058,16 @@ class _SlipFooter extends StatelessWidget {
     if (lightFooter) {
       return Container(
         padding: const EdgeInsets.all(12),
-        color: const Color(0xFFE8F0FE),
-        child: const Row(
+        color: _brandTint,
+        child: Row(
           children: [
-            Icon(Icons.qr_code_2_rounded, color: Color(0xFF0D47A1), size: 46),
-            SizedBox(width: 14),
+            Icon(Icons.qr_code_2_rounded, color: _brand, size: 46),
+            const SizedBox(width: 14),
             Expanded(
               child: Text(
                 '+1 (302) 303-9993\nsupport@humancareconnect.co\n4 Peddlers Row #1091 Newark, DE 19702, United States',
-                style: TextStyle(
-                  color: Color(0xFF1E3A5F),
-                  fontSize: 11.5,
-                  height: 1.45,
-                ),
+                style: AppType.body(size: 11.5, height: 1.45)
+                    .copyWith(color: AppColors.textPrimary),
               ),
             ),
           ],
@@ -2140,11 +2078,11 @@ class _SlipFooter extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(top: 10),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      color: const Color(0xFF0D47A1),
-      child: const Text(
+      color: _brandDeep,
+      child: Text(
         'This document is generated electronically and is valid without a physical signature.',
         textAlign: TextAlign.center,
-        style: TextStyle(color: Colors.white, fontSize: 11.5),
+        style: AppType.body(size: 11.5).copyWith(color: Colors.white),
       ),
     );
   }

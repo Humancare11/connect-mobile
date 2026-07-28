@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../config/app_design_system.dart';
 import '../services/auth_service.dart';
 import '../services/auth_validators.dart';
 import '../services/token_storage_service.dart';
@@ -14,6 +15,13 @@ class EditProfilePage extends StatefulWidget {
 class _EditProfilePageState extends State<EditProfilePage> {
   final _authService = AuthService();
   final _tokenStorage = const TokenStorageService();
+
+  // Scaffold tint — swap for AppColors.background if your system defines one.
+  static const Color _bgCanvas = Color(0xFFF3F6F5);
+  // Error banner accent (kept distinct from the brand colour on purpose).
+  static const Color _errorBg = Color(0xFFFEF2F2);
+  static const Color _errorBorder = Color(0xFFFCA5A5);
+  static const Color _errorText = Color(0xFFDC2626);
 
   bool loadingProfile = true;
   bool saving = false;
@@ -72,23 +80,25 @@ class _EditProfilePageState extends State<EditProfilePage> {
     final age = _getAge();
 
     if (loadingProfile) {
-      return const Scaffold(
-        backgroundColor: Color(0xfff6f8fb),
-        body: Center(child: CircularProgressIndicator()),
+      return Scaffold(
+        backgroundColor: _bgCanvas,
+        body: const Center(
+          child: CircularProgressIndicator(color: AppColors.primary),
+        ),
       );
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xfff6f8fb),
+      backgroundColor: _bgCanvas,
       appBar: AppBar(
         title: const Text("Edit Profile"),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
         elevation: 0,
       ),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.md),
           children: [
             if (profileSyncError.isNotEmpty) _profileSyncErrorBanner(),
             if (syncingProfile) _syncingProfileNotice(),
@@ -102,19 +112,23 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   Widget _syncingProfileNotice() {
-    return const Padding(
-      padding: EdgeInsets.only(bottom: 10),
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         children: [
-          SizedBox(
+          const SizedBox(
             width: 12,
             height: 12,
-            child: CircularProgressIndicator(strokeWidth: 1.5),
+            child: CircularProgressIndicator(
+              strokeWidth: 1.5,
+              color: AppColors.primary,
+            ),
           ),
-          SizedBox(width: 8),
+          const SizedBox(width: 8),
           Text(
             'Syncing your latest details…',
-            style: TextStyle(color: Colors.black45, fontSize: 12),
+            style: AppType.body(size: 12)
+                .copyWith(color: AppColors.textSecondary),
           ),
         ],
       ),
@@ -126,22 +140,25 @@ class _EditProfilePageState extends State<EditProfilePage> {
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xfffef2f2),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xfffca5a5)),
+        color: _errorBg,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        border: Border.all(color: _errorBorder),
       ),
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded, color: Colors.red, size: 18),
+          const Icon(Icons.warning_amber_rounded,
+              color: _errorText, size: 18),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               profileSyncError,
-              style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600),
+              style: AppType.body(size: 13, weight: FontWeight.w600)
+                  .copyWith(color: _errorText),
             ),
           ),
           TextButton(
             onPressed: _loadUserProfile,
+            style: TextButton.styleFrom(foregroundColor: AppColors.primary),
             child: const Text('Retry'),
           ),
         ],
@@ -156,53 +173,45 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
     return Container(
       padding: const EdgeInsets.all(22),
-      decoration: _glassBox(),
+      decoration: _cardDecoration(),
       child: Column(
         children: [
           Container(
             width: 86,
             height: 86,
             decoration: BoxDecoration(
-              color: const Color(0xffeaf2ff),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: const Color(0xffbfdbfe)),
+              color: AppColors.primary.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              border: Border.all(
+                  color: AppColors.primary.withValues(alpha: 0.25)),
             ),
             child: Center(
               child: Text(
                 initial,
-                style: const TextStyle(
-                  fontSize: 34,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xff1d4ed8),
-                ),
+                style: AppType.display(size: 34, color: AppColors.primary),
               ),
             ),
           ),
           const SizedBox(height: 12),
-          Text(
-            nameCtrl.text,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-          ),
+          Text(nameCtrl.text, style: AppType.display(size: 18)),
           const SizedBox(height: 4),
           Text(
             emailCtrl.text,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Colors.black54),
+            style: AppType.body(size: 13)
+                .copyWith(color: AppColors.textSecondary),
           ),
           const SizedBox(height: 10),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
             decoration: BoxDecoration(
-              color: const Color(0xffeaf2ff),
-              borderRadius: BorderRadius.circular(30),
+              color: AppColors.primary.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(AppRadius.chip),
             ),
             child: Text(
               role.trim().isNotEmpty ? role.toUpperCase() : 'PATIENT',
-              style: const TextStyle(
-                color: Color(0xff1d4ed8),
-                fontWeight: FontWeight.w900,
-                fontSize: 11,
-              ),
+              style: AppType.body(size: 11, weight: FontWeight.w900)
+                  .copyWith(color: AppColors.primary),
             ),
           ),
           const SizedBox(height: 18),
@@ -223,9 +232,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        border: Border.all(color: AppColors.border),
       ),
       child: Row(
         children: [
@@ -237,16 +246,14 @@ class _EditProfilePageState extends State<EditProfilePage> {
               children: [
                 Text(
                   label.toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.black45,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w900,
-                  ),
+                  style: AppType.body(size: 10, weight: FontWeight.w900)
+                      .copyWith(color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   value,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
+                  style: AppType.body(size: 13.5, weight: FontWeight.w700)
+                      .copyWith(color: AppColors.textPrimary),
                 ),
               ],
             ),
@@ -258,32 +265,31 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   Widget _formCard() {
     return Container(
-      decoration: _glassBox(),
+      decoration: _cardDecoration(),
       child: Column(
         children: [
           Padding(
             padding: const EdgeInsets.all(18),
             child: Row(
-              children: const [
+              children: [
                 CircleAvatar(
-                  backgroundColor: Color(0xffeaf2ff),
-                  child: Icon(Icons.person_outline, color: Color(0xff1d4ed8)),
+                  backgroundColor: AppColors.primary.withValues(alpha: 0.10),
+                  child: const Icon(Icons.person_outline,
+                      color: AppColors.primary),
                 ),
-                SizedBox(width: 12),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         "Personal Information",
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                        ),
+                        style: AppType.display(size: 18),
                       ),
                       Text(
                         "Update your details below and save",
-                        style: TextStyle(color: Colors.black54),
+                        style: AppType.body(size: 13)
+                            .copyWith(color: AppColors.textSecondary),
                       ),
                     ],
                   ),
@@ -297,15 +303,13 @@ class _EditProfilePageState extends State<EditProfilePage> {
               margin: const EdgeInsets.symmetric(horizontal: 18),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.blue.shade50,
-                borderRadius: BorderRadius.circular(12),
+                color: AppColors.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
-              child: const Text(
+              child: Text(
                 "✅ Profile updated successfully!",
-                style: TextStyle(
-                  color: Color(0xff1d4ed8),
-                  fontWeight: FontWeight.w800,
-                ),
+                style: AppType.body(size: 14, weight: FontWeight.w800)
+                    .copyWith(color: AppColors.primary),
               ),
             ),
 
@@ -371,6 +375,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
         TextField(
           controller: controller,
           keyboardType: keyboardType,
+          style: AppType.body(size: 14)
+              .copyWith(color: AppColors.textPrimary),
           onChanged: (_) => setState(() => saved = false),
           decoration: _inputDecoration(icon: icon, hint: hint),
         ),
@@ -386,6 +392,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
           initialValue: gender.isEmpty ? null : gender,
+          style: AppType.body(size: 14)
+              .copyWith(color: AppColors.textPrimary),
           items: const [
             DropdownMenuItem(value: "Male", child: Text("Male")),
             DropdownMenuItem(value: "Female", child: Text("Female")),
@@ -410,22 +418,24 @@ class _EditProfilePageState extends State<EditProfilePage> {
         _label("Date of Birth"),
         const SizedBox(height: 8),
         InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.sm),
           onTap: _pickDob,
           child: Container(
             width: double.infinity,
             padding: const EdgeInsets.all(15),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.65),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: Colors.black12),
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              border: Border.all(color: AppColors.border),
             ),
             child: Text(
               dob == null
                   ? "Select date of birth"
                   : "${dob!.day}-${dob!.month}-${dob!.year}",
-              style: TextStyle(
-                color: dob == null ? Colors.black45 : Colors.black,
-                fontWeight: FontWeight.w600,
+              style: AppType.body(size: 14, weight: FontWeight.w600).copyWith(
+                color: dob == null
+                    ? AppColors.textSecondary
+                    : AppColors.textPrimary,
               ),
             ),
           ),
@@ -443,9 +453,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
             icon: const Icon(Icons.refresh),
             label: const Text("Reset"),
             style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.textPrimary,
+              side: const BorderSide(color: AppColors.border),
               padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
             ),
           ),
@@ -458,7 +470,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
                 ? const SizedBox(
                     width: 16,
                     height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
                   )
                 : const Icon(Icons.save),
             label: Text(
@@ -469,11 +484,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
                   : "Save Changes",
             ),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xff1d4ed8),
+              backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
+              elevation: 0,
               padding: const EdgeInsets.symmetric(vertical: 14),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
             ),
           ),
@@ -485,11 +501,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
   Widget _label(String text) {
     return Text(
       text.toUpperCase(),
-      style: const TextStyle(
-        color: Colors.black54,
-        fontSize: 11,
-        fontWeight: FontWeight.w900,
-      ),
+      style: AppType.body(size: 11, weight: FontWeight.w900)
+          .copyWith(color: AppColors.textSecondary),
     );
   }
 
@@ -506,19 +519,21 @@ class _EditProfilePageState extends State<EditProfilePage> {
         ),
       ),
       hintText: hint,
+      hintStyle: AppType.body(size: 14)
+          .copyWith(color: AppColors.textSecondary),
       filled: true,
-      fillColor: Colors.white.withValues(alpha: 0.65),
+      fillColor: AppColors.surface,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
         borderSide: BorderSide.none,
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: BorderSide(color: Colors.black.withValues(alpha: 0.08)),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        borderSide: const BorderSide(color: AppColors.border),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
-        borderSide: const BorderSide(color: Color(0xff1d4ed8), width: 1.5),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
       ),
     );
   }
@@ -529,6 +544,16 @@ class _EditProfilePageState extends State<EditProfilePage> {
       initialDate: DateTime(2000),
       firstDate: DateTime(1900),
       lastDate: DateTime.now(),
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: Theme.of(context)
+                .colorScheme
+                .copyWith(primary: AppColors.primary),
+          ),
+          child: child!,
+        );
+      },
     );
 
     if (picked != null) {
@@ -753,18 +778,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
     return age;
   }
 
-  BoxDecoration _glassBox() {
+  BoxDecoration _cardDecoration() {
     return BoxDecoration(
-      color: Colors.white.withValues(alpha: 0.75),
-      borderRadius: BorderRadius.circular(22),
-      border: Border.all(color: Colors.white),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.blue.withValues(alpha: 0.08),
-          blurRadius: 24,
-          offset: const Offset(0, 8),
-        ),
-      ],
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      border: Border.all(color: AppColors.border, width: 1.2),
+      boxShadow: AppShadows.subtle,
     );
   }
 }

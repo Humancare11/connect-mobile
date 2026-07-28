@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../config/app_design_system.dart';
 import '../services/auth_service.dart';
 import '../services/auth_validators.dart';
 
-class ChangePasswordScreen extends StatefulWidget { 
+class ChangePasswordScreen extends StatefulWidget {
   const ChangePasswordScreen({super.key});
 
   @override
@@ -22,6 +23,9 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   bool _loading = false;
 
   final _authService = AuthService();
+
+  // Scaffold tint — swap for AppColors.background if your system defines one.
+  static const Color _bgCanvas = Color(0xFFF3F6F5);
 
   Future<void> _submit() async {
     if (_loading) return;
@@ -57,32 +61,35 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xfff6f8fb),
+      backgroundColor: _bgCanvas,
       appBar: AppBar(
         title: const Text('Change Password'),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
         elevation: 0,
       ),
       body: SafeArea(
         child: Form(
           key: _formKey,
           child: ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(AppSpacing.md),
             children: [
-              const Text(
+              Text(
                 'Update your password',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                style: AppType.display(size: 22),
               ),
               const SizedBox(height: 6),
-              const Text(
+              Text(
                 'Choose a strong password you have not used before.',
-                style: TextStyle(color: Colors.black54),
+                style: AppType.body(size: 14)
+                    .copyWith(color: AppColors.textSecondary),
               ),
               const SizedBox(height: 20),
               TextFormField(
                 controller: _currentCtrl,
                 obscureText: !_showCurrent,
+                style: AppType.body(size: 14)
+                    .copyWith(color: AppColors.textPrimary),
                 decoration: _passwordDecoration(
                   'Current password',
                   _showCurrent,
@@ -96,6 +103,8 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
               TextFormField(
                 controller: _newCtrl,
                 obscureText: !_showNew,
+                style: AppType.body(size: 14)
+                    .copyWith(color: AppColors.textPrimary),
                 decoration: _passwordDecoration(
                   'New password',
                   _showNew,
@@ -123,6 +132,8 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
               TextFormField(
                 controller: _confirmCtrl,
                 obscureText: !_showConfirm,
+                style: AppType.body(size: 14)
+                    .copyWith(color: AppColors.textPrimary),
                 decoration: _passwordDecoration(
                   'Confirm new password',
                   _showConfirm,
@@ -143,10 +154,11 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                 height: 54,
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xff1a3a5c),
+                    backgroundColor: AppColors.primary,
                     foregroundColor: Colors.white,
+                    elevation: 0,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(AppRadius.md),
                     ),
                   ),
                   onPressed: _loading ? null : _submit,
@@ -159,9 +171,10 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                             color: Colors.white,
                           ),
                         )
-                      : const Text(
+                      : Text(
                           'Update Password',
-                          style: TextStyle(fontWeight: FontWeight.w800),
+                          style: AppType.body(size: 15, weight: FontWeight.w800)
+                              .copyWith(color: Colors.white),
                         ),
                 ),
               ),
@@ -179,14 +192,27 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   ) {
     return InputDecoration(
       labelText: label,
+      labelStyle: AppType.body(size: 14)
+          .copyWith(color: AppColors.textSecondary),
       filled: true,
-      fillColor: Colors.white,
+      fillColor: AppColors.surface,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
         borderSide: BorderSide.none,
       ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        borderSide: const BorderSide(color: AppColors.border),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+        borderSide: const BorderSide(color: AppColors.primary, width: 1.6),
+      ),
       suffixIcon: IconButton(
-        icon: Icon(visible ? Icons.visibility_off : Icons.visibility),
+        icon: Icon(
+          visible ? Icons.visibility_off : Icons.visibility,
+          color: AppColors.textSecondary,
+        ),
         onPressed: onToggle,
       ),
     );

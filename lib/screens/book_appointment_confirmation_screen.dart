@@ -1,7 +1,15 @@
 import 'package:flutter/material.dart';
 
+import '../config/app_design_system.dart';
+
 class AppointmentConfirmationPage extends StatelessWidget {
   const AppointmentConfirmationPage({super.key});
+
+  // Scaffold tint — swap for AppColors.background if your system defines one.
+  static const Color _bgCanvas = Color(0xFFF3F6F5);
+
+  // Success accent (kept on-brand with the app's green status colour).
+  static const Color _success = Color(0xFF138A43);
 
   @override
   Widget build(BuildContext context) {
@@ -10,53 +18,49 @@ class AppointmentConfirmationPage extends StatelessWidget {
         <String, dynamic>{};
 
     return Scaffold(
-      backgroundColor: const Color(0xfff6f8fb),
+      backgroundColor: _bgCanvas,
       appBar: AppBar(
         title: const Text('Appointment Confirmed'),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
         elevation: 0,
       ),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.md),
           children: [
             Container(
               padding: const EdgeInsets.all(22),
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.04),
-                    blurRadius: 12,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                border: Border.all(color: AppColors.border, width: 1.2),
+                boxShadow: AppShadows.subtle,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const CircleAvatar(
+                  CircleAvatar(
                     radius: 28,
-                    backgroundColor: Color(0xffe8f6ee),
-                    child: Icon(
-                      Icons.check,
-                      color: Color(0xff138a43),
+                    backgroundColor: _success.withValues(alpha: 0.12),
+                    child: const Icon(
+                      Icons.check_rounded,
+                      color: _success,
                       size: 32,
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Text(
+                  Text(
                     'Payment successful',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+                    style: AppType.display(size: 23, height: 1.1),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
+                  Text(
                     'Your appointment has been booked and marked as paid.',
-                    style: TextStyle(color: Colors.black54, height: 1.4),
+                    style: AppType.body(size: 14, height: 1.4)
+                        .copyWith(color: AppColors.textSecondary),
                   ),
-                  const Divider(height: 30),
+                  const Divider(height: 30, color: AppColors.border),
                   _line('Specialty', args['specName']),
                   _line('Condition', args['condName']),
                   _line('Date', _formatDate(_parseDate(args['date']))),
@@ -70,10 +74,11 @@ class AppointmentConfirmationPage extends StatelessWidget {
               height: 52,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xff1a3a5c),
+                  backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
+                  elevation: 0,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
+                    borderRadius: BorderRadius.circular(AppRadius.md),
                   ),
                 ),
                 onPressed: () => Navigator.popUntil(
@@ -82,7 +87,10 @@ class AppointmentConfirmationPage extends StatelessWidget {
                 ),
                 child: const Text(
                   'Done',
-                  style: TextStyle(fontWeight: FontWeight.w800),
+                  style: TextStyle(
+                    fontFamily: AppFonts.family,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ),
@@ -119,12 +127,17 @@ class AppointmentConfirmationPage extends StatelessWidget {
         children: [
           SizedBox(
             width: 92,
-            child: Text(label, style: const TextStyle(color: Colors.black54)),
+            child: Text(
+              label,
+              style: AppType.body(size: 13)
+                  .copyWith(color: AppColors.textSecondary),
+            ),
           ),
           Expanded(
             child: Text(
               text.isEmpty ? '-' : text,
-              style: const TextStyle(fontWeight: FontWeight.w700),
+              style: AppType.body(size: 13.5, weight: FontWeight.w700)
+                  .copyWith(color: AppColors.textPrimary),
             ),
           ),
         ],

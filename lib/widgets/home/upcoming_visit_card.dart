@@ -17,7 +17,9 @@ import 'package:intl/intl.dart';
 
 import '../../config/app_design_system.dart';
 import '../../screens/appointments_screen.dart';
+import '../../screens/video_call_screen.dart';
 import '../../services/api_client.dart';
+import '../../services/token_storage_service.dart';
 
 class UpcomingVisitCard extends StatefulWidget {
   const UpcomingVisitCard({super.key, this.onManage});
@@ -33,8 +35,10 @@ class UpcomingVisitCard extends StatefulWidget {
 
 class _UpcomingVisitCardState extends State<UpcomingVisitCard> {
   final _apiClient = ApiClient();
+  final _tokenStorage = const TokenStorageService();
 
   bool _loading = true;
+  bool _joining = false;
   Appointment? _next;
 
   @override
@@ -144,6 +148,32 @@ class _UpcomingVisitCardState extends State<UpcomingVisitCard> {
     return DateFormat('h:mm a').format(when);
   }
 
+  Future<void> _joinConsultation(Appointment appointment) async {
+    if (_joining) return;
+    setState(() => _joining = true);
+
+    final profile = await _tokenStorage.getUserProfile();
+    if (!mounted) return;
+    setState(() => _joining = false);
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => VideoCallScreen(
+          appointmentId: appointment.id,
+          initialAppointment: appointment.toVideoCallPayload(profile),
+          initialDoctor: appointment.doctor?.toJson(),
+          initialPatient: {
+            if ((profile['userId'] ?? '').isNotEmpty) '_id': profile['userId'],
+            if ((profile['name'] ?? '').isNotEmpty) 'name': profile['name'],
+            if ((profile['email'] ?? '').isNotEmpty) 'email': profile['email'],
+          },
+          initialRole: 'user',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) return const _UpcomingVisitPlaceholder();
@@ -154,6 +184,7 @@ class _UpcomingVisitCardState extends State<UpcomingVisitCard> {
     final when = _parseWhen(appointment)!;
     final specialty = (appointment.specialty ?? '').trim();
     final doctorName = (appointment.doctor?.name ?? '').trim();
+    final canJoin = appointment.displayStatus == 'confirmed';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -170,84 +201,115 @@ class _UpcomingVisitCardState extends State<UpcomingVisitCard> {
           onTap: widget.onManage,
           radius: AppRadius.xl,
           shadow: AppShadows.card,
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(
-                  color: AppColors.violetTint,
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                ),
-                alignment: Alignment.center,
-                child: const Icon(
-                  Icons.favorite_border_rounded,
-                  color: AppColors.violetInk,
-                  size: 22,
-                ),
-              ),
-
-              const SizedBox(width: 13),
-
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (specialty.isNotEmpty) ...[
-                      Text(
-                        specialty.toUpperCase(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: AppType.mono(
-                          size: 11,
-                          weight: FontWeight.w600,
-                          color: AppColors.tealInk,
-                          letterSpacing: 0.4,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                    ],
-                    Text(
-                      doctorName.isEmpty
-                          ? 'Doctor being assigned'
-                          : 'Dr. $doctorName',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppType.display(size: 14.5),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      'Video consultation',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppType.body(size: 12),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(width: AppSpacing.sm),
-
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _timeLabel(appointment, when),
-                    style: AppType.mono(
-                      size: 13.5,
-                      weight: FontWeight.w600,
-                      color: AppColors.textPrimary,
+              if (canJoin) ...[
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _joining
+                        ? null
+                        : () => _joinConsultation(appointment),
+                    icon: _joining
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.video_call),
+                    label: Text(_joining ? 'Joining…' : 'Join'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
                     ),
                   ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _dayLabel(when),
-                    style: AppType.body(
-                      size: 11,
-                      color: AppColors.textTertiary,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+              ],
+              Row(
+                children: [
+                  Container(
+                    width: 50,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      color: AppColors.violetTint,
+                      borderRadius: BorderRadius.circular(AppRadius.md),
                     ),
+                    alignment: Alignment.center,
+                    child: const Icon(
+                      Icons.favorite_border_rounded,
+                      color: AppColors.violetInk,
+                      size: 22,
+                    ),
+                  ),
+
+                  const SizedBox(width: 13),
+
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (specialty.isNotEmpty) ...[
+                          Text(
+                            specialty.toUpperCase(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: AppType.mono(
+                              size: 11,
+                              weight: FontWeight.w600,
+                              color: AppColors.tealInk,
+                              letterSpacing: 0.4,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                        ],
+                        Text(
+                          doctorName.isEmpty
+                              ? 'Doctor being assigned'
+                              : 'Dr. $doctorName',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppType.display(size: 14.5),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Video consultation',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppType.body(size: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(width: AppSpacing.sm),
+
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _timeLabel(appointment, when),
+                        style: AppType.mono(
+                          size: 13.5,
+                          weight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _dayLabel(when),
+                        style: AppType.body(
+                          size: 11,
+                          color: AppColors.textTertiary,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

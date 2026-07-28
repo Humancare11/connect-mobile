@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../config/app_design_system.dart';
 import '../services/auth_repository.dart';
 import 'profile_settings_screen.dart';
 import 'my_records_screen.dart';
@@ -9,21 +10,14 @@ import 'change_password_screen.dart';
 import 'faq_screen.dart';
 import 'login_screen.dart';
 
-// Central palette so the "premium dark blue" theme stays consistent
-// everywhere. Tweak these two values to shift the whole screen's tone.
-class _Palette {
-  static const Color darkBlue = Color(0xff0B2545);
-  static const Color background = Color(0xffF5F7FB);
-  static const Color card = Colors.white;
-  static const Color iconBg = Color(0xffEAF0FA);
-  static const Color subtitle = Color(0xff6B7686);
-  static const Color divider = Color(0xffE7EBF2);
-  static const Color danger = Color(0xffC0392B);
-  static const Color dangerBg = Color(0xffFCEDEC);
-}
-
 class AccountScreen extends StatelessWidget {
   const AccountScreen({super.key, this.authRepository});
+
+  // Scaffold tint — swap for AppColors.background if your system defines one.
+  static const Color _bgCanvas = Color(0xFFF3F6F5);
+  // Destructive (log out) accent — kept distinct from the brand colour.
+  static const Color _danger = Color(0xFFC0392B);
+  static const Color _dangerBg = Color(0xFFFCEDEC);
 
   static final Uri _privacyPolicyUri = Uri.parse(
     'https://humancareconnect.co/privacy',
@@ -50,28 +44,33 @@ class AccountScreen extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Log out',
-          style: TextStyle(fontWeight: FontWeight.w800),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.md),
         ),
-        content: const Text(
+        title: Text(
+          'Log out',
+          style: AppType.body(size: 17, weight: FontWeight.w800)
+              .copyWith(color: AppColors.textPrimary),
+        ),
+        content: Text(
           'Are you sure you want to log out of your account?',
+          style: AppType.body(size: 14).copyWith(color: AppColors.textSecondary),
         ),
         actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text(
+            child: Text(
               'Cancel',
-              style: TextStyle(color: _Palette.subtitle),
+              style: AppType.body(size: 14)
+                  .copyWith(color: AppColors.textSecondary),
             ),
           ),
           FilledButton(
             style: FilledButton.styleFrom(
-              backgroundColor: _Palette.danger,
+              backgroundColor: _danger,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(AppRadius.sm),
               ),
             ),
             onPressed: () => Navigator.pop(dialogContext, true),
@@ -151,17 +150,15 @@ class AccountScreen extends StatelessWidget {
     ];
 
     return Scaffold(
-      backgroundColor: _Palette.background,
+      backgroundColor: _bgCanvas,
       appBar: AppBar(
-        title: const Text(
+        title: Text(
           'Account',
-          style: TextStyle(
-            fontWeight: FontWeight.w800,
-            color: _Palette.darkBlue,
-          ),
+          style: AppType.body(size: 18, weight: FontWeight.w800)
+              .copyWith(color: AppColors.textPrimary),
         ),
-        backgroundColor: Colors.white,
-        foregroundColor: _Palette.darkBlue,
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
       ),
@@ -169,12 +166,12 @@ class AccountScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
           children: [
-            _SectionLabel('GENERAL'),
+            const _SectionLabel('GENERAL'),
             const SizedBox(height: 10),
             _OptionGroup(options: accountOptions),
 
             const SizedBox(height: 24),
-            _SectionLabel('SUPPORT'),
+            const _SectionLabel('SUPPORT'),
             const SizedBox(height: 10),
             _OptionGroup(options: supportOptions),
 
@@ -197,12 +194,8 @@ class _SectionLabel extends StatelessWidget {
       padding: const EdgeInsets.only(left: 4),
       child: Text(
         text,
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 0.8,
-          color: _Palette.subtitle,
-        ),
+        style: AppType.body(size: 12, weight: FontWeight.w700)
+            .copyWith(color: AppColors.textSecondary, letterSpacing: 0.8),
       ),
     );
   }
@@ -218,15 +211,10 @@ class _OptionGroup extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: _Palette.card,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: _Palette.darkBlue.withValues(alpha: 0.06),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
-        ],
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        border: Border.all(color: AppColors.border, width: 1.2),
+        boxShadow: AppShadows.subtle,
       ),
       child: Column(
         children: List.generate(options.length, (index) {
@@ -242,7 +230,7 @@ class _OptionGroup extends StatelessWidget {
                   child: Divider(
                     height: 1,
                     thickness: 1,
-                    color: _Palette.divider,
+                    color: AppColors.border,
                   ),
                 ),
             ],
@@ -280,11 +268,11 @@ class _AccountTile extends StatelessWidget {
               Container(
                 width: 44,
                 height: 44,
-                decoration: const BoxDecoration(
-                  color: _Palette.iconBg,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.10),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(option.icon, color: _Palette.darkBlue, size: 22),
+                child: Icon(option.icon, color: AppColors.primary, size: 22),
               ),
               const SizedBox(width: 14),
               Expanded(
@@ -293,24 +281,20 @@ class _AccountTile extends StatelessWidget {
                   children: [
                     Text(
                       option.title,
-                      style: const TextStyle(
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xff1B1F27),
-                      ),
+                      style: AppType.body(size: 15.5, weight: FontWeight.w700)
+                          .copyWith(color: AppColors.textPrimary),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       option.subtitle,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: _Palette.subtitle,
-                      ),
+                      style: AppType.body(size: 12.5)
+                          .copyWith(color: AppColors.textSecondary),
                     ),
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xffB7C0CE)),
+              Icon(Icons.chevron_right_rounded,
+                  color: AppColors.textSecondary.withValues(alpha: 0.6)),
             ],
           ),
         ),
@@ -326,25 +310,23 @@ class _LogoutTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: _Palette.dangerBg,
-      borderRadius: BorderRadius.circular(18),
+      color: AccountScreen._dangerBg,
+      borderRadius: BorderRadius.circular(AppRadius.md),
       child: InkWell(
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(AppRadius.md),
         onTap: onTap,
-        child: const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.logout_rounded, color: _Palette.danger, size: 20),
-              SizedBox(width: 10),
+              Icon(Icons.logout_rounded,
+                  color: AccountScreen._danger, size: 20),
+              const SizedBox(width: 10),
               Text(
                 'Log Out',
-                style: TextStyle(
-                  fontSize: 15.5,
-                  fontWeight: FontWeight.w800,
-                  color: _Palette.danger,
-                ),
+                style: AppType.body(size: 15.5, weight: FontWeight.w800)
+                    .copyWith(color: AccountScreen._danger),
               ),
             ],
           ),

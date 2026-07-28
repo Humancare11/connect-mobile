@@ -1,14 +1,6 @@
 import 'package:flutter/material.dart';
 
-// Keep this in sync with account_screen.dart's palette so the two
-// screens feel like one cohesive, premium experience.
-class _Palette {
-  static const Color darkBlue = Color(0xff0B2545);
-  static const Color background = Color(0xffF5F7FB);
-  static const Color card = Colors.white;
-  static const Color subtitle = Color(0xff6B7686);
-  static const Color divider = Color(0xffE7EBF2);
-}
+import '../config/app_design_system.dart';
 
 class _Faq {
   final String question;
@@ -18,6 +10,9 @@ class _Faq {
 
 class FaqScreen extends StatelessWidget {
   const FaqScreen({super.key});
+
+  // Scaffold tint — swap for AppColors.background if your system defines one.
+  static const Color _bgCanvas = Color(0xFFF3F6F5);
 
   static const List<_Faq> _faqs = [
     _Faq(
@@ -56,14 +51,15 @@ class FaqScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _Palette.background,
+      backgroundColor: _bgCanvas,
       appBar: AppBar(
-        title: const Text(
+        title: Text(
           'FAQs',
-          style: TextStyle(fontWeight: FontWeight.w800, color: _Palette.darkBlue),
+          style: AppType.body(size: 18, weight: FontWeight.w800)
+              .copyWith(color: AppColors.textPrimary),
         ),
-        backgroundColor: Colors.white,
-        foregroundColor: _Palette.darkBlue,
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
         elevation: 0,
         surfaceTintColor: Colors.transparent,
       ),
@@ -71,31 +67,23 @@ class FaqScreen extends StatelessWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
           children: [
-            const Text(
+            Text(
               'Frequently Asked Questions',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                color: Color(0xff1B1F27),
-              ),
+              style: AppType.display(size: 20),
             ),
             const SizedBox(height: 4),
-            const Text(
+            Text(
               'Quick answers to the things people ask us most.',
-              style: TextStyle(fontSize: 13.5, color: _Palette.subtitle),
+              style: AppType.body(size: 13.5)
+                  .copyWith(color: AppColors.textSecondary),
             ),
             const SizedBox(height: 18),
             Container(
               decoration: BoxDecoration(
-                color: _Palette.card,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: _Palette.darkBlue.withValues(alpha: 0.06),
-                    blurRadius: 18,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                border: Border.all(color: AppColors.border, width: 1.2),
+                boxShadow: AppShadows.subtle,
               ),
               child: Theme(
                 data: Theme.of(context).copyWith(
@@ -113,7 +101,11 @@ class FaqScreen extends StatelessWidget {
                         if (!isLast)
                           const Padding(
                             padding: EdgeInsets.symmetric(horizontal: 16),
-                            child: Divider(height: 1, thickness: 1, color: _Palette.divider),
+                            child: Divider(
+                              height: 1,
+                              thickness: 1,
+                              color: AppColors.border,
+                            ),
                           ),
                       ],
                     );
@@ -138,24 +130,18 @@ class _FaqTile extends StatelessWidget {
       tilePadding: const EdgeInsets.symmetric(horizontal: 16),
       childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       expandedAlignment: Alignment.topLeft,
-      iconColor: _Palette.darkBlue,
-      collapsedIconColor: _Palette.subtitle,
+      iconColor: AppColors.primary,
+      collapsedIconColor: AppColors.textSecondary,
       title: Text(
         faq.question,
-        style: const TextStyle(
-          fontSize: 14.5,
-          fontWeight: FontWeight.w700,
-          color: Color(0xff1B1F27),
-        ),
+        style: AppType.body(size: 14.5, weight: FontWeight.w700)
+            .copyWith(color: AppColors.textPrimary),
       ),
       children: [
         Text(
           faq.answer,
-          style: const TextStyle(
-            fontSize: 13.5,
-            height: 1.4,
-            color: _Palette.subtitle,
-          ),
+          style: AppType.body(size: 13.5, height: 1.4)
+              .copyWith(color: AppColors.textSecondary),
         ),
       ],
     );

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../config/app_design_system.dart';
 import '../services/appointment_tree_service.dart';
 
 class AppointmentBookingPage extends StatefulWidget {
@@ -21,6 +22,11 @@ class AppointmentBookingPage extends StatefulWidget {
 class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
   final _treeService = AppointmentTreeService();
   final searchCtrl = TextEditingController();
+
+  // Scaffold tint — swap for AppColors.background if your system defines one.
+  static const Color _bgCanvas = Color(0xFFF3F6F5);
+  // "LIVE" badge accent (on-brand green, matches the app's status colours).
+  static const Color _live = Color(0xFF63C06B);
 
   String tab = "cat";
   Map<String, dynamic>? activeCat;
@@ -181,25 +187,26 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
         : "Search conditions / symptoms...";
 
     return Scaffold(
-      backgroundColor: const Color(0xfff6f8fb),
+      backgroundColor: _bgCanvas,
       appBar: AppBar(
         title: const Text("Find Doctor"),
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
+        backgroundColor: AppColors.surface,
+        foregroundColor: AppColors.textPrimary,
         elevation: 0,
       ),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(AppSpacing.md),
           children: [
-            const Text(
+            Text(
               "Find the right online doctor for your needs.",
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+              style: AppType.display(size: 23, height: 1.15),
             ),
             const SizedBox(height: 8),
-            const Text(
+            Text(
               "Book an online doctor appointment in minutes.",
-              style: TextStyle(color: Colors.black54),
+              style: AppType.body(size: 14)
+                  .copyWith(color: AppColors.textSecondary),
             ),
             const SizedBox(height: 18),
             Row(
@@ -213,14 +220,25 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
             TextField(
               controller: searchCtrl,
               onChanged: (_) => setState(() {}),
+              style: AppType.body(size: 14)
+                  .copyWith(color: AppColors.textPrimary),
               decoration: InputDecoration(
                 hintText: placeholder,
-                prefixIcon: const Icon(Icons.search),
+                hintStyle: AppType.body(size: 14)
+                    .copyWith(color: AppColors.textSecondary),
+                prefixIcon:
+                    const Icon(Icons.search, color: AppColors.textSecondary),
                 filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(18),
-                  borderSide: BorderSide.none,
+                fillColor: AppColors.surface,
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  borderSide:
+                      const BorderSide(color: AppColors.border, width: 1.2),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                  borderSide:
+                      const BorderSide(color: AppColors.primary, width: 1.6),
                 ),
               ),
             ),
@@ -257,24 +275,26 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
           margin: const EdgeInsets.only(right: 8),
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
-            color: active ? Colors.black : Colors.white,
-            borderRadius: BorderRadius.circular(14),
+            color: active ? AppColors.primary : AppColors.surface,
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            border: Border.all(
+              color: active ? AppColors.primary : AppColors.border,
+              width: 1.2,
+            ),
           ),
           child: Column(
             children: [
               Text(
                 num,
-                style: TextStyle(
-                  color: active ? Colors.white : Colors.black54,
-                  fontSize: 11,
+                style: AppType.body(size: 11).copyWith(
+                  color:
+                      active ? Colors.white.withValues(alpha: 0.75) : AppColors.textSecondary,
                 ),
               ),
               Text(
                 label,
-                style: TextStyle(
-                  color: active ? Colors.white : Colors.black,
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
+                style: AppType.body(size: 12, weight: FontWeight.w700).copyWith(
+                  color: active ? Colors.white : AppColors.textPrimary,
                 ),
               ),
             ],
@@ -302,7 +322,7 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
         return _card(
           icon: cat["icon"],
           title: cat["label"],
-          subtitle: "${specs.length} specialties - $conditionCount conditions",
+          subtitle: "${specs.length} specialties · $conditionCount conditions",
           trailing: "Explore",
           onTap: () {
             setState(() {
@@ -410,17 +430,17 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
             },
             child: Text(
               first,
-              style: const TextStyle(
-                color: Colors.blue,
-                fontWeight: FontWeight.w700,
-              ),
+              style: AppType.body(size: 13, weight: FontWeight.w700)
+                  .copyWith(color: AppColors.primary),
             ),
           ),
-          const Text("  >  "),
+          Icon(Icons.chevron_right_rounded,
+              size: 16, color: AppColors.textSecondary),
           Expanded(
             child: Text(
               second,
-              style: const TextStyle(fontWeight: FontWeight.w700),
+              style: AppType.body(size: 13, weight: FontWeight.w700)
+                  .copyWith(color: AppColors.textPrimary),
             ),
           ),
         ],
@@ -432,7 +452,9 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: _box(),
-      child: const Center(child: CircularProgressIndicator()),
+      child: const Center(
+        child: CircularProgressIndicator(color: AppColors.primary),
+      ),
     );
   }
 
@@ -443,18 +465,27 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             "Unable to load appointment options.",
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+            style: AppType.display(size: 16),
           ),
           const SizedBox(height: 8),
           Text(
             message.isEmpty ? "Please try again." : message,
-            style: const TextStyle(color: Colors.black54),
+            style: AppType.body(size: 13)
+                .copyWith(color: AppColors.textSecondary),
           ),
           const SizedBox(height: 14),
           ElevatedButton(
             onPressed: _loadAppointmentTree,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+            ),
             child: const Text("Try again"),
           ),
         ],
@@ -467,7 +498,11 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
       width: double.infinity,
       padding: const EdgeInsets.all(18),
       decoration: _box(),
-      child: Text(message, style: const TextStyle(color: Colors.black54)),
+      child: Text(
+        message,
+        style: AppType.body(size: 13)
+            .copyWith(color: AppColors.textSecondary),
+      ),
     );
   }
 
@@ -481,71 +516,93 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
   }) {
     final hasIcon = icon.trim().isNotEmpty;
 
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: _box(),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 34,
-              child: hasIcon
-                  ? Text(icon, style: const TextStyle(fontSize: 30))
-                  : const Icon(Icons.medical_services_outlined, size: 30),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.md),
+          splashColor: AppColors.primary.withValues(alpha: 0.08),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            decoration: _box(),
+            child: Row(
+              children: [
+                // Soft tinted icon square (consistent with the rest of the app)
+                Container(
+                  width: 46,
+                  height: 46,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(AppRadius.sm),
+                  ),
+                  alignment: Alignment.center,
+                  child: hasIcon
+                      ? Text(icon,
+                          style: const TextStyle(fontSize: 22, height: 1))
+                      : const Icon(Icons.medical_services_outlined,
+                          size: 22, color: AppColors.primary),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Text(
-                          title,
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                      if (badge != null)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.green.shade50,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            badge,
-                            style: TextStyle(
-                              color: Colors.green.shade700,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: AppType.body(
+                                  size: 15.5, weight: FontWeight.w700),
                             ),
                           ),
-                        ),
+                          if (badge != null)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _live.withValues(alpha: 0.14),
+                                borderRadius:
+                                    BorderRadius.circular(AppRadius.chip),
+                              ),
+                              child: Text(
+                                badge,
+                                style: AppType.body(
+                                        size: 10, weight: FontWeight.w700)
+                                    .copyWith(color: _live),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppType.body(size: 12.5)
+                            .copyWith(color: AppColors.textSecondary),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(subtitle, style: const TextStyle(color: Colors.black54)),
-                ],
-              ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  trailing,
+                  style: AppType.body(size: 13, weight: FontWeight.w700)
+                      .copyWith(color: AppColors.primary),
+                ),
+                Icon(Icons.chevron_right_rounded,
+                    size: 18, color: AppColors.primary),
+              ],
             ),
-            const SizedBox(width: 8),
-            Text(
-              trailing,
-              style: const TextStyle(
-                color: Colors.blue,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -553,15 +610,10 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
 
   BoxDecoration _box() {
     return BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(18),
-      boxShadow: [
-        BoxShadow(
-          color: Colors.black.withValues(alpha: 0.04),
-          blurRadius: 12,
-          offset: const Offset(0, 6),
-        ),
-      ],
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      border: Border.all(color: AppColors.border, width: 1.2),
+      boxShadow: AppShadows.subtle,
     );
   }
 }

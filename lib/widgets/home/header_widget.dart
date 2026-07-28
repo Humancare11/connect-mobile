@@ -1,8 +1,8 @@
 // Section 1 — HomeHeader
 //
-// Layout follows the home mockup: a compact gradient brand mark, the greeting
-// stacked over a tappable location line, then a notification button and the
-// account avatar as two equally-sized rounded squares on the right.
+// Layout follows the home mockup: the brand logo, the greeting stacked over a
+// tappable location line, then a notification button and the account avatar as
+// two equally-sized rounded squares on the right.
 //
 // All original logic (FutureBuilder over the stored profile, name/location
 // resolvers, avatar → AccountScreen) is unchanged — this is presentation only.
@@ -32,25 +32,15 @@ class HomeHeader extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             // ── Brand mark ────────────────────────────────────────────────
-            // The heart-with-pulse glyph mirrors the mockup's mark. Swap the
-            // Icon for `Image.asset('assets/Logo.png')` if the wordmark should
-            // stay on the home screen.
-            Container(
-              width: 38,
-              height: 38,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(AppRadius.sm),
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [AppColors.primary, AppColors.primaryDeep],
-                ),
-              ),
-              alignment: Alignment.center,
-              child: const Icon(
-                Icons.monitor_heart_rounded,
-                color: Colors.white,
-                size: 21,
+            // Brand logo image. Register `assets/logo-2.png` under
+            // `flutter: assets:` in pubspec.yaml, otherwise it won't load.
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              child: Image.asset(
+                'assets/logo-2.png',
+                width: 50,
+                height: 50,
+                fit: BoxFit.contain,
               ),
             ),
 
