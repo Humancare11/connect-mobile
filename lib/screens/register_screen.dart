@@ -319,13 +319,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
             _normalizeLocationName(country.name): country,
         };
       });
+      _clearLocationError();
     } else {
-      _setError(result.message);
+      _setLocationError(result.message);
     }
     setState(() => _loadingCountries = false);
   }
 
   Future<void> _fetchStates(String country) async {
+    // Drop a stale lookup error the moment the country changes, rather than
+    // leaving it under a spinner until the new request comes back.
+    _clearLocationError();
     setState(() {
       _loadingStates = true;
       _states = [];
@@ -343,13 +347,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
             .toSet()
             .toList();
       });
+      _clearLocationError();
     } else {
-      _setError(result.message);
+      _setLocationError(result.message);
     }
     setState(() => _loadingStates = false);
   }
 
   Future<void> _fetchCities(String country, String state) async {
+    _clearLocationError();
     setState(() {
       _loadingCities = true;
       _cities = [];
@@ -365,8 +371,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
             .toSet()
             .toList();
       });
+      _clearLocationError();
     } else {
-      _setError(result.message);
+      _setLocationError(result.message);
     }
     setState(() => _loadingCities = false);
   }
@@ -643,6 +650,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   void _setError(String msg) => setState(() => _error = msg);
+
+  /// The last message a country/state/city lookup put into [_error].
+  ///
+  /// The three location lookups share the form's single error slot with
+  /// validation messages, and they used to set it on failure without ever
+  /// clearing it on success — so an upstream "state not found" for one country
+  /// stayed on screen even after picking a country and state that loaded fine.
+  /// Remembering what we wrote lets a successful lookup clear its own error
+  /// without wiping an unrelated validation message the user is still reading.
+  String _lastLocationError = '';
+
+  void _setLocationError(String msg) {
+    _lastLocationError = msg;
+    _setError(msg);
+  }
+
+  void _clearLocationError() {
+    if (_error.isEmpty || _error != _lastLocationError) return;
+    _lastLocationError = '';
+    setState(() => _error = '');
+  }
 
   Future<void> _handleGoogleSignUp() async {
     if (_googleLoading) return;
