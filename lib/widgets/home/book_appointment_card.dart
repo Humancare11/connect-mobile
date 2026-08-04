@@ -2,13 +2,11 @@
 //
 // Deep-indigo gradient panel: availability pill across the top, then a two
 // column body with the headline and "Get Started" action on the left and a
-// calendar/stethoscope illustration on the right.
+// calendar image illustration on the right.
 //
 // "Get Started" reveals the category grid in place rather than navigating, so
 // the card stays the quick path into a specialty while "View all categories"
 // remains the way through to AppointmentBookingPage.
-//
-// Category loading/filtering/navigation is unchanged from earlier versions.
 
 import 'package:flutter/material.dart';
 
@@ -91,6 +89,11 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
   Widget build(BuildContext context) {
     final showExpanded = _expanded || _hasSearch;
 
+    // Screen width nikaal ke illustration ki size decide karte hain, taaki
+    // choti screens par woh chhoti ho aur badi screens par thodi badi.
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final illustrationSize = (screenWidth * 0.30).clamp(96.0, 140.0);
+
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
@@ -137,9 +140,6 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
                   // there is not enough room for the pill's copy, and it would
                   // ellipsize.
                   Row(
-                    // spaceBetween, not a plain gap: the status line sizes to
-                    // its text, so without this the chevron would hug the end
-                    // of the copy instead of sitting against the card's edge.
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Flexible(
@@ -180,9 +180,6 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
 
                             Text(
                               'Choose a specialty to get started',
-                              // Lifted off the old #B9C1EA: against the
-                              // brighter gradient that value sank into the
-                              // background instead of reading as secondary.
                               style: AppType.body(
                                 size: 12.5,
                                 color: const Color(0xFFC8D5F7),
@@ -192,9 +189,6 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
 
                             const SizedBox(height: 18),
 
-                            // Straight through to the full booking page. The
-                            // chevron above is what expands the shortlist of
-                            // categories in place.
                             _GetStartedButton(
                               onTap: () => _openAppointmentPage(),
                             ),
@@ -204,7 +198,8 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
 
                       const SizedBox(width: 10),
 
-                      const _AppointmentIllustration(),
+                      // Right-side illustration (ab image asset).
+                      _AppointmentIllustration(size: illustrationSize),
                     ],
                   ),
 
@@ -364,7 +359,10 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
 
   Widget _emptyState([String message = 'No categories available']) {
     return _glassPanel(
-      child: Text(message, style: AppType.body(size: 11.5, color: Colors.white)),
+      child: Text(
+        message,
+        style: AppType.body(size: 11.5, color: Colors.white),
+      ),
     );
   }
 
@@ -418,9 +416,7 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
 
 // ── Hero sub-widgets ─────────────────────────────────────────────────────────
 
-/// Availability line: a live dot and the label, with no chip behind it. A
-/// translucent pill on top of the gradient added a second edge competing with
-/// the card's own, which is why the design leaves the text bare.
+/// Availability line: a live dot and the label, with no chip behind it.
 class _LiveStatus extends StatelessWidget {
   const _LiveStatus({required this.label});
 
@@ -457,9 +453,7 @@ class _LiveStatus extends StatelessWidget {
   }
 }
 
-/// Circular chevron that expands the category shortlist in place. Restored
-/// from the pre-redesign card: the illustration-led layout has no other
-/// affordance for browsing categories without leaving the home screen.
+/// Circular chevron that expands the category shortlist in place.
 class _CircleToggle extends StatelessWidget {
   const _CircleToggle({required this.expanded, required this.onTap});
 
@@ -493,9 +487,7 @@ class _CircleToggle extends StatelessWidget {
   }
 }
 
-/// White pill with a filled circular arrow, as in the design. The arrow points
-/// forward and does not animate — this navigates to the booking page, so it
-/// must not read as an in-place disclosure the way the chevron above does.
+/// White pill with a filled circular arrow.
 class _GetStartedButton extends StatelessWidget {
   const _GetStartedButton({required this.onTap});
 
@@ -551,204 +543,38 @@ class _GetStartedButton extends StatelessWidget {
   }
 }
 
-/// Calendar-and-stethoscope motif from the design, drawn rather than shipped as
-/// an image asset so it stays crisp at any density and recolours with the
-/// palette. The stethoscope is painted behind the calendar so its tube reads as
-/// passing around it.
+/// Right-side illustration. Ab ye drawn calendar/stethoscope ki jagah ek
+/// image asset (calende.png) dikhata hai. Size parent se aata hai taaki card
+/// alag-alag screen widths par responsive rahe.
 class _AppointmentIllustration extends StatelessWidget {
-  const _AppointmentIllustration();
+  const _AppointmentIllustration({this.size = 116});
 
-  static const double _size = 116;
-
-  // Calendar geometry, shared with the badge and ring placement below so the
-  // three stay aligned if the sizes are tuned.
-  static const double _calWidth = 88;
-  static const double _calHeight = 78;
-  static const double _calTop = 16;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
+    // The source PNG is a 6250x6250 (~19.5 MB) image. Without cacheWidth/
+    // cacheHeight, Image.asset decodes it at full resolution before scaling
+    // down for display — allocating ~150 MB of raw bitmap for a ~140x140
+    // box. That decode fails on real devices, and errorBuilder below was
+    // silently swallowing the failure, so nothing ever rendered. Passing a
+    // physical-pixel cache size makes Flutter downsample during decode.
+    final devicePixelRatio = MediaQuery.devicePixelRatioOf(context);
+    final cacheSize = (size * devicePixelRatio).round();
+
     return SizedBox(
-      width: _size,
-      height: _size,
-      child: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          const Positioned.fill(
-            child: CustomPaint(painter: _StethoscopePainter()),
-          ),
-
-          // Binder rings, straddling the header's top edge so they read as
-          // threaded through it rather than floating above the card.
-          const Positioned(top: _calTop - 7, right: 60, child: _BinderRing()),
-          const Positioned(top: _calTop - 7, right: 24, child: _BinderRing()),
-
-          Positioned(
-            top: _calTop,
-            right: 0,
-            child: Container(
-              width: _calWidth,
-              height: _calHeight,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.heroTo.withValues(alpha: 0.35),
-                    blurRadius: 22,
-                    spreadRadius: -6,
-                    offset: const Offset(0, 10),
-                  ),
-                ],
-              ),
-              child: Column(
-                children: [
-                  Container(
-                    height: 17,
-                    decoration: const BoxDecoration(
-                      // Blue, not the indigo `accent` — that read as purple
-                      // against the card and fought the rest of the palette.
-                      color: Color(0xFF3D7BEE),
-                      borderRadius: BorderRadius.vertical(
-                        top: Radius.circular(12),
-                      ),
-                    ),
-                  ),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                      child: Wrap(
-                        spacing: 5,
-                        runSpacing: 5,
-                        children: List.generate(
-                          12,
-                          (_) => Container(
-                            width: 14,
-                            height: 9,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFD9E4FA),
-                              borderRadius: BorderRadius.circular(2.5),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // Confirmation badge, overlapping the calendar's lower-right corner.
-          Positioned(
-            right: 0,
-            bottom: _size - (_calTop + _calHeight) - 8,
-            child: Container(
-              width: 28,
-              height: 28,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF2F6BE5),
-                border: Border.all(color: Colors.white, width: 2),
-              ),
-              alignment: Alignment.center,
-              child: const Icon(
-                Icons.check_rounded,
-                color: Colors.white,
-                size: 14,
-              ),
-            ),
-          ),
-        ],
+      width: size,
+      height: size,
+      child: Image.asset(
+        'assets/calender.png',
+        fit: BoxFit.contain,
+        cacheWidth: cacheSize,
+        cacheHeight: cacheSize,
+        // Agar image load na ho paye to layout na toote:
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
       ),
     );
   }
-}
-
-class _BinderRing extends StatelessWidget {
-  const _BinderRing();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 5,
-      height: 14,
-      decoration: BoxDecoration(
-        color: const Color(0xFFCBD8F2),
-        borderRadius: BorderRadius.circular(3),
-      ),
-    );
-  }
-}
-
-class _StethoscopePainter extends CustomPainter {
-  const _StethoscopePainter();
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width;
-    final h = size.height;
-
-    final tube = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 5.5
-      ..strokeCap = StrokeCap.round
-      ..color = Colors.white.withValues(alpha: 0.62);
-
-    // Both ear tubes start high and to the right so they disappear behind the
-    // calendar, then converge and sweep down the left side to the chest piece
-    // — the tube has to look like it passes behind the card, not beside it.
-    final yoke = Offset(w * 0.17, h * 0.40);
-    final earLeft = Offset(w * 0.10, h * 0.08);
-    final earRight = Offset(w * 0.40, h * 0.04);
-    final chestPiece = Offset(w * 0.22, h * 0.76);
-
-    canvas.drawPath(
-      Path()
-        ..moveTo(earLeft.dx, earLeft.dy)
-        ..quadraticBezierTo(w * 0.04, h * 0.24, yoke.dx, yoke.dy),
-      tube,
-    );
-    canvas.drawPath(
-      Path()
-        ..moveTo(earRight.dx, earRight.dy)
-        ..quadraticBezierTo(w * 0.36, h * 0.26, yoke.dx, yoke.dy),
-      tube,
-    );
-
-    canvas.drawPath(
-      Path()
-        ..moveTo(yoke.dx, yoke.dy)
-        ..cubicTo(
-          w * 0.05,
-          h * 0.56,
-          w * 0.06,
-          h * 0.72,
-          chestPiece.dx,
-          chestPiece.dy,
-        ),
-      tube,
-    );
-
-    canvas.drawCircle(
-      chestPiece,
-      12,
-      Paint()..color = Colors.white.withValues(alpha: 0.9),
-    );
-    canvas.drawCircle(
-      chestPiece,
-      6.5,
-      Paint()..color = const Color(0xFF3D7BEE).withValues(alpha: 0.45),
-    );
-
-    // Ear tips.
-    final tip = Paint()..color = Colors.white.withValues(alpha: 0.8);
-    canvas.drawCircle(earLeft, 4, tip);
-    canvas.drawCircle(earRight, 4, tip);
-  }
-
-  @override
-  bool shouldRepaint(_StethoscopePainter oldDelegate) => false;
 }
 
 class _CategoryIcon extends StatelessWidget {
@@ -768,7 +594,7 @@ class _CategoryIcon extends StatelessWidget {
         width: 14,
         height: 14,
         fit: BoxFit.contain,
-        errorBuilder: (_, _, _) => const SizedBox.shrink(),
+        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
       );
     }
 

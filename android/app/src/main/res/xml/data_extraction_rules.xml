@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Belt-and-suspenders alongside android:allowBackup="false" in
+  AndroidManifest.xml, which already disables both cloud backup and
+  device-to-device transfer app-wide — this file only takes effect if that
+  ever gets flipped back to true. Sensitive data (session state and profile
+  PII, both now in flutter_secure_storage — see TokenStorageService) is
+  excluded from any backup/transfer path so it never leaves the device
+  outside of Android's own encrypted-storage protections.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" />
+        <exclude domain="database" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" />
+        <exclude domain="database" />
+    </device-transfer>
+</data-extraction-rules>

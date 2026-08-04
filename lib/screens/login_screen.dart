@@ -371,7 +371,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // ─── LOGO ──────────────────────────────────────────────────────
   Widget _buildLogo() {
-    return Column(children: [Image.asset('assets/Logo.png', width: 150)]);
+    return Column(children: [Image.asset('assets/logo-2.png', width: 150)]);
   }
 
   // ─── WELCOME ───────────────────────────────────────────────────

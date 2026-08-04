@@ -4,17 +4,11 @@ import '../config/app_design_system.dart';
 import '../widgets/home/header_widget.dart';
 import '../widgets/home/search_bar_widget.dart';
 import '../widgets/home/book_appointment_card.dart';
-import '../widgets/home/upcoming_visit_card.dart';
 import '../widgets/home/explore_specialties_section.dart';
 import '../widgets/home/medical_services_section.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, this.onOpenAppointments});
-
-  /// Switches the shell to the Appointments tab. Used by the upcoming-visit
-  /// card's "Manage" action so it moves between tabs instead of pushing a
-  /// second AppointmentsScreen on top of the one the shell already holds.
-  final VoidCallback? onOpenAppointments;
+  const HomeScreen({super.key});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -47,12 +41,6 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 20),
 
             _Gutter(child: BookAppointmentCard(searchQuery: _searchQuery)),
-
-            const SizedBox(height: 22),
-
-            _Gutter(
-              child: UpcomingVisitCard(onManage: widget.onOpenAppointments),
-            ),
 
             const SizedBox(height: 22),
 

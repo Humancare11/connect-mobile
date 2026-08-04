@@ -77,7 +77,11 @@ class CallForegroundService : Service() {
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Humancare Connect")
             .setContentText("Video consultation in progress")
-            .setSmallIcon(applicationInfo.icon)
+            // applicationInfo.icon is the full-color launcher icon, which the
+            // status bar renders as a solid white/grey blob (Android draws
+            // small icons as an alpha-mask silhouette, ignoring color) — use
+            // the dedicated monochrome asset instead, same as notification_service.dart.
+            .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()

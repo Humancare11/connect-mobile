@@ -9,7 +9,9 @@ import '../models/auth_response.dart';
 import '../models/google_auth_result.dart';
 import '../utils/json_helpers.dart';
 import 'api_client.dart';
+import 'idle_session_timer.dart';
 import 'notification_service.dart';
+import 'session_expired_service.dart';
 import 'token_storage_service.dart';
 
 class AuthService {
@@ -212,6 +214,19 @@ class AuthService {
     );
   }
 
+  Future<ApiResult<void>> requestAccountDeletion({String reason = ''}) async {
+    final result = await _apiClient.post('/auth/account-delete-request', {
+      'reason': reason.trim(),
+    });
+
+    return ApiResult<void>(
+      success: result.success,
+      message: result.message,
+      raw: result.raw,
+      statusCode: result.statusCode,
+    );
+  }
+
   Future<GoogleAuthResult> googleLoginWithAccessToken(
     String accessToken,
   ) async {
@@ -358,6 +373,13 @@ class AuthService {
   }
 
   Future<void> saveSession(AuthResponse authResponse) async {
+    // Every login/register/Google-auth path funnels through here to
+    // establish a session — the single place to also clear a stale
+    // "session expired" flag, rather than relying solely on the gate's own
+    // button handler (see SessionExpiredScreen._goToLogin), and to start
+    // the 30-minute inactivity countdown.
+    SessionExpiredService.instance.reset();
+    IdleSessionTimer.instance.start();
     await _tokenStorage.saveToken(authResponse.token);
     if (authResponse.refreshToken.isNotEmpty) {
       await _tokenStorage.saveRefreshToken(authResponse.refreshToken);

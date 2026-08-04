@@ -3,10 +3,12 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_design_system.dart';
 import '../services/auth_repository.dart';
+import '../services/idle_session_timer.dart';
 import 'profile_settings_screen.dart';
 import 'my_records_screen.dart';
 import 'raise_ticket_screen.dart';
 import 'change_password_screen.dart';
+import 'delete_account_screen.dart';
 import 'faq_screen.dart';
 import 'login_screen.dart';
 
@@ -20,7 +22,7 @@ class AccountScreen extends StatelessWidget {
   static const Color _dangerBg = Color(0xFFFCEDEC);
 
   static final Uri _privacyPolicyUri = Uri.parse(
-    'https://humancareconnect.co/privacy',
+    'https://humancareconnect.co/privacy-policy',
   );
 
   final AuthRepository? authRepository;
@@ -85,6 +87,7 @@ class AccountScreen extends StatelessWidget {
 
       try {
         await repository.clearSession();
+        IdleSessionTimer.instance.stop();
       } catch (error, stackTrace) {
         debugPrint('Logout failed: $error');
         debugPrint('$stackTrace');
@@ -175,7 +178,17 @@ class AccountScreen extends StatelessWidget {
             const SizedBox(height: 10),
             _OptionGroup(options: supportOptions),
 
-            const SizedBox(height: 28),
+            const SizedBox(height: 24),
+            const _SectionLabel('DANGER ZONE'),
+            const SizedBox(height: 10),
+            _DeleteAccountTile(
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const DeleteAccountScreen()),
+              ),
+            ),
+
+            const SizedBox(height: 12),
             _LogoutTile(onTap: () => _confirmLogout(context)),
           ],
         ),
@@ -295,6 +308,46 @@ class _AccountTile extends StatelessWidget {
               ),
               Icon(Icons.chevron_right_rounded,
                   color: AppColors.textSecondary.withValues(alpha: 0.6)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DeleteAccountTile extends StatelessWidget {
+  final VoidCallback onTap;
+  const _DeleteAccountTile({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.surface,
+      borderRadius: BorderRadius.circular(AppRadius.md),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.md),
+        onTap: onTap,
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppRadius.md),
+            border: Border.all(color: AccountScreen._danger.withValues(alpha: 0.35)),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Icon(Icons.delete_forever_outlined,
+                  color: AccountScreen._danger, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Delete My Account',
+                  style: AppType.body(size: 15.5, weight: FontWeight.w800)
+                      .copyWith(color: AccountScreen._danger),
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded,
+                  color: AccountScreen._danger.withValues(alpha: 0.6)),
             ],
           ),
         ),

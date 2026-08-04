@@ -199,7 +199,7 @@ abstract class AppRadius {
   static const double md    = 14.0; // specialty icon tile, hero CTA
   static const double field = 16.0; // search bar
   static const double lg    = 18.0; // specialty + service cards, centre FAB
-  static const double xl    = 20.0; // upcoming-visit card
+  static const double xl    = 20.0;
   static const double hero  = 26.0; // hero panel
   static const double pill  = 999.0;
 }

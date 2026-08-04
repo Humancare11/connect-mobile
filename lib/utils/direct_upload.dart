@@ -25,14 +25,23 @@ class UploadedFile {
     required this.key,
     required this.name,
     required this.type,
+    required this.sizeBytes,
   });
 
   final String key;
   final String name;
   final String type;
+  final int sizeBytes;
 }
 
 const int _maxUploadBytes = 10 * 1024 * 1024;
+
+// Mirrors the web version's <input accept="..."> for the appointment booking
+// upload zone — intentionally narrower than the backend's full ALLOWED_TYPES
+// (which also accepts .txt) so the picker offers the same file set as web.
+const List<String> bookingUploadExtensions = [
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'jpg', 'jpeg', 'png', 'gif', 'webp',
+];
 
 // Mirrors backend/routes/upload.js's ALLOWED_TYPES — the presign endpoint
 // rejects any contentType that isn't exactly one of these values for the
@@ -71,6 +80,28 @@ Future<UploadCandidate?> pickFileForUpload() async {
     sizeBytes: file.size,
     platformFile: file,
   );
+}
+
+/// Multi-select variant used by the appointment booking upload zone, mirroring
+/// the web version's `<input type="file" multiple accept="...">`.
+Future<List<UploadCandidate>> pickFilesForUpload() async {
+  final result = await FilePicker.platform.pickFiles(
+    withData: true,
+    allowMultiple: true,
+    type: FileType.custom,
+    allowedExtensions: bookingUploadExtensions,
+  );
+  final files = result?.files ?? const <PlatformFile>[];
+
+  return files
+      .map(
+        (file) => UploadCandidate(
+          name: file.name,
+          sizeBytes: file.size,
+          platformFile: file,
+        ),
+      )
+      .toList();
 }
 
 /// Ported from frontend/src/utils/directUpload.js's uploadFileDirectToS3:
@@ -125,9 +156,15 @@ Future<UploadedFile> uploadFileDirectToS3(UploadCandidate file) async {
         key: (fileInfo['key'] ?? fileInfo['url'] ?? uploadUrl).toString(),
         name: (fileInfo['name'] ?? file.name).toString(),
         type: (fileInfo['type'] ?? contentType).toString(),
+        sizeBytes: (fileInfo['size'] as num?)?.toInt() ?? file.sizeBytes,
       );
     }
-    return UploadedFile(key: uploadUrl, name: file.name, type: contentType);
+    return UploadedFile(
+      key: uploadUrl,
+      name: file.name,
+      type: contentType,
+      sizeBytes: file.sizeBytes,
+    );
   } catch (_) {
     return _uploadViaMultipartFallback(file, bytes, contentType);
   }
@@ -164,6 +201,7 @@ Future<UploadedFile> _uploadViaMultipartFallback(
     key: (decoded['key'] ?? decoded['url'] ?? '').toString(),
     name: (decoded['name'] ?? file.name).toString(),
     type: (decoded['type'] ?? contentType).toString(),
+    sizeBytes: (decoded['size'] as num?)?.toInt() ?? file.sizeBytes,
   );
 }
 

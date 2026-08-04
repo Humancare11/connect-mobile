@@ -574,10 +574,18 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       'appointmentDateTimeUtc': appointmentDateTime.toUtc().toIso8601String(),
       'patientTimezone': DateTime.now().timeZoneName,
       'problem': args['problem']?.toString() ?? '',
-      'medicalReports': const <dynamic>[],
+      'medicalReports': _medicalReports(args['medicalReports']),
       'paymentIntentId': paymentIntentId,
       if (serviceId.isNotEmpty) 'serviceId': serviceId,
     };
+  }
+
+  List<Map<String, dynamic>> _medicalReports(Object? value) {
+    if (value is! List) return const <Map<String, dynamic>>[];
+    return value
+        .whereType<Map>()
+        .map((report) => report.map((key, v) => MapEntry(key.toString(), v)))
+        .toList();
   }
 
   DateTime _combineDateAndTime(DateTime date, String time) {

@@ -26,7 +26,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
 
 import '../controllers/video_call_controller.dart';
+import '../services/active_call_tracker.dart';
 import '../utils/direct_upload.dart';
+import 'my_records_screen.dart';
 
 String _fmtTime(String? iso) {
   if (iso == null || iso.isEmpty) return '';
@@ -64,9 +66,6 @@ class _C {
   static const stageBg = Color(0xFF03101F);
   static const stageBorder = Color(0x2E5F96DC); // rgba(95,150,220,.18)
 
-  static const logoGradStart = Color(0xFF4DA3FF);
-  static const logoGradEnd = Color(0xFF006EFF);
-  static const logoText = Color(0xFFF4F8FF);
   static const partyLabel = Color(0xFF7CA4D6);
   static const partyName = Color(0xFFFFFFFF);
 
@@ -248,6 +247,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
   @override
   void initState() {
     super.initState();
+    ActiveCallTracker.instance.markActive();
     _controller = VideoCallController(
       appointmentId: widget.appointmentId,
       initialAppointment: widget.initialAppointment,
@@ -263,6 +263,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
 
   @override
   void dispose() {
+    ActiveCallTracker.instance.markInactive();
     WidgetsBinding.instance.removeObserver(this);
     _controller.removeListener(_onControllerChanged);
     _controller.dispose();
@@ -334,6 +335,19 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
     if (text.trim().isEmpty) return;
     _controller.sendMessage(text);
     _chatInputCtrl.clear();
+  }
+
+  // Pushes on top of the call screen rather than replacing it, so the call
+  // itself keeps running underneath (unlike web, where navigating away from
+  // /video-call/:id unmounts VideoCall and tears the call down) — the
+  // patient can check the prescription and pop straight back into the call.
+  void _viewPrescription() {
+    _controller.dismissPrescriptionNotif();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const MyRecordsPage(initialTab: 'prescriptions'),
+      ),
+    );
   }
 
   @override
@@ -523,47 +537,31 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
   // and .hc-vc__infobar are `display: none` under that cascade layer) ────
   Widget _buildTopMetaBar() {
     final other = _controller.otherParty;
+    final me = _controller.currentUser;
+    final isDoctorRole = _controller.isDoctor;
+    // Only the doctor/patient identities are shown here (no app branding) —
+    // whichever side "me" is on fills in from the local user, the rest from
+    // the peer, so both names are visible to both parties.
+    final doctorName = isDoctorRole ? (me['name'] ?? 'Doctor') : (other?['name']?.toString() ?? 'Doctor');
+    final patientName = isDoctorRole ? (other?['name']?.toString() ?? 'Patient') : (me['name'] ?? 'Patient');
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
       child: Row(
         children: [
-          Container(
-            width: 14,
-            height: 14,
-            margin: const EdgeInsets.only(right: 10),
-            decoration: const BoxDecoration(
-              shape: BoxShape.circle,
-              gradient: LinearGradient(colors: [_C.logoGradStart, _C.logoGradEnd]),
-              boxShadow: [BoxShadow(color: Color(0xCC4DA3FF), blurRadius: 12)],
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: _partyNameChip(label: 'Doctor', name: doctorName)),
+                Container(
+                  width: 1,
+                  height: 18,
+                  margin: const EdgeInsets.symmetric(horizontal: 12),
+                  color: Colors.white.withValues(alpha: 0.08),
+                ),
+                Expanded(child: _partyNameChip(label: 'Patient', name: patientName)),
+              ],
             ),
           ),
-          Text('Humancare Connect', style: _sora(size: 15, weight: FontWeight.w700, color: _C.logoText)),
-          if (other != null) ...[
-            Container(
-              width: 1,
-              height: 18,
-              margin: const EdgeInsets.symmetric(horizontal: 12),
-              color: Colors.white.withValues(alpha: 0.08),
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    (other['label'] ?? '').toString().toUpperCase(),
-                    style: _sora(size: 10, weight: FontWeight.w600, color: _C.partyLabel, letterSpacing: 1),
-                  ),
-                  Text(
-                    (other['name'] ?? '').toString(),
-                    style: _sora(size: 13, weight: FontWeight.w600, color: _C.partyName),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-          ] else
-            const Spacer(),
           // Timer is doctor-only on the web (`{inCall && isDoctor && ...}`) —
           // kept behind the same guard for parity even though this app never
           // authenticates as a doctor.
@@ -587,6 +585,24 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
             ),
         ],
       ),
+    );
+  }
+
+  Widget _partyNameChip({required String label, required String name}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: _sora(size: 10, weight: FontWeight.w600, color: _C.partyLabel, letterSpacing: 1),
+        ),
+        Text(
+          name,
+          style: _sora(size: 13, weight: FontWeight.w600, color: _C.partyName),
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
     );
   }
 
@@ -704,6 +720,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
             border: Border.all(color: _C.rxNotifBorder),
           ),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text('💊', style: TextStyle(fontSize: 20)),
               const SizedBox(width: 10),
@@ -715,6 +732,26 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
                     if (diagnosis.isNotEmpty)
                       Text(diagnosis, style: _dmSans(size: 12, color: _C.rxNotifText)),
                   ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: _viewPrescription,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text('View', style: _sora(size: 12, weight: FontWeight.w700, color: Colors.white)),
+                ),
+              ),
+              const SizedBox(width: 4),
+              GestureDetector(
+                onTap: _controller.dismissPrescriptionNotif,
+                child: const Padding(
+                  padding: EdgeInsets.all(4),
+                  child: Icon(Icons.close, color: Colors.white70, size: 16),
                 ),
               ),
             ],
@@ -880,6 +917,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
           ),
           if (!_controller.isRemoteConnected && !_controller.isSwapped)
             Positioned.fill(child: _waitingOverlay()),
+          if (_controller.isRemoteConnected && !_controller.isSwapped && _controller.peerCameraOff)
+            Positioned.fill(child: _remoteCameraOffOverlay()),
           if (_controller.reconnectStalled)
             Positioned(
               bottom: 118,
@@ -952,6 +991,49 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
     );
   }
 
+  // Shown over wherever the remote video is currently displayed once the
+  // peer signals their camera is off (see VideoCallController.peerCameraOff).
+  // Disabling a video track on native mobile stops producing frames
+  // entirely rather than sending black frames the way a browser would, so
+  // without this the remote video would just look frozen/broken instead of
+  // clearly "off".
+  Widget _remoteCameraOffOverlay() {
+    final other = _controller.otherParty;
+    final initial = (other?['initial'] ?? '?').toString();
+    final name = (other?['name'] ?? 'The other participant').toString();
+    return Container(
+      color: _C.stageBg,
+      alignment: Alignment.center,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 84,
+            height: 84,
+            decoration: BoxDecoration(
+              color: _C.waitingAvatarBg,
+              shape: BoxShape.circle,
+              border: Border.all(color: _C.waitingAvatarBorder),
+            ),
+            alignment: Alignment.center,
+            child: Text(initial, style: _sora(size: 30, weight: FontWeight.w700, color: _C.waitingTitle)),
+          ),
+          const SizedBox(height: 16),
+          Text(name, style: _sora(size: 15, weight: FontWeight.w600, color: _C.waitingTitle)),
+          const SizedBox(height: 6),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.videocam_off, color: _C.waitingSub, size: 15),
+              const SizedBox(width: 6),
+              Text('Camera is off', style: _dmSans(size: 13, color: _C.waitingSub)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _waitingOverlay() {
     return Container(
       decoration: const BoxDecoration(
@@ -1014,9 +1096,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
 
   Widget _buildPip() {
     final size = MediaQuery.of(context).size;
-    const pipW = 130.0;
-    const pipH = pipW * 9 / 16;
-    final pos = _pipPos ?? Offset(size.width - pipW - 20, 20);
+    // Mirrors the web self-preview's responsive sizing
+    // (videocall.css .hc-vc__pip: `width: clamp(190px, 24vw, 320px)`, 16:9,
+    // top/right 16px) — bounds are scaled down for phone-sized viewports so
+    // the preview stays compact instead of literally porting desktop pixel
+    // values, which would dominate a phone screen.
+    final pipW = (size.width * 0.24).clamp(96.0, 150.0);
+    final pipH = pipW * 9 / 16;
+    final pos = _pipPos ?? Offset(size.width - pipW - 16, 16);
 
     return Positioned(
       left: pos.dx,
@@ -1050,6 +1137,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
                 ),
               ),
               if (_controller.isCamOff && !_controller.isSwapped)
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(color: _C.pipBg, borderRadius: BorderRadius.circular(12)),
+                    alignment: Alignment.center,
+                    child: Icon(Icons.videocam_off, color: _C.pipLabel, size: 26),
+                  ),
+                ),
+              if (_controller.peerCameraOff && _controller.isSwapped)
                 Positioned.fill(
                   child: Container(
                     decoration: BoxDecoration(color: _C.pipBg, borderRadius: BorderRadius.circular(12)),
@@ -1191,6 +1286,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
                       final msg = _controller.messages[i];
                       final mine = msg.senderId == _controller.currentUser['id'];
                       return Align(
+                        key: ValueKey(msg.localKey),
                         alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
                         child: Container(
                           margin: const EdgeInsets.only(bottom: 10),
@@ -1344,27 +1440,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
               onTap: _controller.isReady ? _controller.toggleCamera : null,
             ),
             _ctrlButton(
-              icon: Icons.screen_share_outlined,
-              label: _controller.isScreenSharing ? 'Stop' : 'Share',
-              active: _controller.isScreenSharing,
-              onTap: _controller.isReady ? _controller.toggleScreenShare : null,
-            ),
-            if (_controller.inCall) _livePill(),
-            if (_controller.inCall && _controller.connectionQuality != 'unknown')
-              _qualityPill(_controller.connectionQuality),
-            _ctrlButton(
-              icon: _isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
-              label: _isFullscreen ? 'Exit' : 'Full',
-              active: _isFullscreen,
-              onTap: _toggleFullscreen,
-            ),
-            _ctrlButton(
-              icon: _isSelfViewMinimized ? Icons.open_in_full : Icons.close_fullscreen,
-              label: _isSelfViewMinimized ? 'Show Me' : 'Hide Me',
-              active: _isSelfViewMinimized,
-              onTap: () => setState(() => _isSelfViewMinimized = !_isSelfViewMinimized),
-            ),
-            _ctrlButton(
               icon: Icons.chat_bubble_outline,
               label: 'Chat',
               chatOn: _controller.chatOpen,
@@ -1377,7 +1452,174 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
               end: true,
               onTap: _controller.completing ? null : () => setState(() => _endCallConfirm = true),
             ),
+            _ctrlButton(
+              icon: Icons.more_horiz,
+              label: 'More',
+              onTap: _showMoreOptionsSheet,
+            ),
           ],
+        ),
+      ),
+    );
+  }
+
+  // Everything that isn't one of the five primary controls (mute, camera,
+  // chat, end call) lives behind this sheet, opened from the control bar's
+  // three-dot button. Controller-driven rows (speaker/flip/share) rebuild via
+  // the AnimatedBuilder below; the two screen-local toggles (fullscreen,
+  // self-view) call setSheetState explicitly since they aren't part of
+  // VideoCallController.
+  void _showMoreOptionsSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) => _buildMoreOptionsSheet(setSheetState),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildMoreOptionsSheet(StateSetter setSheetState) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        decoration: const BoxDecoration(
+          color: _C.modalBg,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.fromLTRB(18, 10, 18, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(bottom: 14),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('More Options', style: _sora(size: 16, weight: FontWeight.w700, color: _C.modalTitle)),
+            ),
+            const SizedBox(height: 8),
+            if (_controller.supportsSpeakerToggle)
+              _moreOptionRow(
+                icon: _controller.isSpeakerOn ? Icons.volume_up : Icons.hearing,
+                label: _controller.isSpeakerOn ? 'Speaker' : 'Earpiece',
+                subtitle: 'Switch the call audio output',
+                active: !_controller.isSpeakerOn,
+                onTap: _controller.isReady ? () => unawaited(_controller.toggleSpeaker()) : null,
+              ),
+            if (_controller.supportsCameraSwitch)
+              _moreOptionRow(
+                icon: Icons.cameraswitch,
+                label: 'Flip Camera',
+                subtitle: 'Switch between front and back camera',
+                onTap: (_controller.isReady && !_controller.isScreenSharing)
+                    ? () => unawaited(_controller.switchCamera())
+                    : null,
+              ),
+            _moreOptionRow(
+              icon: Icons.screen_share_outlined,
+              label: _controller.isScreenSharing ? 'Stop Sharing' : 'Share Screen',
+              active: _controller.isScreenSharing,
+              onTap: _controller.isReady ? _controller.toggleScreenShare : null,
+            ),
+            _moreOptionRow(
+              icon: _isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+              label: _isFullscreen ? 'Exit Fullscreen' : 'Fullscreen',
+              active: _isFullscreen,
+              onTap: () async {
+                await _toggleFullscreen();
+                setSheetState(() {});
+              },
+            ),
+            _moreOptionRow(
+              icon: _isSelfViewMinimized ? Icons.open_in_full : Icons.close_fullscreen,
+              label: _isSelfViewMinimized ? 'Show Self View' : 'Hide Self View',
+              active: _isSelfViewMinimized,
+              onTap: () {
+                setState(() => _isSelfViewMinimized = !_isSelfViewMinimized);
+                setSheetState(() {});
+              },
+            ),
+            if (_controller.inCall)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Row(
+                  children: [
+                    _livePill(),
+                    if (_controller.connectionQuality != 'unknown') ...[
+                      const SizedBox(width: 8),
+                      _qualityPill(_controller.connectionQuality),
+                    ],
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _moreOptionRow({
+    required IconData icon,
+    required String label,
+    String? subtitle,
+    VoidCallback? onTap,
+    bool active = false,
+  }) {
+    final bg = active ? _C.btnActiveBg : _C.btnBg;
+    final border = active ? _C.btnActiveBorder : _C.btnBorder;
+    final color = active ? _C.btnActiveText : _C.btnText;
+    return Opacity(
+      opacity: onTap == null ? 0.4 : 1,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: bg,
+                  border: Border.all(color: border),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                alignment: Alignment.center,
+                child: Icon(icon, size: 18, color: color),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(label, style: _sora(size: 14, weight: FontWeight.w600, color: _C.modalTitle)),
+                    if (subtitle != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Text(subtitle, style: _dmSans(size: 12, color: _C.modalBody)),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

@@ -11,7 +11,12 @@ import 'screens/auth_gate_screen.dart';
 import 'screens/book_appointment_form_screen.dart';
 import 'screens/book_appointment_payment_screen.dart';
 import 'screens/book_appointment_confirmation_screen.dart';
+import 'services/idle_session_timer.dart';
 import 'services/notification_service.dart';
+import 'widgets/connectivity_gate.dart';
+import 'widgets/idle_activity_listener.dart';
+import 'widgets/loading_overlay.dart';
+import 'widgets/session_expired_gate.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -125,9 +130,23 @@ class MyApp extends StatelessWidget {
             const AppointmentConfirmationPage(),
       },
       onGenerateRoute: NotificationService.instance.onGenerateRoute,
+      navigatorObservers: [IdleActivityNavigatorObserver()],
       builder: (context, child) {
         NotificationService.instance.flushPendingNavigation();
-        return child ?? const SizedBox.shrink();
+        // IdleActivityListener wraps outermost (translucent — never
+        // intercepts a gesture) so it observes taps/scrolls everywhere,
+        // including on the gates' own overlays. SessionExpiredGate then
+        // wraps ahead of ConnectivityGate so a dead session takes visual
+        // priority over a transient "No Internet" flicker — in practice
+        // the two barely overlap, since a 401 response can only arrive
+        // once a request has actually reached the server.
+        return IdleActivityListener(
+          child: SessionExpiredGate(
+            child: ConnectivityGate(
+              child: LoadingOverlay(child: child ?? const SizedBox.shrink()),
+            ),
+          ),
+        );
       },
     );
   }

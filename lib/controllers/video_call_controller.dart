@@ -60,6 +60,14 @@ const int kIceRecoveryCooldownMs = 30000;
 // self-initiated offer.
 const int kOfferAnswerTimeoutMs = 8000;
 const int kStatsIntervalMs = 30000;
+// How long a mid-call drop (connection already reached "connected" at least
+// once) is allowed to sit unrecovered before surfacing the manual "Retry"
+// button — see _startReconnectStallWatch's call sites in
+// _handleConnectionStateChange/_handleIceConnectionStateChange. Without this,
+// the only place that ever arms the stall watch is the initial join in
+// _handlePeerJoined, so a reconnect that stalls after the call was already
+// live had no user-facing recovery path at all.
+const int kMidCallReconnectStallMs = 12000;
 const int kChatSendCooldownMs = 300;
 const int kPeerJoinTimeoutMs = 20000;
 const int kMediaAcquireTimeoutMs = 20000;
@@ -110,7 +118,22 @@ String deriveConnectionQuality(
   return 'good';
 }
 
+// Chat messages carry no server-issued id in the payloads this app
+// receives, so a stable per-message identity has to be minted client-side
+// the moment each one enters state (on receipt, not on send — see
+// _handleChatMessage's comment on why sends aren't optimistic). Used as the
+// chat ListView's item key instead of the list index, which would silently
+// break (wrong item retains state/animates incorrectly) the moment anything
+// other than pure appending is introduced — mirrors VideoCall.jsx's
+// makeMessageKey()/_localKey.
+int _messageKeySeq = 0;
+String _generateMessageKey() {
+  _messageKeySeq += 1;
+  return 'msg-${DateTime.now().microsecondsSinceEpoch}-$_messageKeySeq';
+}
+
 class ChatMessage {
+  final String localKey;
   final String senderId;
   final String senderName;
   final String text;
@@ -120,6 +143,7 @@ class ChatMessage {
   final String? createdAt;
 
   ChatMessage({
+    String? key,
     required this.senderId,
     required this.senderName,
     this.text = '',
@@ -127,7 +151,7 @@ class ChatMessage {
     this.fileName,
     this.fileType,
     this.createdAt,
-  });
+  }) : localKey = key ?? _generateMessageKey();
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
         senderId: (json['senderId'] ?? '').toString(),
@@ -186,6 +210,13 @@ class VideoCallController extends ChangeNotifier {
   // screen is reachable (navigation requires being logged in already).
   bool get _hasUserIdentity => true;
   bool get _hasDoctorIdentity => false;
+
+  // flutter_webrtc's Helper.switchCamera/setSpeakerphoneOn are native-only —
+  // the web target has no front/back camera concept and routes audio output
+  // however the browser tab's own device picker decided, so both controls
+  // are hidden there rather than shown greyed-out for no reason.
+  bool get supportsCameraSwitch => !kIsWeb;
+  bool get supportsSpeakerToggle => !kIsWeb;
 
   Map<String, dynamic>? get _doctor {
     if (_initialDoctor != null && _initialDoctor.isNotEmpty) return _initialDoctor;
@@ -344,6 +375,23 @@ class VideoCallController extends ChangeNotifier {
   int callDuration = 0;
   bool isMuted = false;
   bool isCamOff = false;
+  // Mirrors isCamOff, but for the remote peer — driven entirely by the
+  // 'camera-state' signaling event (see _announceCameraState/
+  // _handleCameraState), not by anything WebRTC reports on its own. Disabling
+  // a video track via `enabled = false` on native mobile (this app, via
+  // flutter_webrtc) stops producing frames entirely; browsers, by contrast,
+  // keep sending black frames per the MediaStreamTrack spec. Without an
+  // explicit signal, the peer would have no way to distinguish "camera
+  // deliberately turned off" from "the video froze" — it would just see a
+  // stuck last frame either way.
+  bool peerCameraOff = false;
+  // Audio-route and front/back-camera state have no equivalent in
+  // VideoCall.jsx (a browser tab has neither concept) — genuinely
+  // mobile-only affordances. Both default to the platform's own default
+  // behavior (front camera; video calls auto-route to loudspeaker on
+  // Android/iOS) so the toggle only kicks in once the user actually taps it.
+  bool isSpeakerOn = true;
+  bool isFrontCamera = true;
   bool isSwapped = false;
   bool isScreenSharing = false;
   MediaStream? _screenStream;
@@ -554,6 +602,16 @@ class VideoCallController extends ChangeNotifier {
   }
 
   Future<void> startCallSession() async {
+    // _completedFlag is only true once performCleanup() has actually run —
+    // i.e. this call session already considers itself finished. Checked
+    // before _ensureAndroidRuntimePermissions()'s await (which reopens the
+    // narrow window a stray reconnect trigger could land in) so a call that
+    // ended just before widget disposal can't have its camera/mic and
+    // signaling restarted from underneath it. startCallSession resets
+    // _completedFlag to false further below for a *legitimate* new session
+    // (a real forceReconnect); this guard only blocks re-entry into an
+    // already-completed one.
+    if (_disposed || _completedFlag) return;
     await _ensureAndroidRuntimePermissions();
     if (_disposed) return;
 
@@ -596,7 +654,16 @@ class VideoCallController extends ChangeNotifier {
     _reconnectStallTimer?.cancel();
     _reconnectStallTimer = null;
     reconnectStalled = false;
-    _localReady = Completer<bool>();
+    // Captured as a local below and threaded through to _acquireLocalMedia
+    // as an explicit parameter, rather than having that method read/write
+    // this field directly — a slow/stuck previous _acquireLocalMedia call
+    // (from a prior startCallSession/forceReconnect) resuming after this
+    // field has already been reassigned would otherwise complete the NEW
+    // session's completer instead of its own, wrongly reporting media as
+    // unready (a false "Allow camera or microphone access" error) for a
+    // session it was never part of.
+    final localReadyCompleter = Completer<bool>();
+    _localReady = localReadyCompleter;
     _isPolitePeer = isDoctor;
 
     if (_pc != null) {
@@ -604,7 +671,28 @@ class VideoCallController extends ChangeNotifier {
       _pc = null;
     }
 
-    final pc = await createPeerConnection(iceSetup.config);
+    // Unlike the browser, a native RTCPeerConnection/MediaStream constructor
+    // can genuinely throw here (a malformed ICE config, a native WebRTC
+    // plugin/OS failure) — left unguarded, that exception would propagate out
+    // of an `unawaited` call site with nothing to catch it, leaving the user
+    // stuck on the waiting screen forever with no error and no retry. Route
+    // it through the same apptError gate the ICE-config-fetch failure above
+    // already uses, rather than a silent hang.
+    RTCPeerConnection pc;
+    MediaStream remoteStream;
+    try {
+      pc = await createPeerConnection(iceSetup.config);
+      remoteStream = await createLocalMediaStream('remote');
+    } catch (err) {
+      debugPrint('[video-call] peer connection setup failed: $err');
+      _logEvent('peer_connection_setup_failed', {'error': err.toString()});
+      if (!_disposed) {
+        apptError =
+            'Could not start the video call on this device. Please restart the app and try again.';
+        notifyListeners();
+      }
+      return;
+    }
     if (_disposed) {
       await pc.close();
       return;
@@ -615,7 +703,6 @@ class VideoCallController extends ChangeNotifier {
       'hasTurn': iceSetup.hasTurn,
     });
 
-    final remoteStream = await createLocalMediaStream('remote');
     _remoteStream = remoteStream;
     mainRenderer.srcObject = remoteStream;
 
@@ -627,7 +714,7 @@ class VideoCallController extends ChangeNotifier {
 
     _registerSocketListeners();
 
-    unawaited(_acquireLocalMedia(pc));
+    unawaited(_acquireLocalMedia(pc, localReadyCompleter));
 
     if (_socket.connected) {
       _emitOnlineAndJoinRoom();
@@ -636,7 +723,10 @@ class VideoCallController extends ChangeNotifier {
     }
   }
 
-  Future<void> _acquireLocalMedia(RTCPeerConnection pc) async {
+  Future<void> _acquireLocalMedia(
+    RTCPeerConnection pc,
+    Completer<bool> readyCompleter,
+  ) async {
     try {
       deviceCheckStatus = 'checking';
       notifyListeners();
@@ -653,11 +743,12 @@ class VideoCallController extends ChangeNotifier {
         for (final t in stream.getTracks()) {
           await t.stop();
         }
-        if (!_localReady.isCompleted) _localReady.complete(false);
+        if (!readyCompleter.isCompleted) readyCompleter.complete(false);
         return;
       }
 
       await _attachLocalMediaStream(stream, pc);
+      unawaited(_applySpeakerphonePreference());
 
       isReady = true;
       camError = false;
@@ -678,7 +769,7 @@ class VideoCallController extends ChangeNotifier {
           unawaited(_createAndSendOffer(iceRestart: inCall));
         });
       }
-      if (!_localReady.isCompleted) _localReady.complete(true);
+      if (!readyCompleter.isCompleted) readyCompleter.complete(true);
     } catch (err) {
       debugPrint('[video-call] media permission failed: $err');
       _logEvent('media_permission_failed', {'error': err.toString()});
@@ -688,7 +779,7 @@ class VideoCallController extends ChangeNotifier {
         deviceCheckStatus = 'failed';
         notifyListeners();
       }
-      if (!_localReady.isCompleted) _localReady.complete(false);
+      if (!readyCompleter.isCompleted) readyCompleter.complete(false);
     }
   }
 
@@ -976,23 +1067,7 @@ class VideoCallController extends ChangeNotifier {
     if (_disposed) return;
     _logEvent('connection_state_changed', {'state': state.toString()});
     if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
-      _iceRestartTimer?.cancel();
-      _iceRestartTimer = null;
-      _connectionFailTimer?.cancel();
-      _restartRequestInFlight = false;
-      _iceRecoveryAttempts = 0;
-      _clearReconnectStallWatch();
-      connectionState = 'connected';
-      isRemoteConnected = true;
-      hasConnectedOnce = true;
-      notifyListeners();
-      _markInCall();
-      final pc = _pc;
-      if (pc != null) _startStatsCollection(pc);
-      if (_remoteRebindPending) {
-        _remoteRebindPending = false;
-        _refreshRemoteStreamBinding();
-      }
+      _handleConnectedState();
     } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnecting) {
       connectionState = 'connecting';
       notifyListeners();
@@ -1005,6 +1080,37 @@ class VideoCallController extends ChangeNotifier {
       if (hasConnectedOnce) _remoteRebindPending = true;
       notifyListeners();
       _scheduleIceRestart();
+      // A drop after the call was already up (as opposed to a slow initial
+      // connect, which _handlePeerJoined's own stall watch already covers)
+      // otherwise has no path to the manual "Retry" affordance — see
+      // _startReconnectStallWatch's call sites.
+      if (inCall) _startReconnectStallWatch(kMidCallReconnectStallMs);
+    }
+  }
+
+  // Shared by both onConnectionState and onIceConnectionState (a platform
+  // fallback for the latter — see _handleIceConnectionStateChange) so a
+  // genuine "connected" transition is handled identically regardless of
+  // which callback fires it, and so _resyncConnectionStateFromPeerConnection
+  // (a socket reconnect finding the peer connection was fine all along) gets
+  // the exact same recovery behavior as a real state-change event.
+  void _handleConnectedState() {
+    _iceRestartTimer?.cancel();
+    _iceRestartTimer = null;
+    _connectionFailTimer?.cancel();
+    _restartRequestInFlight = false;
+    _iceRecoveryAttempts = 0;
+    _clearReconnectStallWatch();
+    connectionState = 'connected';
+    isRemoteConnected = true;
+    hasConnectedOnce = true;
+    notifyListeners();
+    _markInCall();
+    final pc = _pc;
+    if (pc != null) _startStatsCollection(pc);
+    if (_remoteRebindPending) {
+      _remoteRebindPending = false;
+      _refreshRemoteStreamBinding();
     }
   }
 
@@ -1018,23 +1124,7 @@ class VideoCallController extends ChangeNotifier {
     if (_disposed) return;
     if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
         state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
-      _iceRestartTimer?.cancel();
-      _iceRestartTimer = null;
-      _connectionFailTimer?.cancel();
-      _restartRequestInFlight = false;
-      _iceRecoveryAttempts = 0;
-      _clearReconnectStallWatch();
-      connectionState = 'connected';
-      isRemoteConnected = true;
-      hasConnectedOnce = true;
-      notifyListeners();
-      _markInCall();
-      final pc = _pc;
-      if (pc != null) _startStatsCollection(pc);
-      if (_remoteRebindPending) {
-        _remoteRebindPending = false;
-        _refreshRemoteStreamBinding();
-      }
+      _handleConnectedState();
     } else if (state == RTCIceConnectionState.RTCIceConnectionStateChecking) {
       if (!inCall) {
         connectionState = 'connecting';
@@ -1048,12 +1138,14 @@ class VideoCallController extends ChangeNotifier {
       if (hasConnectedOnce) _remoteRebindPending = true;
       notifyListeners();
       _scheduleIceRestart();
+      if (inCall) _startReconnectStallWatch(kMidCallReconnectStallMs);
     } else if (state == RTCIceConnectionState.RTCIceConnectionStateDisconnected) {
       _logEvent('ice_connection_disconnected', {});
       connectionState = 'connecting';
       if (hasConnectedOnce) _remoteRebindPending = true;
       notifyListeners();
       _scheduleIceRestart();
+      if (inCall) _startReconnectStallWatch(kMidCallReconnectStallMs);
     }
   }
 
@@ -1408,7 +1500,23 @@ class VideoCallController extends ChangeNotifier {
       _logEvent('media_retry_started', summary);
 
       final stream = await _acquireMediaWithTimeout();
+      // A concurrent forceReconnect() can close this pc and open a new one
+      // while the permission prompt above is still pending — mirrors the
+      // same check _acquireLocalMedia already does after its own await, so
+      // a stale retry can't attach tracks to (or answer on) a pc that's no
+      // longer the active call.
+      if (_disposed || _pc != pc) {
+        for (final t in stream.getTracks()) {
+          await t.stop();
+        }
+        if (!_disposed) {
+          retryingMedia = false;
+          notifyListeners();
+        }
+        return;
+      }
       await _attachLocalMediaStream(stream, pc);
+      unawaited(_applySpeakerphonePreference());
 
       isReady = true;
       camError = false;
@@ -1645,7 +1753,16 @@ class VideoCallController extends ChangeNotifier {
     _logEvent('peer_joined', {'resumedCall': resumedCall, 'isReady': isReady});
     peerJoined = true;
     peerLeft = false;
+    // The peer's own camera state before this (re)join is unknown until they
+    // tell us again — assume "on" rather than keep whatever stale value was
+    // left over from a previous session, since a wrongly-stuck "camera off"
+    // placeholder is a worse failure mode than a brief incorrect "camera on"
+    // assumption for the second or two until their announcement arrives.
+    peerCameraOff = false;
     notifyListeners();
+    // They just (re)joined and may have missed our last toggle (e.g. they
+    // reconnected) — make sure they get our current state again.
+    _announceCameraState();
 
     final pc = _pc;
     if (isReady && !inCall) {
@@ -1681,6 +1798,7 @@ class VideoCallController extends ChangeNotifier {
     isRemoteConnected = false;
     connectionState = 'disconnected';
     peerLeft = true;
+    peerCameraOff = false;
     notifyListeners();
     _clearReconnectStallWatch();
   }
@@ -1733,6 +1851,10 @@ class VideoCallController extends ChangeNotifier {
     // finishes processing server-side.
     _roomJoinConfirmed = true;
     _flushChatQueue();
+    // Our own (re)join is now confirmed server-side — tell whoever's already
+    // in the room our current camera state, in case we're the one who just
+    // reconnected after toggling it earlier.
+    _announceCameraState();
     notifyListeners();
   }
 
@@ -1762,6 +1884,17 @@ class VideoCallController extends ChangeNotifier {
       prescriptionNotif = null;
       notifyListeners();
     });
+  }
+
+  /// Cancels the auto-dismiss timer too — otherwise a user who dismisses (or
+  /// taps "View" on) the toast early would see it silently reappear-then-
+  /// vanish if the 10s timer fires afterward on a stale `prescriptionNotif`.
+  void dismissPrescriptionNotif() {
+    _prescriptionTimer?.cancel();
+    _prescriptionTimer = null;
+    if (prescriptionNotif == null) return;
+    prescriptionNotif = null;
+    notifyListeners();
   }
 
   void _handleRoomDenied(dynamic data) {
@@ -1795,6 +1928,7 @@ class VideoCallController extends ChangeNotifier {
     _socket.on('video-answer', _handleAnswer);
     _socket.on('ice-candidate', _handleIce);
     _socket.on('ice-restart-request', _handleIceRestartRequest);
+    _socket.on('camera-state', _handleCameraState);
     _socket.on('peer-joined', _handlePeerJoined);
     _socket.on('participant-left', _handleParticipantLeft);
     _socket.on('appointment-message', _handleChatMessage);
@@ -1814,6 +1948,7 @@ class VideoCallController extends ChangeNotifier {
     _socket.off('video-answer', _handleAnswer);
     _socket.off('ice-candidate', _handleIce);
     _socket.off('ice-restart-request', _handleIceRestartRequest);
+    _socket.off('camera-state', _handleCameraState);
     _socket.off('peer-joined', _handlePeerJoined);
     _socket.off('participant-left', _handleParticipantLeft);
     _socket.off('appointment-message', _handleChatMessage);
@@ -1892,6 +2027,7 @@ class VideoCallController extends ChangeNotifier {
 
   void _handleSocketConnect(dynamic _) {
     _emitOnlineAndJoinRoom();
+    _resyncConnectionStateFromPeerConnection();
   }
 
   void _handleSocketDisconnect(dynamic reason) {
@@ -1902,6 +2038,33 @@ class VideoCallController extends ChangeNotifier {
     connectionState = 'disconnected';
     isRemoteConnected = false;
     notifyListeners();
+    // Safety net for the case the signaling socket itself stays down for a
+    // while during an active call: the peer connection's own state-change
+    // handlers already arm this when THEY see a real drop, but a signaling-
+    // only outage (server restart, prolonged reconnect backoff) might never
+    // trip those at all if the underlying media path happens to survive it.
+    // Harmless if it turns out to be a brief blip — _resyncConnectionState-
+    // FromPeerConnection clears it again the moment the socket reconnects
+    // and finds the peer connection still healthy.
+    if (inCall) _startReconnectStallWatch(kMidCallReconnectStallMs);
+  }
+
+  // A Socket.IO (signaling) drop is a different transport than the already-
+  // established WebRTC/ICE media path — a brief blip here (NAT rebind, app
+  // backgrounding, cellular handoff) doesn't necessarily mean the peer
+  // connection itself was ever affected. If it wasn't, neither
+  // _handleConnectionStateChange nor _handleIceConnectionStateChange ever
+  // fires again (no state transition happened), and those callbacks are the
+  // only place _handleConnectedState() normally gets called from — so
+  // nothing would ever clear the 'disconnected' flags _handleSocketDisconnect
+  // just set, permanently stranding the UI on "Reconnecting..." over a call
+  // that's actually still working. Called after every (re)connect to
+  // immediately resync from the peer connection's actual current state
+  // instead of waiting on an event that may never come.
+  void _resyncConnectionStateFromPeerConnection() {
+    final pc = _pc;
+    if (pc == null || connectionState == 'connected') return;
+    if (_isConnectedState(pc)) _handleConnectedState();
   }
 
   void _handleSocketConnectError(dynamic err) {
@@ -1923,6 +2086,7 @@ class VideoCallController extends ChangeNotifier {
       'inCall': inCall,
       'role': isDoctor ? 'doctor' : 'user',
     });
+    _resyncConnectionStateFromPeerConnection();
 
     final pc = _pc;
     if (pc == null) return;
@@ -1957,7 +2121,90 @@ class VideoCallController extends ChangeNotifier {
   void toggleCamera() {
     isCamOff = !isCamOff;
     _localStream?.getVideoTracks().forEach((t) => t.enabled = !isCamOff);
+    _announceCameraState();
     notifyListeners();
+  }
+
+  // Tells the peer our current camera on/off state — see peerCameraOff's doc
+  // for why this signal has to exist at all. Re-announced (not just sent on
+  // toggle) whenever either side (re)joins the room — see the calls in
+  // _handlePeerJoined and _handleChatHistory — so a peer that reconnects
+  // after we toggled, or that we ourselves reconnect into after they
+  // toggled, isn't left with stale state.
+  void _announceCameraState() {
+    if (!_socket.connected) return;
+    _socket.emit('camera-state', {
+      'appointmentId': appointmentId,
+      'isCamOff': isCamOff,
+    });
+  }
+
+  void _handleCameraState(dynamic raw) {
+    if (_disposed) return;
+    final data = _toMap(raw);
+    if (data == null) return;
+    final off = data['isCamOff'] == true;
+    if (peerCameraOff == off) return;
+    peerCameraOff = off;
+    _logEvent('peer_camera_state_changed', {'isCamOff': off});
+    notifyListeners();
+  }
+
+  // ── Audio route (speakerphone/earpiece) ─────────────────────────────
+  // No React equivalent — a browser tab has no earpiece to route to.
+  // Best-effort throughout: a failure here should never block the call
+  // itself, only leave the audio route wherever the OS/plugin defaulted it.
+
+  Future<void> _applySpeakerphonePreference() async {
+    if (kIsWeb) return;
+    try {
+      await Helper.setSpeakerphoneOn(isSpeakerOn);
+    } catch (err) {
+      debugPrint('[video-call] setSpeakerphoneOn (initial) failed: $err');
+    }
+  }
+
+  Future<void> toggleSpeaker() async {
+    if (kIsWeb) return;
+    final next = !isSpeakerOn;
+    try {
+      await Helper.setSpeakerphoneOn(next);
+      isSpeakerOn = next;
+      notifyListeners();
+    } catch (err) {
+      debugPrint('[video-call] toggleSpeaker failed: $err');
+      _showInlineMessage('Could not switch audio output on this device.');
+    }
+  }
+
+  // ── Camera flip (front/back) ─────────────────────────────────────────
+  // No React equivalent — a browser tab has no front/back camera facing
+  // concept exposed the same way. Blocked while screen-sharing: the video
+  // sender's track has been replaceTrack()'d to the screen-capture track
+  // (see startScreenShare), so flipping the now-unsent camera track
+  // wouldn't be visible to the peer and would just confuse the user.
+  Future<void> switchCamera() async {
+    if (kIsWeb || isScreenSharing) return;
+    final track = _localStream?.getVideoTracks().isNotEmpty == true
+        ? _localStream!.getVideoTracks().first
+        : null;
+    if (track == null) return;
+    try {
+      final switched = await Helper.switchCamera(track);
+      if (switched) {
+        isFrontCamera = !isFrontCamera;
+        notifyListeners();
+      } else {
+        // Native call succeeded but reported no switch happened — e.g. the
+        // device only exposes one camera. Distinguishing this from a thrown
+        // failure matters: it's not an error worth logging, just feedback
+        // that there's nothing to flip to.
+        _showInlineMessage('No other camera is available on this device.');
+      }
+    } catch (err) {
+      debugPrint('[video-call] switchCamera failed: $err');
+      _showInlineMessage('Could not switch camera on this device.');
+    }
   }
 
   // ── Screen sharing ───────────────────────────────────────────────────
@@ -1975,6 +2222,30 @@ class VideoCallController extends ChangeNotifier {
   // the in-app "Stop" button reliably restores the camera. This is a
   // constraint of the plugin version, not something worth faking with a
   // callback that would never actually fire.
+
+  // flutter_webrtc's native getDisplayMedia surfaces failures as free-text
+  // strings/PlatformExceptions from the Android MediaProjection consent
+  // dialog or iOS's in-process RPScreenRecorder — there is no standardized
+  // `err.name` (NotAllowedError/AbortError/...) the way there is in a
+  // browser, so VideoCall.jsx's screenShareErrorMessage() switch can't be
+  // ported as-is. This matches on the actual message text the plugin throws
+  // instead (see GetUserMediaImpl.java's resultError("screenRequestPermissions",
+  // "User didn't give permission to capture the screen.", ...) on Android).
+  bool _isScreenShareCancellation(Object err) {
+    final msg = err.toString().toLowerCase();
+    return msg.contains("didn't give permission") ||
+        msg.contains('screenrequestpermissions') ||
+        msg.contains('user cancelled') ||
+        msg.contains('user canceled');
+  }
+
+  String _screenShareErrorMessage(Object err) {
+    final msg = err.toString().toLowerCase();
+    if (msg.contains('return null')) {
+      return 'No screen or window was available to share.';
+    }
+    return 'Screen sharing could not be started on this device.';
+  }
 
   Future<RTCRtpSender?> _videoSender() {
     final pc = _pc;
@@ -2078,9 +2349,16 @@ class VideoCallController extends ChangeNotifier {
       } catch (restoreErr) {
         debugPrint('[video-call] camera restore after failed screen share start failed: $restoreErr');
       }
-      debugPrint('[video-call] screen share error: $err');
-      _logEvent('screen_share_failed', {'error': err.toString()});
-      _showInlineMessage('Screen sharing could not be started on this device.');
+      // The user simply dismissing/denying the system capture-permission
+      // dialog isn't a real failure worth logging or showing an error for —
+      // mirrors VideoCall.jsx's NotAllowedError/AbortError handling.
+      if (!_isScreenShareCancellation(err)) {
+        debugPrint('[video-call] screen share error: $err');
+        _logEvent('screen_share_failed', {'error': err.toString()});
+        _showInlineMessage(_screenShareErrorMessage(err));
+      } else {
+        _logEvent('screen_share_cancelled', {});
+      }
     } finally {
       _screenShareStartInProgress = false;
       if (!isScreenSharing) await _stopBackgroundExecutionForScreenShare();
@@ -2299,6 +2577,15 @@ class VideoCallController extends ChangeNotifier {
     isRemoteConnected = false;
     hasConnectedOnce = false;
     _remoteRebindPending = false;
+    peerCameraOff = false;
+    // Every fresh getUserMedia call re-requests facingMode: 'user' (see
+    // kMediaConstraints) — the physical camera really does reset to front on
+    // a reconnect, so this flag would otherwise go stale and misreport the
+    // actual device state. isSpeakerOn is deliberately NOT reset here: it's
+    // a user preference that _applySpeakerphonePreference re-applies to the
+    // freshly recreated audio session on the next startCallSession, not
+    // camera-hardware state tied to this specific getUserMedia call.
+    isFrontCamera = true;
     camError = false;
     camErrorReason = '';
     deviceCheckStatus = 'idle';
@@ -2324,7 +2611,15 @@ class VideoCallController extends ChangeNotifier {
 
     final tracks = _localStream?.getTracks() ?? const [];
     for (final t in tracks) {
-      await t.stop();
+      try {
+        await t.stop();
+      } catch (err) {
+        // dispose() fires this via unawaited(performCleanup()) — best-effort
+        // cleanup, so a track.stop() failure (seen on some device/OEM native
+        // WebRTC plugins) must not become an unhandled Future rejection with
+        // nothing left to catch it.
+        debugPrint('[video-call] track.stop() failed during cleanup: $err');
+      }
     }
     _localStream = null;
   }

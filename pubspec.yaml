@@ -97,7 +97,19 @@ dev_dependencies:
 flutter_launcher_icons:
   android: true
   ios: true
-  image_path: "assets/Logo.png"
+  image_path: "assets/logo-2.png"
+  # Android 8+ adaptive icon. Without these two keys, flutter_launcher_icons
+  # only emits the legacy square mipmap/ic_launcher.png (what's shipping
+  # today) — no mipmap-anydpi-v26/ic_launcher.xml, so launchers on real
+  # devices fall back to auto-generating their own mask from that square
+  # image, which is a common source of odd cropping. adaptive_icon_foreground
+  # reuses the existing logo unchanged; adaptive_icon_foreground_inset raises
+  # padding from the plugin's 16% default to keep this specific logo — a
+  # wide wordmark with little internal margin of its own — safely inside the
+  # 66dp/108dp safe zone on a circular mask, not just a rounded-square one.
+  adaptive_icon_background: "#FFFFFF"
+  adaptive_icon_foreground: "assets/logo-2.png"
+  adaptive_icon_foreground_inset: 20
 
 flutter:
   uses-material-design: true

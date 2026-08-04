@@ -12,6 +12,7 @@ import '../services/auth_repository.dart';
 import '../services/auth_validators.dart';
 import '../services/auth_service.dart';
 import '../services/location_service.dart';
+import '../utils/dial_codes.dart';
 import '../widgets/auth_widgets.dart';
 import 'main_screen.dart';
 
@@ -370,17 +371,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _loadingCities = false);
   }
 
-  Future<void> _updateDialCodeForSelectedCountry(
-    String countryName, {
-    String? iso2,
-  }) async {
-    final result = await _locationService.getDialCode(countryName, iso2: iso2);
-    if (!mounted) return;
-    if (result.success && (result.data ?? '').isNotEmpty) {
-      setState(() => _selectedDialCode = result.data!);
-    } else {
-      setState(() => _selectedDialCode = '');
-    }
+  void _applyDialCodeForCountry(String? iso2) {
+    _selectedDialCode = dialCodeForIso2(iso2);
   }
 
   // ── Searchable bottom-sheet picker ────────────────────────────────────────
@@ -573,15 +565,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    // Mobile is optional, but if the user typed one, it must actually carry
-    // a resolved dial code — previously an unresolved code silently sent the
-    // raw digits with no country code prefix at all, while the field still
-    // displayed a placeholder that looked like a real selection.
-    if (_mobileController.text.trim().isNotEmpty && _selectedDialCode.isEmpty) {
-      _setError(
-        "Could not resolve a dial code for your country. Re-select your "
-        "country, or clear the mobile number to continue without one.",
-      );
+    // Mobile is mandatory, and it must carry a resolved dial code — previously
+    // an unresolved code silently sent the raw digits with no country code
+    // prefix at all, while the field still displayed a placeholder that
+    // looked like a real selection.
+    if (_selectedDialCode.isEmpty) {
+      _setError('Could not resolve a dial code for your country. Re-select your country.');
       return;
     }
 
@@ -1124,6 +1113,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 )
                 .toList(),
             onChanged: (v) => setState(() => _selectedGender = v ?? ''),
+            validator: (v) => (v == null || v.isEmpty) ? 'Select Gender' : null,
           ),
           const SizedBox(height: 24),
 
@@ -1149,7 +1139,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 final countryMeta = _countryLookup[picked];
                 setState(() {
                   _selectedCountry = picked;
-                  _selectedDialCode = '';
+                  _applyDialCodeForCountry(countryMeta?.iso2);
                   _selectedState = null;
                   _selectedCity = null;
                   _states = [];
@@ -1162,10 +1152,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   _cityFieldKey.currentState?.didChange(null);
                 });
                 await _fetchStates(picked);
-                await _updateDialCodeForSelectedCountry(
-                  picked,
-                  iso2: countryMeta?.iso2,
-                );
               }
               return picked;
             },
@@ -1317,8 +1303,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       ),
                     ),
                     validator: (v) {
-                      if ((v?.trim() ?? '').isEmpty) return null;
-                      if (!RegExp(r'^[\d\-\+\s\(\)]{7,}$').hasMatch(v!)) {
+                      final val = v?.trim() ?? '';
+                      if (val.isEmpty) return 'Enter mobile number';
+                      if (!RegExp(r'^[\d\-\+\s\(\)]{7,}$').hasMatch(val)) {
                         return 'Enter a valid mobile number';
                       }
                       return null;

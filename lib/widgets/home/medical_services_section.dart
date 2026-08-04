@@ -1,16 +1,14 @@
 // Section 6 — MedicalServicesSection
-// Premium redesign: 2-col grid of soft, elevated tiles.
+// Premium redesign: responsive grid of soft, elevated tiles.
 //   • rounded-square icon container with per-service soft bg tint
 //   • thin left accent rail (signature element, tied to each service colour)
+//   • title wraps up to 2 lines (no subtitle) so names are never cut off
 //   • trailing chevron + press-scale micro-interaction
-//   • when the service count is odd, the last tile spans the full width
+//   • column count adapts to screen width (1 / 2 / 3)
 // Backend icons (emoji/glyph strings) are kept exactly as-is.
 //
-// Visually distinct from BookByService (circle icons, no subtitle)
-// and ExploreSpecialties (horizontal scroll).
-//
 // Services are fetched from GET /api/services at runtime instead of
-// being hardcoded.
+// being hardcoded. Subtitle is still used for search, just not shown.
 
 import 'package:flutter/material.dart';
 import '../../config/app_design_system.dart';
@@ -23,7 +21,7 @@ class _MedService {
   final String id;
   final String icon;
   final String title;
-  final String subtitle;
+  final String subtitle; // kept for search only, not displayed
   final num price;
   final Color accent;
   final Color bgColor;
@@ -138,10 +136,13 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // ── Section header ─────────────────────────────────────────────────
-        AppSectionHeader(
-          title:       'Our Medical Services',
-          seeAllLabel: 'View all',
-          onSeeAll:    () {},
+        // Plain title only — no "View all" pill here (unlike other home
+        // sections, which still use AppSectionHeader for that).
+        Text(
+          'Our Medical Services',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: AppTextStyles.h2,
         ),
 
         const SizedBox(height: AppSpacing.md),
@@ -182,26 +183,47 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
     return _buildGrid(context, services);
   }
 
-  // ── 2-col service grid (last tile spans full width when count is odd) ────────
+  // ── Responsive service grid ──────────────────────────────────────────────
+  // Column count screen width ke hisaab se: choti screen par 1 column,
+  // normal phone par 2, tablet/wide par 3. Tile ki width auto-calculate hoti
+  // hai taaki kabhi overflow na ho.
   Widget _buildGrid(BuildContext context, List<_MedService> services) {
-    const double spacing    = 10;
-    const double tileHeight = 84;
+    const double spacing = 10;
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final maxWidth = constraints.maxWidth;
-        // Floor the half-width so two tiles + spacing never overflow the row.
-        final halfWidth = ((maxWidth - spacing) / 2).floorToDouble();
+
+        int columns;
+        if (maxWidth < 340) {
+          columns = 1; // bahut choti screens
+        } else if (maxWidth < 620) {
+          columns = 2; // normal phones
+        } else {
+          columns = 3; // tablets / wide screens
+        }
+
+        final totalSpacing = spacing * (columns - 1);
+        final tileWidth =
+            ((maxWidth - totalSpacing) / columns).floorToDouble();
+
+        // Title 2 line tak ja sakti hai isliye tile thodi lambi rakhi hai.
+        const double tileHeight = 82;
+
         final isOdd = services.length.isOdd;
 
         final tiles = <Widget>[];
         for (var i = 0; i < services.length; i++) {
-          final bool fullWidth = isOdd && i == services.length - 1;
+          // Sirf 2-column layout me: agar count odd hai to aakhri tile poori
+          // width le le, taaki neeche adhoora gap na dikhe.
+          final bool fullWidth =
+              columns == 2 && isOdd && i == services.length - 1;
+
           tiles.add(
             SizedBox(
-              width:  fullWidth ? maxWidth : halfWidth,
+              width: fullWidth ? maxWidth : tileWidth,
               height: tileHeight,
-              child:  _ServiceTile(item: services[i]),
+              child: _ServiceTile(item: services[i]),
             ),
           );
         }
@@ -232,10 +254,7 @@ class _ServiceTileState extends State<_ServiceTile> {
 
   // Reuses the same "/appointment-form" → consent → "/appointment-payment"
   // → "/appointment-confirmation" flow already used for Category/Specialty/
-  // Condition bookings. That flow reads its selection from generic
-  // specName/specIcon/catLabel/condName/condIcon/cost keys, so mapping a
-  // service onto those keys lets it go through payment, appointment
-  // creation and notifications unchanged.
+  // Condition bookings.
   void _openBookingForm(BuildContext context) {
     final item = widget.item;
     Navigator.pushNamed(
@@ -288,14 +307,13 @@ class _ServiceTileState extends State<_ServiceTile> {
 
                   Expanded(
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+                      padding: const EdgeInsets.fromLTRB(11, 8, 8, 8),
                       child: Row(
                         children: [
-                          // Rounded-square icon container (distinct from
-                          // the circle icons used in Section 4).
+                          // Rounded-square icon container
                           Container(
-                            width:  46,
-                            height: 46,
+                            width:  44,
+                            height: 44,
                             decoration: BoxDecoration(
                               color:        item.bgColor,
                               borderRadius: BorderRadius.circular(AppRadius.sm),
@@ -308,40 +326,22 @@ class _ServiceTileState extends State<_ServiceTile> {
                             ),
                           ),
 
-                          const SizedBox(width: AppSpacing.sm + 2),
+                          const SizedBox(width: AppSpacing.sm + 1),
 
-                          // Text column
+                          // Title only — wraps up to 2 lines, vertically centered
                           Expanded(
-                            child: Column(
-                              mainAxisAlignment:  MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  item.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontFamily:    AppFonts.family,
-                                    fontSize:      13,
-                                    fontWeight:    FontWeight.w700,
-                                    color:         AppColors.textPrimary,
-                                    letterSpacing: -0.1,
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  item.subtitle,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontFamily: AppFonts.family,
-                                    fontSize:   11,
-                                    fontWeight: FontWeight.w400,
-                                    color:      AppColors.textSecondary,
-                                    height:     1.25,
-                                  ),
-                                ),
-                              ],
+                            child: Text(
+                              item.title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontFamily:    AppFonts.family,
+                                fontSize:      13,
+                                fontWeight:    FontWeight.w700,
+                                color:         AppColors.textPrimary,
+                                letterSpacing: -0.1,
+                                height:        1.2,
+                              ),
                             ),
                           ),
 

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../utils/direct_upload.dart';
+
 class AppointmentFormPage extends StatefulWidget {
   const AppointmentFormPage({super.key});
 
@@ -11,6 +13,10 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
   DateTime? selectedDate;
   String? selectedTime;
   final notesCtrl = TextEditingController();
+
+  final List<UploadCandidate> _files = [];
+  bool _uploading = false;
+  String? _uploadError;
 
   // Generated the same way as the web version: all 48 half-hour slots
   // across the full 24-hour day (12:00 AM -> 11:30 PM), not just business
@@ -103,11 +109,32 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                onPressed: () => _validateAndOpenConsent(selection),
-                child: Text(
-                  "Proceed to Payment — \$${selection["cost"]} →",
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
+                onPressed: _uploading
+                    ? null
+                    : () => _validateAndOpenConsent(selection),
+                child: _uploading
+                    ? const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          ),
+                          SizedBox(width: 12),
+                          Text(
+                            "Preparing…",
+                            style: TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ],
+                      )
+                    : Text(
+                        "Proceed to Payment — \$${selection["cost"]} →",
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
               ),
             ),
           ],
@@ -284,32 +311,143 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
       number: "4",
       title: "Medical Reports",
       subtitle: "Optional — PDF, Images, Word, Excel · max 10 MB each",
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: const Color(0xfff9fafb),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.black12),
-        ),
-        child: const Column(
-          children: [
-            Text("📂", style: TextStyle(fontSize: 34)),
-            SizedBox(height: 8),
-            Text(
-              "Tap to browse files",
-              style: TextStyle(fontWeight: FontWeight.w800),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(16),
+            onTap: _uploading ? null : _pickFiles,
+            child: Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: const Color(0xfff9fafb),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.black12),
+              ),
+              child: const Column(
+                children: [
+                  Text("📂", style: TextStyle(fontSize: 34)),
+                  SizedBox(height: 8),
+                  Text(
+                    "Tap to browse files",
+                    style: TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  SizedBox(height: 4),
+                  Text(
+                    "Max 10 MB per file",
+                    style: TextStyle(color: Colors.black45),
+                  ),
+                ],
+              ),
             ),
-            SizedBox(height: 4),
-            Text(
-              "Max 10 MB per file",
-              style: TextStyle(color: Colors.black45),
+          ),
+          if (_files.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            ..._files.asMap().entries.map(
+              (entry) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xfff9fafb),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.black12),
+                  ),
+                  child: Row(
+                    children: [
+                      const Text("📄", style: TextStyle(fontSize: 20)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              entry.value.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                            Text(
+                              "${(entry.value.sizeBytes / 1048576).toStringAsFixed(1)} MB",
+                              style: const TextStyle(
+                                color: Colors.black45,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        onPressed: _uploading
+                            ? null
+                            : () => _removeFile(entry.key),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ],
-        ),
+          if (_uploadError != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              _uploadError!,
+              style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ],
       ),
     );
   }
+
+  Future<void> _pickFiles() async {
+    setState(() => _uploadError = null);
+    try {
+      final picked = await pickFilesForUpload();
+      if (picked.isEmpty) return;
+
+      // Both skip conditions below used to fail silently — a file over the
+      // limit (or sharing a name with one already added) just never
+      // appeared in the list, with nothing telling the user why their tap
+      // "did nothing". Collect what got skipped and surface it the same
+      // way the file-picker-open failure already does, via _uploadError.
+      final skippedOversized = <String>[];
+      final skippedDuplicate = <String>[];
+      setState(() {
+        for (final candidate in picked) {
+          if (candidate.sizeBytes > 10 * 1024 * 1024) {
+            skippedOversized.add(candidate.name);
+            continue;
+          }
+          if (_files.any((f) => f.name == candidate.name)) {
+            skippedDuplicate.add(candidate.name);
+            continue;
+          }
+          _files.add(candidate);
+        }
+        if (skippedOversized.isNotEmpty || skippedDuplicate.isNotEmpty) {
+          final parts = <String>[
+            if (skippedOversized.isNotEmpty)
+              '${skippedOversized.join(', ')} '
+                  '${skippedOversized.length == 1 ? 'is' : 'are'} over the 10 MB limit',
+            if (skippedDuplicate.isNotEmpty)
+              '${skippedDuplicate.join(', ')} '
+                  '${skippedDuplicate.length == 1 ? 'was' : 'were'} already added',
+          ];
+          _uploadError = '${parts.join('; ')}.';
+        }
+      });
+    } catch (_) {
+      setState(() => _uploadError = "Could not open the file picker.");
+    }
+  }
+
+  void _removeFile(int index) => setState(() => _files.removeAt(index));
 
   Widget _section({
     required String number,
@@ -384,6 +522,48 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
     _showConsentDialog(selection);
   }
 
+  Future<void> _uploadAndProceed(Map<String, dynamic> selection) async {
+    setState(() {
+      _uploading = true;
+      _uploadError = null;
+    });
+
+    try {
+      final medicalReports = <Map<String, dynamic>>[];
+      for (final candidate in _files) {
+        final uploaded = await uploadFileDirectToS3(candidate);
+        medicalReports.add({
+          "key": uploaded.key,
+          "name": uploaded.name,
+          "type": uploaded.type,
+          "size": uploaded.sizeBytes,
+        });
+      }
+
+      if (!mounted) return;
+
+      Navigator.pushNamed(
+        context,
+        "/appointment-payment",
+        arguments: {
+          ...selection,
+          "date": selectedDate.toString(),
+          "time": selectedTime,
+          "problem": notesCtrl.text.trim(),
+          "medicalReports": medicalReports,
+        },
+      );
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _uploadError = "Failed to upload reports. Please try again.";
+      });
+      _snack("Failed to upload reports. Please try again.");
+    } finally {
+      if (mounted) setState(() => _uploading = false);
+    }
+  }
+
   void _showConsentDialog(Map<String, dynamic> selection) {
     showDialog(
       context: context,
@@ -429,17 +609,7 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
                   onPressed: allChecked
                       ? () {
                           Navigator.pop(context);
-
-                          Navigator.pushNamed(
-                            context,
-                            "/appointment-payment",
-                            arguments: {
-                              ...selection,
-                              "date": selectedDate.toString(),
-                              "time": selectedTime,
-                              "problem": notesCtrl.text.trim(),
-                            },
-                          );
+                          _uploadAndProceed(selection);
                         }
                       : null,
                   child: const Text("Confirm & Continue →"),

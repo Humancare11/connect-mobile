@@ -159,7 +159,11 @@ class NotificationService {
 
   Future<void> _initializeLocalNotifications() async {
     const initializationSettings = InitializationSettings(
-      android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+      // Status-bar icon: must be a white-on-transparent silhouette, not the
+      // full-color launcher icon — see res/drawable/ic_notification.xml.
+      // AndroidNotificationDetails calls below that don't set an explicit
+      // `icon` (e.g. _showForegroundNotification) inherit this default.
+      android: AndroidInitializationSettings('@drawable/ic_notification'),
       iOS: DarwinInitializationSettings(),
     );
 

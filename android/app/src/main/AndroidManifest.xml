@@ -26,7 +26,10 @@
     <application
         android:label="Humancare Connect"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -65,6 +68,13 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="humancare_connect_notifications" />
+        <!-- Small icon for FCM notifications received while the app is fully
+             backgrounded/killed (no Dart code runs, so notification_service.dart's
+             AndroidInitializationSettings never gets a chance to apply) —
+             without this, FCM falls back to the launcher icon here too. -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
         <!-- Provided by the flutter_background plugin (used to run the
              mediaProjection foreground service screen sharing needs).
              foregroundServiceType is overridden here from the plugin's own

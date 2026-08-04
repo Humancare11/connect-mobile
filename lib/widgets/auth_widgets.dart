@@ -40,13 +40,13 @@ class AuthScaffold extends StatelessWidget {
                   //   color: Colors.blue,
                   // ),
                   //     image.asset(
-                  //   'assets/images/logo.png',
+                  //   'assets/images/logo-2.png',
                   //   width: 64,
                   //   height: 64,
                   // ),
                   // const SizedBox(height: 14),
                   Image.asset(
-  'assets/Logo.png',
+  'assets/logo-2.png',
            width: 150,
 
 ),

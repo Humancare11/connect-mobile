@@ -28,9 +28,18 @@ class AppFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // On devices with an on-screen system nav bar (3-button nav), the OS
+    // reserves real screen space at the bottom and MediaQuery reports it
+    // here as `padding.bottom` — since AppFooter sits in Scaffold's
+    // bottomNavigationBar slot, that inset is never subtracted for us the
+    // way it is for the body, so without this the footer sat underneath the
+    // system buttons. Gesture-nav phones report a near-zero inset here, so
+    // the footer keeps its normal 12px margin on those.
+    final systemNavInset = MediaQuery.paddingOf(context).bottom;
+
     return Container(
       // Floating card margins — left/right + bottom
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      margin: EdgeInsets.fromLTRB(16, 0, 16, 12 + systemNavInset),
       child: SizedBox(
         height: 86,                         // bar(68) + button overflow(18)
         child: Stack(

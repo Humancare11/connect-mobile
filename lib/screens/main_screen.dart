@@ -34,16 +34,15 @@ class _MainScreenState extends State<MainScreen> {
     super.initState();
     selectedIndex = widget.initialIndex.clamp(0, 4);
     _pages = [
-      // Built once here (not in build) so the tab keeps its State; the
-      // callback lets Home move the shell to the Appointments tab.
-      HomeScreen(
-        onOpenAppointments: () => setState(() => selectedIndex = 1),
-      ), // 0
+      // Built once here (not in build) so the tab keeps its State.
+      const HomeScreen(), // 0
       AppointmentsScreen(activityId: widget.appointmentId), // 1
       const AppointmentBookingPage(), // 2 (Book Button)
-      // Records was previously an orphan screen with no route into it; the
-      // footer now exposes it as a tab. Account moved 3 → 4 as a result, which
-      // is safe because no caller passes initialIndex above 2.
+      // Records has no footer tab (app_footer.dart's Records/Account
+      // _NavItems are commented out) — reachable via AccountScreen's "My
+      // Records" tile or a notification deep link instead. Kept at index 3
+      // here regardless of that; safe because no caller passes
+      // initialIndex above 2.
       const MyRecordsPage(), // 3
       const AccountScreen(), // 4
     ];
