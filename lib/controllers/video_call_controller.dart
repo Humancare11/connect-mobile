@@ -18,7 +18,6 @@ import 'dart:math';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_background/flutter_background.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart' as ph;
 
@@ -47,7 +46,6 @@ const Map<String, dynamic> kMediaConstraints = {
 };
 
 const int kCameraBitrate = 1200000;
-const int kScreenShareBitrate = 2000000;
 const int kVoiceBitrate = 64000;
 const int kIceRestartDelayMs = 2500;
 const int kConnectionFailTimeoutMs = 25000;
@@ -68,6 +66,13 @@ const int kStatsIntervalMs = 30000;
 // _handlePeerJoined, so a reconnect that stalls after the call was already
 // live had no user-facing recovery path at all.
 const int kMidCallReconnectStallMs = 12000;
+// After this many reconnect-stall episodes in a row without a successful
+// reconnect in between, the automatic ICE-restart machinery is clearly not
+// going to resolve this on its own — stop presenting the stall banner as a
+// "still working on it, hang tight" message and offer an explicit way to
+// end the call instead of retrying silently forever. Mirrors
+// VideoCall.jsx's identical MAX_RECONNECT_STALL_RETRIES.
+const int kMaxReconnectStallRetries = 3;
 const int kChatSendCooldownMs = 300;
 const int kPeerJoinTimeoutMs = 20000;
 const int kMediaAcquireTimeoutMs = 20000;
@@ -335,6 +340,10 @@ class VideoCallController extends ChangeNotifier {
   String _joinedSocketId = '';
   Timer? _joinTimeoutTimer;
   bool reconnectStalled = false;
+  // How many times the stall banner has fired since the last successful
+  // (re)connect — see kMaxReconnectStallRetries.
+  int reconnectStallCount = 0;
+  bool get reconnectStallExhausted => reconnectStallCount >= kMaxReconnectStallRetries;
 
   // ── Device connectivity ──────────────────────────────────────────────
   // Mirrors VideoCall.jsx's window online/offline listeners: a fully
@@ -372,6 +381,9 @@ class VideoCallController extends ChangeNotifier {
   // misleading cumulative total — same reasoning as VideoCall.jsx's
   // lastStatsSampleRef.
   Map<String, num>? _lastStatsSample;
+  // Most recent getStats() RTT sample (ms), used to widen the offer-answer
+  // timeout on high-latency links — mirrors VideoCall.jsx's lastRttMsRef.
+  num? _lastRttMs;
   int callDuration = 0;
   bool isMuted = false;
   bool isCamOff = false;
@@ -393,10 +405,6 @@ class VideoCallController extends ChangeNotifier {
   bool isSpeakerOn = true;
   bool isFrontCamera = true;
   bool isSwapped = false;
-  bool isScreenSharing = false;
-  MediaStream? _screenStream;
-  bool _screenShareStartInProgress = false;
-  bool _screenShareStopInProgress = false;
   bool _reconnectInProgress = false;
   bool camError = false;
   String camErrorReason = '';
@@ -544,7 +552,10 @@ class VideoCallController extends ChangeNotifier {
         final endpoint = role == 'doctor'
             ? '/api/appointments/doctor/$appointmentId'
             : '/api/appointments/patient/$appointmentId';
-        final data = await ApiService.instance.get(endpoint);
+        // Silent: the screen already shows its own "Loading appointment..."
+        // gate (see VideoCallScreen.build) while apptLoading is true — the
+        // app-wide overlay would just be a second spinner stacked on it.
+        final data = await ApiService.instance.get(endpoint, silent: true);
         if (_disposed) return;
         appt = Map<String, dynamic>.from(data as Map);
         activeRole = role;
@@ -646,6 +657,7 @@ class VideoCallController extends ChangeNotifier {
     _settingRemoteAnswerPending = false;
     _pendingOfferId = null;
     _lastReceivedOfferId = null;
+    _lastRttMs = null;
     _clearOfferAnswerTimeout();
     _iceRestartTimer?.cancel();
     _iceRestartTimer = null;
@@ -977,9 +989,19 @@ class VideoCallController extends ChangeNotifier {
     }
   }
 
+  // Detach-then-reattach (rather than a plain assignment) on both renderers
+  // every time — swapping self/peer between the main stage and the pip must
+  // never leave either RTCVideoView showing a leftover frame from whichever
+  // stream it was previously bound to while its srcObject reference update
+  // is still settling, which otherwise reads as "both tiles show the same
+  // video" right after a swap.
   void _assignStreams(bool swapped) {
-    mainRenderer.srcObject = swapped ? _localStream : _remoteStream;
-    pipRenderer.srcObject = swapped ? _remoteStream : _localStream;
+    final mainStream = swapped ? _localStream : _remoteStream;
+    final pipStream = swapped ? _remoteStream : _localStream;
+    mainRenderer.srcObject = null;
+    mainRenderer.srcObject = mainStream;
+    pipRenderer.srcObject = null;
+    pipRenderer.srcObject = pipStream;
   }
 
   // Recovering from a dropped connection (network switch, brief outage)
@@ -1299,9 +1321,21 @@ class VideoCallController extends ChangeNotifier {
   /// etc.) — otherwise the RTCPeerConnection stays wedged in
   /// "have-local-offer" forever, since nothing else ever rolls back our own
   /// offer. Mirrors VideoCall.jsx's offerAnswerTimeoutRef watchdog.
+  ///
+  /// The wait is widened on high-latency links: kOfferAnswerTimeoutMs is
+  /// sized for a typical connection, but on a slow/high-RTT network (mobile
+  /// data, international) that alone can fire before the answer had any
+  /// realistic chance to arrive. When a recent RTT sample exists, require at
+  /// least 3x it (plus headroom for signaling + SDP processing), capped so a
+  /// temporarily degraded link can't wedge retry logic behind a
+  /// multi-minute wait. Mirrors VideoCall.jsx's effectiveOfferAnswerTimeoutMs.
   void _armOfferAnswerTimeout(RTCPeerConnection pc, String offerId) {
     _clearOfferAnswerTimeout();
-    _offerAnswerTimeoutTimer = Timer(const Duration(milliseconds: kOfferAnswerTimeoutMs), () async {
+    final measuredRtt = _lastRttMs;
+    final effectiveTimeoutMs = (measuredRtt != null && measuredRtt > 0)
+        ? min(max(kOfferAnswerTimeoutMs, (measuredRtt * 3 + 5000).round()), 30000)
+        : kOfferAnswerTimeoutMs;
+    _offerAnswerTimeoutTimer = Timer(Duration(milliseconds: effectiveTimeoutMs), () async {
       _offerAnswerTimeoutTimer = null;
       if (_disposed || _pc != pc || pc.signalingState == RTCSignalingState.RTCSignalingStateClosed) {
         return;
@@ -1311,8 +1345,8 @@ class VideoCallController extends ChangeNotifier {
         _pendingOfferId = null;
         return;
       }
-      _logEvent('offer_answer_timeout_rollback', {'offerId': offerId});
-      debugPrint('[video-call] no answer received for offer $offerId within ${kOfferAnswerTimeoutMs}ms — rolling back to retry.');
+      _logEvent('offer_answer_timeout_rollback', {'offerId': offerId, 'timeoutMs': effectiveTimeoutMs, 'measuredRtt': measuredRtt});
+      debugPrint('[video-call] no answer received for offer $offerId within ${effectiveTimeoutMs}ms (rtt=${measuredRtt ?? "unknown"}) — rolling back to retry.');
       try {
         await pc.setLocalDescription(RTCSessionDescription('', 'rollback'));
         _pendingOfferId = null;
@@ -1346,6 +1380,11 @@ class VideoCallController extends ChangeNotifier {
   void _clearReconnectStallWatch() {
     _reconnectStallTimer?.cancel();
     _reconnectStallTimer = null;
+    // Every call site of this method represents either a genuine reconnect
+    // success or "no longer trying to reconnect right now" (peer left) —
+    // either way, a future stall is a fresh episode, not a continuation of
+    // whatever was happening before.
+    reconnectStallCount = 0;
     if (reconnectStalled) {
       reconnectStalled = false;
       notifyListeners();
@@ -1359,6 +1398,7 @@ class VideoCallController extends ChangeNotifier {
       final pc = _pc;
       if (_disposed || pc == null) return;
       if (_isConnectedState(pc)) return;
+      reconnectStallCount += 1;
       reconnectStalled = true;
       notifyListeners();
     });
@@ -1453,9 +1493,72 @@ class VideoCallController extends ChangeNotifier {
   void handleAppResumed() {
     final pc = _pc;
     if (_disposed || pc == null) return;
-    if (_isConnectedState(pc)) return;
     if (_resumeReconnectInProgress) return;
+    if (_isConnectedState(pc)) {
+      // A "connected" reading here can be stale: the OS may have frozen the
+      // app's networking entirely while backgrounded, in which case
+      // libwebrtc never got to run the consent/keepalive checks that would
+      // normally flip this to "disconnected" and trigger our own recovery —
+      // pc.connectionState just reflects whatever it last was before the
+      // freeze. Probe actual inbound media progress instead of trusting the
+      // cached state, and only fall through to a restart if that probe
+      // confirms the transport is genuinely stalled.
+      unawaited(_verifyConnectionAfterResume(pc));
+      return;
+    }
     unawaited(_reconnectAfterResume());
+  }
+
+  Future<num?> _sampleInboundBytes(RTCPeerConnection pc) async {
+    try {
+      final stats = await pc.getStats();
+      for (final report in stats) {
+        if (report.type == 'candidate-pair' && report.values['state'] == 'succeeded') {
+          final bytesReceived = report.values['bytesReceived'];
+          if (bytesReceived is num) return bytesReceived;
+        }
+      }
+    } catch (_) {
+      // Unknown, not stalled — see _verifyConnectionAfterResume's null handling.
+    }
+    return null;
+  }
+
+  /// Takes two inbound-bytes samples ~1.5s apart on the already-selected
+  /// candidate pair; a connected call should always show some growth
+  /// (RTP/RTCP keepalives continue even during silence/camera-off), so no
+  /// growth at all is a strong signal the transport died silently while the
+  /// app was backgrounded. Bypasses _scheduleIceRestart()'s own "already
+  /// connected" guard on purpose — that guard is exactly the misleading
+  /// cached state this probe exists to catch (same reasoning as
+  /// _armOfferAnswerTimeout's direct rollback-and-retry).
+  Future<void> _verifyConnectionAfterResume(RTCPeerConnection pc) async {
+    _resumeReconnectInProgress = true;
+    try {
+      final before = await _sampleInboundBytes(pc);
+      if (_disposed || _pc != pc) return;
+      await Future.delayed(const Duration(milliseconds: 1500));
+      if (_disposed || _pc != pc) return;
+      // A real state-change callback may have already fired (and started
+      // its own recovery, or torn the call down) while we were sampling —
+      // don't second-guess it.
+      if (!_isConnectedState(pc)) return;
+      final after = await _sampleInboundBytes(pc);
+      if (_disposed || _pc != pc) return;
+
+      final stalled = before != null && after != null && after <= before;
+      if (!stalled) return;
+
+      _logEvent('resume_stale_connection_detected', {'bytesBefore': before, 'bytesAfter': after});
+      debugPrint('[video-call] app resumed with a stale "connected" state — no inbound media progress, forcing recovery.');
+      if (_isPolitePeer) {
+        _requestPeerIceRestart();
+      } else {
+        await _createAndSendOffer(iceRestart: true);
+      }
+    } finally {
+      _resumeReconnectInProgress = false;
+    }
   }
 
   Future<void> _reconnectAfterResume() async {
@@ -1992,6 +2095,23 @@ class VideoCallController extends ChangeNotifier {
   /// token is normally enough on its own — this is defense-in-depth so
   /// per-event identity resolution stays correct if that ever changes.
   Future<void> _emitOnlineAndJoinRoomPayload(String activeUserId, String role) async {
+    // The access token can have expired since the call started or since the
+    // last (re)join — 15-minute TTL — and this fires on *every* rejoin
+    // trigger, not just the app-resume one (_reconnectAfterResume already
+    // refreshes for that specific case): a plain signaling-socket reconnect
+    // (cellular handoff, brief Wi-Fi drop, server restart) mid-call re-emits
+    // the join here too, and without a fresh token that rejoin was being
+    // sent with whatever was already in storage — silently rejected as
+    // unauthenticated (room-access-denied) if it had expired in the
+    // meantime. Non-fatal: proceed with whatever's in storage on failure,
+    // same pattern used everywhere else this refresh is called.
+    try {
+      await ApiService.instance.refreshAccessToken(isDoctor ? 'doctor' : 'user');
+    } catch (_) {
+      // Ignore — fall through with the existing stored token.
+    }
+    if (_disposed) return;
+
     // `_joinedSocketId` was already marked "joined" synchronously by the
     // caller before this ran (see its comment) — if the secure-storage read
     // below throws (a real Android failure mode: Keystore invalidated by an
@@ -2179,244 +2299,112 @@ class VideoCallController extends ChangeNotifier {
 
   // ── Camera flip (front/back) ─────────────────────────────────────────
   // No React equivalent — a browser tab has no front/back camera facing
-  // concept exposed the same way. Blocked while screen-sharing: the video
-  // sender's track has been replaceTrack()'d to the screen-capture track
-  // (see startScreenShare), so flipping the now-unsent camera track
-  // wouldn't be visible to the peer and would just confuse the user.
+  // concept exposed the same way.
+  //
+  // Deliberately NOT using flutter_webrtc's Helper.switchCamera(). On
+  // native platforms that calls mediaStreamTrackSwitchCamera, which swaps
+  // the physical camera *in place* on the SAME MediaStreamTrack/capturer —
+  // the plugin's own Android sources resolve "shared" track entries back to
+  // one primary capturer for this call. In practice that in-place swap can
+  // leave the native camera session's frames briefly attached to whichever
+  // texture/renderer the OS compositor hands them to next, which is what
+  // produced the reported bug: right after flipping, the local user's own
+  // face appeared in BOTH the main stage and the pip, even though the main
+  // stage is bound to the *remote* stream and has nothing to do with the
+  // local camera. Requesting a brand-new track via getUserMedia and
+  // swapping it onto the existing sender with replaceTrack() — the same
+  // mechanism _attachLocalMediaStream already uses for reconnects — avoids
+  // that shared-capturer path entirely: the new track has its own id and
+  // its own independent native capture session, so there is no leftover
+  // state for any renderer to pick up.
+  //
+  // RTCVideoRenderer.srcObject is still pointing at the same MediaStream
+  // object before and after (only its tracks changed), so Flutter's
+  // renderer would otherwise treat it as an unchanged reference and keep
+  // painting the old camera's last frame — same staleness class
+  // _refreshRemoteStreamBinding works around for the remote stream. Forcing
+  // the local renderer to detach/reattach after a successful switch makes
+  // it treat the new track as a genuine source change.
   Future<void> switchCamera() async {
-    if (kIsWeb || isScreenSharing) return;
-    final track = _localStream?.getVideoTracks().isNotEmpty == true
-        ? _localStream!.getVideoTracks().first
-        : null;
-    if (track == null) return;
+    if (kIsWeb) return;
+    final pc = _pc;
+    final stream = _localStream;
+    if (pc == null || stream == null) return;
+    final oldTrack =
+        stream.getVideoTracks().isNotEmpty ? stream.getVideoTracks().first : null;
+    if (oldTrack == null) return;
+
     try {
-      final switched = await Helper.switchCamera(track);
-      if (switched) {
-        isFrontCamera = !isFrontCamera;
-        notifyListeners();
-      } else {
-        // Native call succeeded but reported no switch happened — e.g. the
-        // device only exposes one camera. Distinguishing this from a thrown
-        // failure matters: it's not an error worth logging, just feedback
-        // that there's nothing to flip to.
+      final cams = await Helper.cameras;
+      if (cams.length < 2) {
         _showInlineMessage('No other camera is available on this device.');
+        return;
       }
+    } catch (_) {
+      // Best-effort — if enumeration fails, fall through and let the
+      // getUserMedia call below be the source of truth.
+    }
+
+    final videoConstraints = Map<String, dynamic>.from(kMediaConstraints['video'] as Map);
+    videoConstraints['facingMode'] = isFrontCamera ? 'environment' : 'user';
+
+    MediaStream? newStream;
+    try {
+      newStream = await navigator.mediaDevices
+          .getUserMedia({'audio': false, 'video': videoConstraints});
+      final newTrack =
+          newStream.getVideoTracks().isNotEmpty ? newStream.getVideoTracks().first : null;
+      if (newTrack == null) throw 'no video track returned';
+
+      // The session moved on (disposed / peer connection or local stream
+      // replaced) while getUserMedia was in flight — discard the freshly
+      // captured track rather than attaching it to a stale session.
+      if (_disposed || _pc != pc || _localStream != stream) {
+        for (final t in newStream.getTracks()) {
+          await t.stop();
+        }
+        return;
+      }
+
+      final sender = await _getSenderForKind(pc, 'video');
+      if (sender != null) {
+        await sender.replaceTrack(newTrack);
+        await _tuneSenderQuality(
+          sender,
+          maxBitrate: kCameraBitrate,
+          maxFramerate: 30,
+          maintainResolution: true,
+        );
+      }
+
+      newTrack.enabled = !isCamOff;
+      await stream.removeTrack(oldTrack);
+      await stream.addTrack(newTrack);
+      await oldTrack.stop();
+
+      isFrontCamera = !isFrontCamera;
+      _refreshLocalStreamBinding();
+      notifyListeners();
     } catch (err) {
       debugPrint('[video-call] switchCamera failed: $err');
+      if (newStream != null) {
+        for (final t in newStream.getTracks()) {
+          await t.stop();
+        }
+      }
       _showInlineMessage('Could not switch camera on this device.');
     }
   }
 
-  // ── Screen sharing ───────────────────────────────────────────────────
-  // Ported from startScreenShare/stopScreenShare/toggleScreenShare in
-  // VideoCall.jsx: replace the existing video sender's track with a
-  // screen-capture track, then swap it back to the camera on stop.
-  //
-  // One real platform gap vs. the web version: browsers fire
-  // `track.onended` when the OS-level share is stopped from outside the
-  // page (e.g. the browser's "Stop sharing" bar). flutter_webrtc 1.5.2's
-  // native MediaStreamTrack does not surface an equivalent callback, so
-  // there is no reliable way to detect the user stopping the capture from
-  // the platform's screen-recording control (Android's status-bar/quick-
-  // settings "Stop", the iOS Control Center recording indicator) — only
-  // the in-app "Stop" button reliably restores the camera. This is a
-  // constraint of the plugin version, not something worth faking with a
-  // callback that would never actually fire.
-
-  // flutter_webrtc's native getDisplayMedia surfaces failures as free-text
-  // strings/PlatformExceptions from the Android MediaProjection consent
-  // dialog or iOS's in-process RPScreenRecorder — there is no standardized
-  // `err.name` (NotAllowedError/AbortError/...) the way there is in a
-  // browser, so VideoCall.jsx's screenShareErrorMessage() switch can't be
-  // ported as-is. This matches on the actual message text the plugin throws
-  // instead (see GetUserMediaImpl.java's resultError("screenRequestPermissions",
-  // "User didn't give permission to capture the screen.", ...) on Android).
-  bool _isScreenShareCancellation(Object err) {
-    final msg = err.toString().toLowerCase();
-    return msg.contains("didn't give permission") ||
-        msg.contains('screenrequestpermissions') ||
-        msg.contains('user cancelled') ||
-        msg.contains('user canceled');
+  // Whichever renderer is currently showing the local stream (pip normally,
+  // or main when swapped) — forces it to re-bind so a same-reference stream
+  // update (e.g. after switchCamera) is repainted instead of left stale.
+  void _refreshLocalStreamBinding() {
+    if (_disposed || _localStream == null) return;
+    final localRenderer = isSwapped ? mainRenderer : pipRenderer;
+    localRenderer.srcObject = null;
+    localRenderer.srcObject = _localStream;
   }
-
-  String _screenShareErrorMessage(Object err) {
-    final msg = err.toString().toLowerCase();
-    if (msg.contains('return null')) {
-      return 'No screen or window was available to share.';
-    }
-    return 'Screen sharing could not be started on this device.';
-  }
-
-  Future<RTCRtpSender?> _videoSender() {
-    final pc = _pc;
-    if (pc == null) return Future.value(null);
-    return _getSenderForKind(pc, 'video');
-  }
-
-  bool _backgroundExecutionEnabled = false;
-
-  /// Android requires a running `mediaProjection`-typed foreground service
-  /// for the duration of a MediaProjection capture, or getDisplayMedia
-  /// throws a SecurityException — see AndroidManifest.xml. iOS's
-  /// getDisplayMedia routes through in-process RPScreenRecorder and needs
-  /// none of this, so it's a no-op there.
-  Future<bool> _startBackgroundExecutionForScreenShare() async {
-    // dart:io's Platform throws UnsupportedError on web if touched at all —
-    // kIsWeb must short-circuit before Platform.isAndroid ever evaluates.
-    if (kIsWeb || !Platform.isAndroid) return true;
-    try {
-      final initialized = await FlutterBackground.initialize(
-        androidConfig: const FlutterBackgroundAndroidConfig(
-          notificationTitle: 'Humancare Connect',
-          notificationText: 'Screen sharing is active in your consultation.',
-          notificationImportance: AndroidNotificationImportance.normal,
-        ),
-      );
-      if (!initialized) return false;
-      _backgroundExecutionEnabled =
-          await FlutterBackground.enableBackgroundExecution();
-      return _backgroundExecutionEnabled;
-    } catch (err) {
-      debugPrint('[video-call] flutter_background init/enable failed: $err');
-      return false;
-    }
-  }
-
-  Future<void> _stopBackgroundExecutionForScreenShare() async {
-    if (kIsWeb || !Platform.isAndroid || !_backgroundExecutionEnabled) return;
-    _backgroundExecutionEnabled = false;
-    try {
-      await FlutterBackground.disableBackgroundExecution();
-    } catch (err) {
-      debugPrint('[video-call] flutter_background disable failed: $err');
-    }
-  }
-
-  Future<void> startScreenShare() async {
-    final pc = _pc;
-    if (pc == null ||
-        isScreenSharing ||
-        _screenShareStartInProgress ||
-        _screenShareStopInProgress) {
-      return;
-    }
-
-    final sender = await _videoSender();
-    if (sender == null) {
-      _showInlineMessage(
-        'Screen sharing requires an active video sender. Enable camera first, then try again.',
-      );
-      return;
-    }
-
-    _screenShareStartInProgress = true;
-    MediaStream? screen;
-    try {
-      final backgroundReady = await _startBackgroundExecutionForScreenShare();
-      if (!backgroundReady) {
-        _showInlineMessage(
-          'Screen sharing could not be started (background permission denied).',
-        );
-        return;
-      }
-
-      screen = await navigator.mediaDevices
-          .getDisplayMedia({'video': true, 'audio': false});
-      final screenTrack = screen.getVideoTracks().isNotEmpty ? screen.getVideoTracks().first : null;
-      if (screenTrack == null) {
-        for (final t in screen.getTracks()) {
-          await t.stop();
-        }
-        _showInlineMessage('No screen video track was shared by the system.');
-        return;
-      }
-
-      await sender.replaceTrack(screenTrack);
-      await _tuneSenderQuality(sender, maxBitrate: kScreenShareBitrate, maxFramerate: 30, maintainResolution: true);
-
-      _screenStream = screen;
-      isScreenSharing = true;
-      notifyListeners();
-      _logEvent('screen_share_started', {});
-    } catch (err) {
-      if (screen != null) {
-        for (final t in screen.getTracks()) {
-          await t.stop();
-        }
-      }
-      try {
-        await _restoreCameraAfterScreenShare(sender);
-      } catch (restoreErr) {
-        debugPrint('[video-call] camera restore after failed screen share start failed: $restoreErr');
-      }
-      // The user simply dismissing/denying the system capture-permission
-      // dialog isn't a real failure worth logging or showing an error for —
-      // mirrors VideoCall.jsx's NotAllowedError/AbortError handling.
-      if (!_isScreenShareCancellation(err)) {
-        debugPrint('[video-call] screen share error: $err');
-        _logEvent('screen_share_failed', {'error': err.toString()});
-        _showInlineMessage(_screenShareErrorMessage(err));
-      } else {
-        _logEvent('screen_share_cancelled', {});
-      }
-    } finally {
-      _screenShareStartInProgress = false;
-      if (!isScreenSharing) await _stopBackgroundExecutionForScreenShare();
-    }
-  }
-
-  Future<void> stopScreenShare() async {
-    if (_screenShareStopInProgress) return;
-    _screenShareStopInProgress = true;
-
-    final screenStream = _screenStream;
-    _screenStream = null;
-
-    try {
-      if (screenStream != null) {
-        for (final t in screenStream.getTracks()) {
-          await t.stop();
-        }
-      }
-      final sender = await _videoSender();
-      if (sender != null) {
-        await _restoreCameraAfterScreenShare(sender);
-      }
-      _logEvent('screen_share_stopped', {});
-    } catch (err) {
-      debugPrint('[video-call] camera restore after screen share failed: $err');
-      _logEvent('screen_share_restore_failed', {'error': err.toString()});
-      _showInlineMessage(
-        'Screen sharing stopped, but camera could not be restored. Toggle the camera or rejoin the call.',
-      );
-    } finally {
-      isScreenSharing = false;
-      _screenShareStartInProgress = false;
-      _screenShareStopInProgress = false;
-      await _stopBackgroundExecutionForScreenShare();
-      notifyListeners();
-    }
-  }
-
-  Future<void> _restoreCameraAfterScreenShare(RTCRtpSender sender) async {
-    final camTrack = _localStream?.getVideoTracks().isNotEmpty == true
-        ? _localStream!.getVideoTracks().first
-        : null;
-    await sender.replaceTrack(camTrack);
-    if (camTrack != null) {
-      await _tuneSenderQuality(sender, maxBitrate: kCameraBitrate, maxFramerate: 30, maintainResolution: true);
-    }
-    _assignStreams(isSwapped);
-  }
-
-  void toggleScreenShare() {
-    if (isScreenSharing) {
-      unawaited(stopScreenShare());
-    } else {
-      unawaited(startScreenShare());
-    }
-  }
-
   void toggleSwap() {
     isSwapped = !isSwapped;
     _assignStreams(isSwapped);
@@ -2541,21 +2529,6 @@ class VideoCallController extends ChangeNotifier {
     _pc = null;
     await pc?.close();
 
-    // The screen-capture stream is independent of the RTCPeerConnection, so
-    // closing `pc` above doesn't stop it — matches VideoCall.jsx's main
-    // effect cleanup, which stops screenStreamRef's tracks on every
-    // teardown (including a forced reconnect), not just on final leave.
-    final screenStream = _screenStream;
-    _screenStream = null;
-    if (screenStream != null) {
-      for (final t in screenStream.getTracks()) {
-        await t.stop();
-      }
-    }
-    isScreenSharing = false;
-    _screenShareStartInProgress = false;
-    _screenShareStopInProgress = false;
-    await _stopBackgroundExecutionForScreenShare();
     await CallForegroundService.stop();
 
     _pendingRemoteCandidates.clear();
@@ -2564,6 +2537,7 @@ class VideoCallController extends ChangeNotifier {
     _restartRequestInFlight = false;
     _pendingOfferId = null;
     _lastReceivedOfferId = null;
+    _lastRttMs = null;
     _clearOfferAnswerTimeout();
 
     // Reset all call state so a subsequent startCallSession (via
@@ -2721,6 +2695,9 @@ class VideoCallController extends ChangeNotifier {
 
           debugPrint('[webrtc-stats] $diagnostics');
           _logEvent('webrtc_stats', diagnostics);
+
+          final rtt = diagnostics['rtt'];
+          if (rtt is num) _lastRttMs = rtt;
 
           final quality = deriveConnectionQuality(diagnostics, _lastStatsSample);
           _lastStatsSample = {

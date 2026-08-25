@@ -20,10 +20,10 @@ class MedicalRecordsService {
 
   final ApiClient _apiClient;
 
-  Future<MedicalRecordsSnapshot> fetchMyRecords() async {
+  Future<MedicalRecordsSnapshot> fetchMyRecords({bool silent = false}) async {
     final results = await Future.wait<ApiResult<Map<String, dynamic>>>([
-      _apiClient.get('/medical/my-prescriptions'),
-      _apiClient.get('/medical/my-certificates'),
+      _apiClient.get('/medical/my-prescriptions', null, silent),
+      _apiClient.get('/medical/my-certificates', null, silent),
     ]);
 
     final prescriptionResult = results[0];

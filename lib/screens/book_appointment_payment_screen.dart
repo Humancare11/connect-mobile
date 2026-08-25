@@ -17,12 +17,23 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
   final _paymentService = PaymentService();
   bool _processing = false;
 
+  // Set once a Stripe charge has actually succeeded. If the subsequent
+  // POST /appointments call fails (network blip, a transient backend error,
+  // a validation bug), the card must not be charged again on retry — Stripe
+  // would treat a fresh PaymentIntent as a second, separate charge. While
+  // this is set, retrying finishes the booking with this same payment
+  // reference instead of presenting the PaymentSheet again. Cleared on a
+  // successful booking; also naturally reset if the user leaves this screen,
+  // since a stale reference isn't reused across a fresh navigation.
+  String? _succeededPaymentIntentId;
+
   @override
   Widget build(BuildContext context) {
     final args =
         ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>? ??
         <String, dynamic>{};
     final amount = _amount(args['cost']);
+    final pendingBookingOnly = _succeededPaymentIntentId != null;
 
     return Scaffold(
       backgroundColor: const Color(0xfff6f8fb),
@@ -41,6 +52,10 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
             _summary(args, amount),
             const SizedBox(height: 18),
             _paymentCard(),
+            if (pendingBookingOnly) ...[
+              const SizedBox(height: 18),
+              _paymentReceivedCard(),
+            ],
             if (_useLocalPaymentBypass) ...[
               const SizedBox(height: 18),
               _localPaymentBypassCard(),
@@ -73,6 +88,8 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
                     : Text(
                         _useLocalPaymentBypass
                             ? 'Create Test Appointment'
+                            : pendingBookingOnly
+                            ? 'Complete Booking'
                             : 'Pay \$${_displayAmount(amount)}',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
@@ -141,6 +158,29 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
                 ? 'Local payment bypass is enabled. Stripe will be skipped for this development build.'
                 : 'Secure checkout is processed by Stripe. Your card details are not stored in this app.',
             style: const TextStyle(color: Colors.black54, height: 1.4),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _paymentReceivedCard() {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: _box().copyWith(color: const Color(0xffeefbf3)),
+      child: const Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Payment Received',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'Your card has already been charged. We just need to finish '
+            'saving your appointment — tap below to complete it. You will '
+            'not be charged again.',
+            style: TextStyle(color: Colors.black87, height: 1.4),
           ),
         ],
       ),
@@ -233,6 +273,40 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
   }
 
   Future<void> _payAndCreate(Map<String, dynamic> args) async {
+    final priceType = _priceType(args);
+    final priceRef = _priceRef(args, priceType);
+
+    // Defensive re-check: this screen can in principle be reached without
+    // going through the form screen's own validation (e.g. a future entry
+    // point or a deep link), and an unresolved price would otherwise reach
+    // the backend as an invalid $0 charge and fail with an opaque
+    // "could not determine price" error deep inside the payment flow.
+    // priceRef is checked too since it's what the backend actually resolves
+    // the price from now — a missing category/service label would fail the
+    // same way a missing cost would.
+    if (_amount(args['cost']) <= 0 || priceRef.isEmpty) {
+      _snack(
+        'We couldn\'t determine a valid price for this selection. Please go back and choose again.',
+      );
+      return;
+    }
+
+    // A prior attempt already charged the card successfully but the booking
+    // write afterwards failed (network blip, transient backend error, etc).
+    // Retrying must finish the booking with that same payment reference
+    // instead of going through Stripe again — a second PaymentIntent would
+    // be a second, separate charge.
+    final pendingPaymentIntentId = _succeededPaymentIntentId;
+    if (pendingPaymentIntentId != null) {
+      setState(() => _processing = true);
+      try {
+        await _finishBooking(args, _amount(args['cost']), pendingPaymentIntentId);
+      } finally {
+        if (mounted) setState(() => _processing = false);
+      }
+      return;
+    }
+
     if (_useLocalPaymentBypass) {
       await _createAppointmentWithLocalPayment(args);
       return;
@@ -267,8 +341,10 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       }
 
       final amount = _amount(args['cost']);
-      final intentResult =
-          await _paymentService.createStripeIntentByAmount(amount);
+      final intentResult = await _paymentService.createStripeIntent(
+        priceType: priceType,
+        priceRef: priceRef,
+      );
       if (!mounted) return;
 
       final intent = intentResult.data;
@@ -370,43 +446,16 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
         return;
       }
 
-      final appointmentPayload = _appointmentPayload(
-        args,
-        amount,
-        finalIntent.id.isNotEmpty ? finalIntent.id : intent.paymentIntentId,
-      );
-      debugPrint(
-        '[PaymentSheet] Creating paid appointment for '
-        'paymentIntentId=${appointmentPayload['paymentIntentId']}',
-      );
-      final appointmentResult =
-          await _paymentService.createPaidAppointment(appointmentPayload);
-      if (!mounted) return;
+      final paymentIntentId = finalIntent.id.isNotEmpty
+          ? finalIntent.id
+          : intent.paymentIntentId;
+      // The Stripe charge has now succeeded. From this point on, any
+      // failure below (e.g. the /appointments call) must not cause a retry
+      // to charge the card again — remember this reference so a retry
+      // finishes the booking instead of presenting the PaymentSheet again.
+      _succeededPaymentIntentId = paymentIntentId;
 
-      if (!appointmentResult.success) {
-        debugPrint(
-          '[PaymentSheet] Appointment creation failed after successful payment: '
-          'status=${appointmentResult.statusCode} '
-          'message="${appointmentResult.message}"',
-        );
-        _snack(appointmentResult.message);
-        return;
-      }
-      debugPrint('[PaymentSheet] Paid appointment created successfully.');
-
-      Navigator.pushNamedAndRemoveUntil(
-        context,
-        '/appointment-confirmation',
-        (route) => route.isFirst,
-        arguments: {
-          ...args,
-          'amount': amount,
-          'paymentIntentId': finalIntent.id.isNotEmpty
-              ? finalIntent.id
-              : intent.paymentIntentId,
-          'appointment': appointmentResult.data ?? <String, dynamic>{},
-        },
-      );
+      await _finishBooking(args, amount, paymentIntentId);
     } on StripeException catch (error) {
       if (!mounted) return;
       debugPrint(
@@ -426,6 +475,53 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     } finally {
       if (mounted) setState(() => _processing = false);
     }
+  }
+
+  // Shared by both the first-attempt flow and the "payment already
+  // succeeded, just retry the booking write" path above — the only
+  // difference between them is whether a new Stripe charge happened first.
+  Future<void> _finishBooking(
+    Map<String, dynamic> args,
+    num amount,
+    String paymentIntentId,
+  ) async {
+    final appointmentPayload = _appointmentPayload(
+      args,
+      amount,
+      paymentIntentId,
+    );
+    debugPrint(
+      '[PaymentSheet] Creating paid appointment for '
+      'paymentIntentId=$paymentIntentId',
+    );
+    final appointmentResult = await _paymentService.createPaidAppointment(
+      appointmentPayload,
+    );
+    if (!mounted) return;
+
+    if (!appointmentResult.success) {
+      debugPrint(
+        '[PaymentSheet] Appointment creation failed after successful payment: '
+        'status=${appointmentResult.statusCode} '
+        'message="${appointmentResult.message}"',
+      );
+      _snack(appointmentResult.message);
+      return;
+    }
+    debugPrint('[PaymentSheet] Paid appointment created successfully.');
+    _succeededPaymentIntentId = null;
+
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      '/appointment-confirmation',
+      (route) => route.isFirst,
+      arguments: {
+        ...args,
+        'amount': amount,
+        'paymentIntentId': paymentIntentId,
+        'appointment': appointmentResult.data ?? <String, dynamic>{},
+      },
+    );
   }
 
   Future<void> _createAppointmentWithLocalPayment(
@@ -623,6 +719,27 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
   num _amount(Object? value) {
     if (value is num) return value;
     return num.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  // Matches the web app's isServiceBooking split: the "Service" tiles flow
+  // (medical_services_section.dart) tags its navigation args with
+  // bookingType: 'service'; the category/specialty/condition tree flow
+  // (book_appointment_screen.dart) never sets it, so it defaults to
+  // 'category'.
+  String _priceType(Map<String, dynamic> args) {
+    return args['bookingType']?.toString() == 'service'
+        ? 'service'
+        : 'category';
+  }
+
+  // Must match the backend's lookup exactly: for 'category' it's
+  // HealthcareCategory.name (already what catLabel carries, verbatim from
+  // the tree API), for 'service' it's ServicePrice.name (already what
+  // specName carries for the Service tiles flow, verbatim from GET
+  // /api/services).
+  String _priceRef(Map<String, dynamic> args, String priceType) {
+    final ref = priceType == 'service' ? args['specName'] : args['catLabel'];
+    return ref?.toString().trim() ?? '';
   }
 
   String _displayAmount(num amount) {

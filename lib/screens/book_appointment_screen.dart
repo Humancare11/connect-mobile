@@ -151,6 +151,7 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
             return {
               "name": cond[0],
               "icon": cond.length > 1 ? cond[1] : "",
+              "cost": cond.length > 2 ? cond[2] : spec["cost"],
               "spec": spec,
             };
           });
@@ -163,7 +164,12 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
         .toList();
   }
 
-  void selectCondition(String name, String icon, Map<String, dynamic> spec) {
+  void selectCondition(
+    String name,
+    String icon,
+    Map<String, dynamic> spec, {
+    Object? cost,
+  }) {
     Navigator.pushNamed(
       context,
       "/appointment-form",
@@ -171,7 +177,7 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
         "specName": spec["name"],
         "specIcon": spec["icon"],
         "catLabel": spec["catLabel"] ?? activeCat?["label"],
-        "cost": spec["cost"],
+        "cost": cost ?? spec["cost"],
         "condName": name,
         "condIcon": icon,
       },
@@ -386,6 +392,7 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
                 (c) => {
                   "name": c[0],
                   "icon": c.length > 1 ? c[1] : "",
+                  "cost": c.length > 2 ? c[2] : activeSpec!["cost"],
                   "spec": activeSpec!,
                 },
               )
@@ -408,7 +415,12 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
             subtitle: cond["spec"]["name"],
             trailing: "Book",
             onTap: () {
-              selectCondition(cond["name"], cond["icon"], cond["spec"]);
+              selectCondition(
+                cond["name"],
+                cond["icon"],
+                cond["spec"],
+                cost: cond["cost"],
+              );
             },
           );
         }),

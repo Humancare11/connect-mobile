@@ -9,11 +9,7 @@
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
-    <!-- Required for in-call screen sharing (MediaProjection): Android requires
-         a running foreground service of type mediaProjection for the duration
-         of a screen capture, or getDisplayMedia throws a SecurityException. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- Required (Android 14+) for the ongoing-call foreground service below,
          which keeps the socket/RTCPeerConnection alive while the app is
          backgrounded during a live consultation (screen lock, app switch, a
@@ -75,22 +71,8 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@drawable/ic_notification" />
-        <!-- Provided by the flutter_background plugin (used to run the
-             mediaProjection foreground service screen sharing needs).
-             foregroundServiceType is overridden here from the plugin's own
-             generic default to the specific type our use case requires —
-             same declaration flutter_webrtc's own example app uses. -->
-        <service
-            android:name="de.julianassmann.flutter_background.IsolateHolderService"
-            android:enabled="true"
-            android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
         <!-- Ongoing-call notification/foreground service — see
-             CallForegroundService.kt. Kept separate from the service above
-             (which is scoped to screen-share's MediaProjection session) so a
-             plain audio/video call is never started with the "mediaProjection"
-             type, which Android 14+ only allows immediately after an active
-             MediaProjection grant. -->
+             CallForegroundService.kt. -->
         <service
             android:name=".CallForegroundService"
             android:enabled="true"

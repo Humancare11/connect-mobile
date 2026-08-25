@@ -90,9 +90,12 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
     final showExpanded = _expanded || _hasSearch;
 
     // Screen width nikaal ke illustration ki size decide karte hain, taaki
-    // choti screens par woh chhoti ho aur badi screens par thodi badi.
+    // choti screens par woh chhoti ho aur badi screens par thodi badi. Sized
+    // larger than before for visual balance against the headline — safe to
+    // do because the title below is wrapped in a FittedBox that shrinks to
+    // whatever width remains rather than wrapping mid-word.
     final screenWidth = MediaQuery.sizeOf(context).width;
-    final illustrationSize = (screenWidth * 0.30).clamp(96.0, 140.0);
+    final illustrationSize = (screenWidth * 0.36).clamp(120.0, 168.0);
 
     return Container(
       width: double.infinity,
@@ -165,14 +168,27 @@ class _BookAppointmentCardState extends State<BookAppointmentCard> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Text(
-                              'Book an\nAppointment',
-                              style: AppType.display(
-                                size: 25,
-                                weight: FontWeight.w800,
-                                color: Colors.white,
-                                letterSpacing: -0.5,
-                                height: 1.15,
+                            // FittedBox (scaleDown only) rather than a bare
+                            // Text: the explicit line break keeps "Book an"
+                            // and "Appointment" on their own lines as two
+                            // whole words, and scaling the block down to fit
+                            // whatever width the illustration leaves means
+                            // "Appointment" is never forced to wrap
+                            // mid-word (e.g. a lone trailing "t") on narrow
+                            // screens — it never grows past its natural
+                            // size on wide ones either.
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'Book an\nAppointment',
+                                style: AppType.display(
+                                  size: 25,
+                                  weight: FontWeight.w800,
+                                  color: Colors.white,
+                                  letterSpacing: -0.5,
+                                  height: 1.15,
+                                ),
                               ),
                             ),
 

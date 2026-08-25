@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_design_system.dart';
 import '../services/token_storage_service.dart';
@@ -152,6 +153,13 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   final _scrollController = ScrollController();
   final Map<String, GlobalKey> _cardKeys = {};
   Timer? _refreshTimer;
+  DateTime? _lastFetchAt;
+
+  // Resume and socket-reconnect can both fire in quick succession (the OS
+  // drops the socket while suspended, so foregrounding the app triggers a
+  // reconnect right after the lifecycle resume) — without this, one app
+  // switch could queue two near-simultaneous background refreshes.
+  static const _minBackgroundRefreshInterval = Duration(seconds: 5);
 
   List<Appointment> _appointments = [];
   bool _loading = true;
@@ -193,14 +201,23 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   }
 
   Future<void> _loadAppointments({bool withLoader = true}) async {
+    // Only block the screen with a spinner when there's nothing on it yet —
+    // a pull-to-refresh or retry with appointments already showing has its
+    // own feedback (the pull gesture itself) and shouldn't blank the list
+    // out from under the user just to show a duplicate loading state.
+    final showLoader = withLoader && _appointments.isEmpty;
     if (withLoader) {
       setState(() {
-        _loading = true;
+        _loading = showLoader;
         _error = '';
       });
     }
 
-    final result = await _apiClient.get('/appointments/mine');
+    // Always silent: this screen already renders its own loading state
+    // below (see _buildContent), so the app-wide overlay would just be a
+    // second, redundant spinner stacked on top of it.
+    _lastFetchAt = DateTime.now();
+    final result = await _apiClient.get('/appointments/mine', null, true);
     if (!mounted) return;
 
     if (!result.success) {
@@ -238,17 +255,30 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _queueRefresh();
+      _queueBackgroundRefresh();
       _joinPatientSocketRoom();
     }
   }
 
   void _handleSocketConnected(dynamic _) {
     _joinPatientSocketRoom();
-    _queueRefresh();
+    _queueBackgroundRefresh();
   }
 
   void _handleRealtimeUpdate(dynamic _) {
+    _queueRefresh();
+  }
+
+  // Resume/reconnect refreshes are just "make sure nothing changed while we
+  // were away" — safe to skip if a fetch (from either trigger, or a manual
+  // action) already landed moments ago. Genuine push events always go
+  // through the unthrottled _queueRefresh above so real updates never wait.
+  void _queueBackgroundRefresh() {
+    final lastFetchAt = _lastFetchAt;
+    if (lastFetchAt != null &&
+        DateTime.now().difference(lastFetchAt) < _minBackgroundRefreshInterval) {
+      return;
+    }
     _queueRefresh();
   }
 
@@ -887,7 +917,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
         url.endsWith('.gif');
   }
 
-  void _openReport(MedicalReport report) {
+  Future<void> _openReport(MedicalReport report) async {
     final url = (report.url ?? '').trim();
     if (url.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -896,12 +926,25 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
       return;
     }
 
-    // To actually open the file, add `url_launcher` to pubspec.yaml, then:
-    //   import 'package:url_launcher/url_launcher.dart';
-    //   launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Opening ${report.name ?? 'attachment'}…')),
-    );
+    final uri = Uri.tryParse(url);
+    var launched = false;
+    if (uri != null) {
+      try {
+        launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } catch (_) {
+        launched = false;
+      }
+    }
+
+    if (!launched && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Unable to open ${report.name ?? 'attachment'}. Please try again.',
+          ),
+        ),
+      );
+    }
   }
 
   Widget _meta(IconData icon, String text) {

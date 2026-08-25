@@ -510,6 +510,18 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
       return;
     }
 
+    // A missing/zero price here means the category, specialty, or condition
+    // the user picked has no resolvable price from the backend. Block
+    // before payment with an actionable message instead of letting an
+    // invalid $0 charge reach Stripe/the backend, where it comes back as an
+    // opaque "could not determine price" failure.
+    if (_parsedCost(selection["cost"]) == null) {
+      _snack(
+        "We couldn't determine a valid price for this selection. Please go back and choose again.",
+      );
+      return;
+    }
+
     // Force all consent checkboxes back to unchecked every time the modal
     // is opened — no pre-checked boxes, matching the updated web behavior.
     setState(() {
@@ -655,6 +667,15 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg)),
     );
+  }
+
+  // Returns the numeric cost only if it's a real, positive price — null for
+  // missing, unparseable, or zero/negative values, all of which mean the
+  // selection has no valid price to charge.
+  num? _parsedCost(Object? value) {
+    final parsed = value is num ? value : num.tryParse(value?.toString() ?? '');
+    if (parsed == null || parsed <= 0) return null;
+    return parsed;
   }
 
   BoxDecoration _box() {

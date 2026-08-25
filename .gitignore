@@ -1,6 +1,11 @@
-# Environment variables - contain live API/TURN credentials, never commit new ones.
-# .env / .env.uat / .env.production are already tracked from an earlier commit;
-# this only stops further *new* env files from being added.
+# Environment variables. These were previously tracked in git (habit risk —
+# nothing in them today is a real secret, since VITE_STRIPE_PUBLISHABLE_KEY
+# and *_GOOGLE_CLIENT_ID are meant to be public, but the next value added to
+# one of these files might not be). Untracked via `git rm --cached`; copy
+# the matching *.example file in this same directory to get started.
+.env
+.env.uat
+.env.production
 .env.local
 .env.*.local
 

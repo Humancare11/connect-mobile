@@ -123,7 +123,10 @@ Future<IceServerSetup> fetchIceServerConfig() async {
 
   for (var attempt = 0; attempt <= _kRetryDelaysMs.length; attempt++) {
     try {
-      final data = await ApiService.instance.get('/api/rtc/ice-servers');
+      final data = await ApiService.instance.get(
+        '/api/rtc/ice-servers',
+        silent: true,
+      );
       final iceServers = _sanitizeIceServers(
         data is Map ? data['iceServers'] : null,
       );

@@ -71,6 +71,7 @@ class AppointmentTreeSpecialty {
     required this.live,
     required this.count,
     required this.conditions,
+    this.price,
   });
 
   final String name;
@@ -78,6 +79,11 @@ class AppointmentTreeSpecialty {
   final bool live;
   final String count;
   final List<AppointmentTreeCondition> conditions;
+
+  // Null when the backend doesn't send a specialty-specific price for this
+  // node — callers should fall back to the parent category's price rather
+  // than treating a missing price as $0.
+  final num? price;
 
   static AppointmentTreeSpecialty? fromAny(dynamic value) {
     if (value is String) {
@@ -108,6 +114,13 @@ class AppointmentTreeSpecialty {
       icon: _firstString(json, const ['icon', 'emoji']),
       live: _firstBool(json, const ['live', 'isLive', 'active']),
       count: _firstString(json, const ['count', 'doctorCount', 'doctors']),
+      price: _firstNumOrNull(json, const [
+        'price',
+        'cost',
+        'amount',
+        'specialtyPrice',
+        'consultationPrice',
+      ]),
       conditions: _firstList(json, const ['conditions', 'symptoms', 'items'])
           .map(AppointmentTreeCondition.fromAny)
           .whereType<AppointmentTreeCondition>()
@@ -116,24 +129,33 @@ class AppointmentTreeSpecialty {
   }
 
   Map<String, dynamic> toUiMap(num categoryPrice) {
+    final effectivePrice = price ?? categoryPrice;
     return {
       'name': name,
       'icon': icon,
       'live': live,
       'count': count,
-      'cost': categoryPrice,
+      'cost': effectivePrice,
       'conditions': conditions.map((condition) {
-        return [condition.name, condition.icon];
+        return [condition.name, condition.icon, condition.price ?? effectivePrice];
       }).toList(),
     };
   }
 }
 
 class AppointmentTreeCondition {
-  const AppointmentTreeCondition({required this.name, required this.icon});
+  const AppointmentTreeCondition({
+    required this.name,
+    required this.icon,
+    this.price,
+  });
 
   final String name;
   final String icon;
+
+  // Null unless the backend sends the condition as an object with its own
+  // price — the string/tuple forms carry no pricing data.
+  final num? price;
 
   static AppointmentTreeCondition? fromAny(dynamic value) {
     if (value is String) {
@@ -166,6 +188,13 @@ class AppointmentTreeCondition {
     return AppointmentTreeCondition(
       name: name,
       icon: _firstString(json, const ['icon', 'emoji']),
+      price: _firstNumOrNull(json, const [
+        'price',
+        'cost',
+        'amount',
+        'conditionPrice',
+        'consultationPrice',
+      ]),
     );
   }
 }
@@ -221,6 +250,16 @@ num _firstNum(Map<String, dynamic> json, List<String> keys) {
     if (parsed != null) return parsed;
   }
   return 0;
+}
+
+num? _firstNumOrNull(Map<String, dynamic> json, List<String> keys) {
+  for (final key in keys) {
+    final value = json[key];
+    if (value is num) return value;
+    final parsed = num.tryParse(value?.toString() ?? '');
+    if (parsed != null) return parsed;
+  }
+  return null;
 }
 
 bool _firstBool(Map<String, dynamic> json, List<String> keys) {

@@ -42,6 +42,12 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   final _recordsService = MedicalRecordsService();
   final _tokenStorage = const TokenStorageService();
   Timer? _refreshTimer;
+  DateTime? _lastFetchAt;
+
+  // See the matching comment in appointments_screen.dart — resume and
+  // socket-reconnect can both fire moments apart for the same backgrounding
+  // event, so a background refresh that just ran doesn't need repeating.
+  static const _minBackgroundRefreshInterval = Duration(seconds: 5);
 
   // Scaffold tint — swap for AppColors.background if your system defines one.
   static const Color _bgCanvas = Color(0xFFF3F6F5);
@@ -88,14 +94,22 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   }
 
   Future<void> _loadRecords({bool withLoader = false}) async {
+    // Only block the screen with a spinner when there's nothing on it yet —
+    // see the matching comment in appointments_screen.dart.
+    final hasData = _prescriptions.isNotEmpty || _certificates.isNotEmpty;
+    final showLoader = withLoader && !hasData;
     if (withLoader && mounted) {
       setState(() {
-        _loading = true;
+        _loading = showLoader;
         _error = '';
       });
     }
 
-    final snapshot = await _recordsService.fetchMyRecords();
+    // Always silent: this screen already renders its own loading state
+    // above (the block right below), so the app-wide overlay would just be
+    // a second, redundant spinner stacked on top of it.
+    _lastFetchAt = DateTime.now();
+    final snapshot = await _recordsService.fetchMyRecords(silent: true);
     if (!mounted) return;
 
     setState(() {
@@ -123,16 +137,26 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _joinPatientRoom();
-      _queueRefresh();
+      _queueBackgroundRefresh();
     }
   }
 
   void _handleSocketConnected(dynamic _) {
     _joinPatientRoom();
-    _queueRefresh();
+    _queueBackgroundRefresh();
   }
 
   void _handleRealtimeUpdate(dynamic _) {
+    _queueRefresh();
+  }
+
+  // See the matching comment in appointments_screen.dart.
+  void _queueBackgroundRefresh() {
+    final lastFetchAt = _lastFetchAt;
+    if (lastFetchAt != null &&
+        DateTime.now().difference(lastFetchAt) < _minBackgroundRefreshInterval) {
+      return;
+    }
     _queueRefresh();
   }
 

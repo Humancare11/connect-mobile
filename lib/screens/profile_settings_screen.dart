@@ -676,7 +676,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       profileSyncError = '';
     });
 
-    final remoteResult = await _authService.fetchCurrentProfile();
+    final remoteResult = await _authService.fetchCurrentProfile(silent: true);
 
     if (!mounted) return;
 

@@ -610,12 +610,20 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
   }
 
   Future<void> _loadTickets() async {
+    // Only block with the full spinner when there's nothing cached to show
+    // yet — a refresh with tickets already on screen relies on the pull
+    // gesture / refresh icon itself for feedback instead of a duplicate
+    // loading state, and shouldn't trip the global loader either.
+    final showLoader = tickets.isEmpty;
     setState(() {
-      loadingTickets = tickets.isEmpty;
+      loadingTickets = showLoader;
       ticketLoadError = "";
     });
 
-    final result = await _ticketService.fetchTickets();
+    // Always silent: this screen already renders its own loading state
+    // above (the block right below), so the app-wide overlay would just be
+    // a second, redundant spinner stacked on top of it.
+    final result = await _ticketService.fetchTickets(silent: true);
 
     if (!mounted) return;
 

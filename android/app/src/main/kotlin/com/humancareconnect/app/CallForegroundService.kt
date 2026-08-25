@@ -20,11 +20,8 @@ import androidx.core.app.NotificationCompat
  * battery managers (Xiaomi/Oppo/Huawei/Samsung) — can suspend background
  * networking mid-call.
  *
- * Deliberately separate from flutter_background's IsolateHolderService
- * (screen-share only): that service's manifest type is "mediaProjection",
- * which Android 14+ only permits starting immediately after an active
- * MediaProjection grant. A plain call has no MediaProjection session, so it
- * must use its own service typed "camera|microphone" instead.
+ * Typed "camera|microphone" rather than "mediaProjection", matching what a
+ * plain audio/video call actually uses.
  *
  * Started/stopped from Dart via MainActivity's method channel — see
  * lib/services/call_foreground_service.dart.

@@ -7,13 +7,8 @@
 // teal/red/indigo/green state colors, Sora/DM Sans typography). Owns no
 // signaling/WebRTC logic itself — see video_call_controller.dart.
 //
-// Screen sharing is ported (see VideoCallController.startScreenShare /
-// stopScreenShare) — Android needs a foreground service declared in
-// AndroidManifest.xml (MediaProjection requires one); iOS needs none, since
-// flutter_webrtc's getDisplayMedia routes through in-process RPScreenRecorder
-// for in-app sharing.
-//
-// Deliberately NOT ported from the web UI: the doctor-authored
+// Deliberately NOT ported from the web UI: screen sharing (removed from the
+// mobile call UI entirely — no in-call use case here) and the doctor-authored
 // prescription/notes UI (this app has no doctor login flow — see the
 // controller's class doc comment).
 
@@ -386,13 +381,17 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
     }
 
     return PopScope(
-      canPop: false,
+      // Only block the back button once a call is actually live — before
+      // that (e.g. still waiting for the doctor to join) there's nothing to
+      // confirm, so the pop is allowed to go through normally. This MUST
+      // stay a real condition rather than a hard-coded `false`: canPop
+      // false unconditionally blocks Navigator.maybePop() too, and the
+      // previous code's fallback of calling maybePop() from inside
+      // onPopInvokedWithResult to get around that re-entered the very same
+      // blocked pop check, recursing forever and hanging the app.
+      canPop: !_controller.inCall,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        if (!_controller.inCall) {
-          Navigator.of(context).maybePop();
-          return;
-        }
         setState(() => _leaveConfirm = true);
       },
       child: Scaffold(
@@ -537,30 +536,19 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
   // and .hc-vc__infobar are `display: none` under that cascade layer) ────
   Widget _buildTopMetaBar() {
     final other = _controller.otherParty;
-    final me = _controller.currentUser;
     final isDoctorRole = _controller.isDoctor;
-    // Only the doctor/patient identities are shown here (no app branding) —
-    // whichever side "me" is on fills in from the local user, the rest from
-    // the peer, so both names are visible to both parties.
-    final doctorName = isDoctorRole ? (me['name'] ?? 'Doctor') : (other?['name']?.toString() ?? 'Doctor');
-    final patientName = isDoctorRole ? (other?['name']?.toString() ?? 'Patient') : (me['name'] ?? 'Patient');
+    // Privacy: each side only ever sees the OTHER party's identity here —
+    // a doctor sees the patient's name, a patient sees the doctor's name.
+    // The local participant's own name is never rendered on their own call
+    // screen (their self-video preview only ever labels itself "You").
+    final otherLabel = isDoctorRole ? 'Patient' : 'Doctor';
+    final otherName = other?['name']?.toString() ?? otherLabel;
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 6),
       child: Row(
         children: [
           Expanded(
-            child: Row(
-              children: [
-                Expanded(child: _partyNameChip(label: 'Doctor', name: doctorName)),
-                Container(
-                  width: 1,
-                  height: 18,
-                  margin: const EdgeInsets.symmetric(horizontal: 12),
-                  color: Colors.white.withValues(alpha: 0.08),
-                ),
-                Expanded(child: _partyNameChip(label: 'Patient', name: patientName)),
-              ],
-            ),
+            child: _partyNameChip(label: otherLabel, name: otherName),
           ),
           // Timer is doctor-only on the web (`{inCall && isDoctor && ...}`) —
           // kept behind the same guard for parity even though this app never
@@ -922,14 +910,30 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
           if (_controller.reconnectStalled)
             Positioned(
               bottom: 118,
-              left: 0,
-              right: 0,
+              left: 16,
+              right: 16,
+              // Past kMaxReconnectStallRetries stalls in a row, stop implying
+              // "still working on it" and offer an explicit way to give up
+              // instead of retrying silently forever — mirrors VideoCall.jsx's
+              // identical MAX_RECONNECT_STALL_RETRIES escalation.
               child: Center(child: _pillNotice(
                 icon: Icons.warning_amber_rounded,
-                text: 'Reconnection is taking longer than expected.',
-                trailing: GestureDetector(
-                  onTap: () => unawaited(_controller.forceReconnect()),
-                  child: Text('  Retry', style: _sora(size: 12, weight: FontWeight.w700, color: _C.teal)),
+                text: _controller.reconnectStallExhausted
+                    ? 'Still unable to reconnect. You can keep trying or end the call.'
+                    : 'Reconnection is taking longer than expected.',
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    GestureDetector(
+                      onTap: () => unawaited(_controller.forceReconnect()),
+                      child: Text('  Retry', style: _sora(size: 12, weight: FontWeight.w700, color: _C.teal)),
+                    ),
+                    if (_controller.reconnectStallExhausted)
+                      GestureDetector(
+                        onTap: () => setState(() => _endCallConfirm = true),
+                        child: Text('  End Call', style: _sora(size: 12, weight: FontWeight.w700, color: _C.btnDangerText)),
+                      ),
+                  ],
                 ),
               )),
             ),
@@ -981,10 +985,20 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Icon(icon, color: _C.peerLeftText, size: 15),
           const SizedBox(width: 10),
-          Text(text, style: _sora(size: 13, weight: FontWeight.w600, color: _C.peerLeftText)),
+          // Flexible so a long message (e.g. the reconnect-stalled notice,
+          // which also carries a trailing "Retry" tap target) wraps within
+          // the available screen width instead of overflowing the row.
+          Flexible(
+            child: Text(
+              text,
+              style: _sora(size: 13, weight: FontWeight.w600, color: _C.peerLeftText),
+              softWrap: true,
+            ),
+          ),
           ?trailing,
         ],
       ),
@@ -1096,14 +1110,30 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
 
   Widget _buildPip() {
     final size = MediaQuery.of(context).size;
-    // Mirrors the web self-preview's responsive sizing
-    // (videocall.css .hc-vc__pip: `width: clamp(190px, 24vw, 320px)`, 16:9,
-    // top/right 16px) — bounds are scaled down for phone-sized viewports so
-    // the preview stays compact instead of literally porting desktop pixel
-    // values, which would dominate a phone screen.
-    final pipW = (size.width * 0.24).clamp(96.0, 150.0);
-    final pipH = pipW * 9 / 16;
-    final pos = _pipPos ?? Offset(size.width - pipW - 16, 16);
+    // Mirrors the web self-preview's own mobile breakpoints (videocall.css
+    // .hc-vc__pip @media max-width:768px/480px), which drop the desktop
+    // 16:9 landscape clamp for an explicit portrait box matching the
+    // front camera's natural orientation on a phone. This is the rule
+    // that actually applies at phone-sized viewports on the web, so it's
+    // what "match the web version's self-preview size" means on a phone
+    // screen rather than the wide-viewport 16:9 clamp.
+    final double pipW;
+    final double pipH;
+    final double pipMargin;
+    if (size.width <= 480) {
+      pipW = 160;
+      pipH = 220;
+      pipMargin = 10;
+    } else if (size.width <= 768) {
+      pipW = 180;
+      pipH = 240;
+      pipMargin = 10;
+    } else {
+      pipW = (size.width * 0.23).clamp(170.0, 280.0);
+      pipH = pipW * 9 / 16;
+      pipMargin = 16;
+    }
+    final pos = _pipPos ?? Offset(size.width - pipW - pipMargin, pipMargin);
 
     return Positioned(
       left: pos.dx,
@@ -1412,6 +1442,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
     );
   }
 
+  // All five primary controls must fit on one row on any phone width — no
+  // horizontal scrolling. Button width/icon/font scale down together from
+  // the available bar width instead of using fixed pixel sizes, so a narrow
+  // (e.g. ~360dp) screen still fits five buttons without clipping or overflow.
   Widget _buildControlBar() {
     return Container(
       decoration: BoxDecoration(
@@ -1422,22 +1456,38 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
         ),
         border: const Border(top: BorderSide(color: _C.ctrlbarBorder)),
       ),
-      padding: const EdgeInsets.fromLTRB(10, 12, 10, 14),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
+      padding: const EdgeInsets.fromLTRB(6, 10, 6, 12),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          const buttonCount = 5;
+          // Fixed, small gap between every button (not just evenly-distributed
+          // leftover space) so spacing stays visually consistent across
+          // screen widths; the gap is subtracted before dividing so all 5
+          // buttons + gaps are still guaranteed to fit without overflow.
+          const buttonSpacing = 8.0;
+          final availableForButtons = constraints.maxWidth - (buttonSpacing * (buttonCount - 1));
+          final buttonWidth = (availableForButtons / buttonCount).clamp(52.0, 84.0);
+          final iconSize = (buttonWidth * 0.26).clamp(15.0, 21.0);
+          final fontSize = (buttonWidth * 0.125).clamp(8.5, 10.5);
+
+          final buttons = [
             _ctrlButton(
               icon: _controller.isMuted ? Icons.mic_off : Icons.mic,
               label: _controller.isMuted ? 'Unmute' : 'Mute',
               danger: _controller.isMuted,
               onTap: _controller.isReady ? _controller.toggleMute : null,
+              width: buttonWidth,
+              iconSize: iconSize,
+              fontSize: fontSize,
             ),
             _ctrlButton(
               icon: _controller.isCamOff ? Icons.videocam_off : Icons.videocam,
               label: _controller.isCamOff ? 'Cam On' : 'Cam Off',
               danger: _controller.isCamOff,
               onTap: _controller.isReady ? _controller.toggleCamera : null,
+              width: buttonWidth,
+              iconSize: iconSize,
+              fontSize: fontSize,
             ),
             _ctrlButton(
               icon: Icons.chat_bubble_outline,
@@ -1445,20 +1495,39 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
               chatOn: _controller.chatOpen,
               badge: (_controller.unreadCount > 0 && !_controller.chatOpen) ? _controller.unreadCount : null,
               onTap: () => _controller.setChatOpen(!_controller.chatOpen),
+              width: buttonWidth,
+              iconSize: iconSize,
+              fontSize: fontSize,
             ),
             _ctrlButton(
               icon: _controller.completing ? Icons.refresh : Icons.phone_disabled,
-              label: _controller.completing ? 'Completing...' : 'Leave Call',
+              label: _controller.completing ? 'Ending...' : 'End Call',
               end: true,
               onTap: _controller.completing ? null : () => setState(() => _endCallConfirm = true),
+              width: buttonWidth,
+              iconSize: iconSize,
+              fontSize: fontSize,
             ),
             _ctrlButton(
               icon: Icons.more_horiz,
               label: 'More',
               onTap: _showMoreOptionsSheet,
+              width: buttonWidth,
+              iconSize: iconSize,
+              fontSize: fontSize,
             ),
-          ],
-        ),
+          ];
+
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var i = 0; i < buttons.length; i++) ...[
+                if (i > 0) const SizedBox(width: buttonSpacing),
+                buttons[i],
+              ],
+            ],
+          );
+        },
       ),
     );
   }
@@ -1513,29 +1582,6 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
               child: Text('More Options', style: _sora(size: 16, weight: FontWeight.w700, color: _C.modalTitle)),
             ),
             const SizedBox(height: 8),
-            if (_controller.supportsSpeakerToggle)
-              _moreOptionRow(
-                icon: _controller.isSpeakerOn ? Icons.volume_up : Icons.hearing,
-                label: _controller.isSpeakerOn ? 'Speaker' : 'Earpiece',
-                subtitle: 'Switch the call audio output',
-                active: !_controller.isSpeakerOn,
-                onTap: _controller.isReady ? () => unawaited(_controller.toggleSpeaker()) : null,
-              ),
-            if (_controller.supportsCameraSwitch)
-              _moreOptionRow(
-                icon: Icons.cameraswitch,
-                label: 'Flip Camera',
-                subtitle: 'Switch between front and back camera',
-                onTap: (_controller.isReady && !_controller.isScreenSharing)
-                    ? () => unawaited(_controller.switchCamera())
-                    : null,
-              ),
-            _moreOptionRow(
-              icon: Icons.screen_share_outlined,
-              label: _controller.isScreenSharing ? 'Stop Sharing' : 'Share Screen',
-              active: _controller.isScreenSharing,
-              onTap: _controller.isReady ? _controller.toggleScreenShare : null,
-            ),
             _moreOptionRow(
               icon: _isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
               label: _isFullscreen ? 'Exit Fullscreen' : 'Fullscreen',
@@ -1698,6 +1744,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
     bool chatOn = false,
     bool end = false,
     int? badge,
+    double width = 76,
+    double iconSize = 21,
+    double fontSize = 10,
   }) {
     Color bg = _C.btnBg;
     Color border = _C.btnBorder;
@@ -1721,55 +1770,52 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
       color = _C.btnActiveText;
     }
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 5),
-      child: Opacity(
-        opacity: onTap == null ? 0.35 : 1,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
-          child: Container(
-            width: end ? 88 : 76,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 11),
-            decoration: BoxDecoration(
-              color: bg,
-              border: Border.all(color: border),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Icon(icon, color: color, size: 21),
-                    if (badge != null)
-                      Positioned(
-                        right: -8,
-                        top: -7,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                          decoration: const BoxDecoration(color: _C.badgeBg, shape: BoxShape.circle),
-                          constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-                          child: Text(
-                            badge > 9 ? '9+' : '$badge',
-                            style: _sora(size: 10, weight: FontWeight.w700, color: Colors.white),
-                            textAlign: TextAlign.center,
-                          ),
+    return Opacity(
+      opacity: onTap == null ? 0.35 : 1,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          width: width,
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          decoration: BoxDecoration(
+            color: bg,
+            border: Border.all(color: border),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Icon(icon, color: color, size: iconSize),
+                  if (badge != null)
+                    Positioned(
+                      right: -7,
+                      top: -6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: const BoxDecoration(color: _C.badgeBg, shape: BoxShape.circle),
+                        constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                        child: Text(
+                          badge > 9 ? '9+' : '$badge',
+                          style: _sora(size: 9, weight: FontWeight.w700, color: Colors.white),
+                          textAlign: TextAlign.center,
                         ),
                       ),
-                  ],
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  label,
-                  style: _sora(size: 10, weight: FontWeight.w600, color: color, letterSpacing: 0.3),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                label,
+                style: _sora(size: fontSize, weight: FontWeight.w600, color: color, letterSpacing: 0.2),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
           ),
         ),
       ),

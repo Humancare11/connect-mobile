@@ -35,23 +35,39 @@ class PaymentService {
 
   final ApiClient _apiClient;
 
-  Future<ApiResult<StripeIntent>> createStripeIntentByAmount(
-    num amountUsd,
-  ) async {
-    final amountCents = (amountUsd * 100).round();
-    debugPrint(
+  // debugPrint() (unlike assert) still runs in release builds, and these
+  // logs carry payment intent ids/amounts alongside a redacted client
+  // secret — same reasoning as ApiClient._log. Gating on kDebugMode keeps
+  // them for local development without writing to the release build's
+  // system log (readable via `adb logcat`).
+  void _log(String message) {
+    if (kDebugMode) debugPrint(message);
+  }
+
+  // The backend resolves the charge amount itself from HealthcareCategory /
+  // ServicePrice (via priceType + priceRef) and no longer accepts a
+  // client-supplied amount — that used to let a client mint a PaymentIntent
+  // for any amount it chose. priceRef must match the category's `name` (for
+  // `priceType: "category"`) or the service's `name` (for
+  // `priceType: "service"`) exactly, as returned by the tree/services APIs.
+  Future<ApiResult<StripeIntent>> createStripeIntent({
+    required String priceType,
+    required String priceRef,
+  }) async {
+    _log(
       '[PaymentService] create-intent request '
-      'amountUsd=$amountUsd amountCents=$amountCents currency=usd',
+      'priceType=$priceType priceRef=$priceRef',
     );
 
     final result = await _apiClient.post('/payments/create-intent-by-amount', {
-      'amountUsd': amountUsd,
+      'priceType': priceType,
+      'priceRef': priceRef,
     });
-    debugPrint(
+    _log(
       '[PaymentService] create-intent status=${result.statusCode} '
       'success=${result.success} message="${result.message}"',
     );
-    debugPrint(
+    _log(
       '[PaymentService] create-intent raw=${jsonEncode(_redactSecrets(result.raw))}',
     );
 
@@ -145,7 +161,7 @@ class PaymentService {
       intentData['livemode'],
       intentData['liveMode'],
     ]);
-    debugPrint(
+    _log(
       '[PaymentService] parsed clientSecret=${_redactClientSecret(clientSecret)} '
       'paymentIntentId=${paymentIntentId.isEmpty ? "(missing)" : paymentIntentId} '
       'amountCents=$parsedAmountCents currency=$currency livemode=$livemode',

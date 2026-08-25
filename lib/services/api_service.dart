@@ -8,18 +8,26 @@ class ApiService {
 
   final ApiClient _client = ApiClient();
 
-  Future<dynamic> get(String path) async {
-    final result = await _client.get(_normalizePath(path));
+  Future<dynamic> get(String path, {bool silent = false}) async {
+    final result = await _client.get(_normalizePath(path), null, silent);
     return _unwrap(result);
   }
 
-  Future<dynamic> post(String path, Map<String, dynamic> body) async {
-    final result = await _client.post(_normalizePath(path), body);
+  Future<dynamic> post(
+    String path,
+    Map<String, dynamic> body, {
+    bool silent = false,
+  }) async {
+    final result = await _client.post(_normalizePath(path), body, silent: silent);
     return _unwrap(result);
   }
 
-  Future<dynamic> put(String path, Map<String, dynamic> body) async {
-    final result = await _client.put(_normalizePath(path), body);
+  Future<dynamic> put(
+    String path,
+    Map<String, dynamic> body, {
+    bool silent = false,
+  }) async {
+    final result = await _client.put(_normalizePath(path), body, silent: silent);
     return _unwrap(result);
   }
 

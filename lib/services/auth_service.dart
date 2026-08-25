@@ -407,11 +407,13 @@ class AuthService {
     unawaited(NotificationService.instance.syncTokenAfterLogin());
   }
 
-  Future<ApiResult<Map<String, String>>> fetchCurrentProfile() async {
+  Future<ApiResult<Map<String, String>>> fetchCurrentProfile({
+    bool silent = false,
+  }) async {
     ApiResult<Map<String, dynamic>>? lastFailure;
 
     for (final endpoint in _profileEndpoints) {
-      final result = await _apiClient.get(endpoint);
+      final result = await _apiClient.get(endpoint, null, silent);
 
       if (result.success) {
         final profile = _normalizeProfile(

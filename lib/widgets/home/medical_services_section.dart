@@ -194,9 +194,16 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
       builder: (context, constraints) {
         final maxWidth = constraints.maxWidth;
 
+        // Previous 340 cutoff was wider than the content area on virtually
+        // every phone once the page's own 22px gutter (see _Gutter in
+        // home_page.dart) is subtracted from the screen width — e.g. a
+        // common 360-390 logical-px phone only ever passes ~316-346 down
+        // here, so it was permanently stuck at 1 column. Lowered so 2
+        // columns is the normal phone case; 1 column is now reserved for
+        // genuinely tiny widths (e.g. a split-screen/multi-window pane).
         int columns;
-        if (maxWidth < 340) {
-          columns = 1; // bahut choti screens
+        if (maxWidth < 240) {
+          columns = 1; // extremely narrow (split-screen, etc.)
         } else if (maxWidth < 620) {
           columns = 2; // normal phones
         } else {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -44,12 +46,12 @@ Future<void> main() async {
     _ => '.env',
   };
 
-  await dotenv.load(fileName: envFile);
-
-  // Firebase Initialize
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-
-  await NotificationService.instance.initialize();
+  // Independent of each other — loading them in parallel instead of one
+  // after the other shaves a full await off the time to first frame.
+  await Future.wait([
+    dotenv.load(fileName: envFile),
+    Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform),
+  ]);
 
   debugPrint('[AppConfig] APP_ENV=$appEnv envFile=$envFile');
   debugPrint('[AppConfig] API_BASE_URL=${ApiConfig.baseUrl}');
@@ -79,6 +81,20 @@ Future<void> main() async {
   }
 
   runApp(const MyApp());
+
+  // Deferred until after the first frame is on screen. initialize() ends in
+  // requestPermission(), which blocks on the OS notification-permission
+  // dialog — running it before runApp() held the splash screen frozen
+  // behind that dialog until the user responded, which read as the app
+  // stalling/reloading rather than starting up. flushPendingNavigation()
+  // is re-run on completion because a cold start from a tapped notification
+  // sets its pending payload here, after MyApp's builder already ran once
+  // with nothing to flush.
+  unawaited(
+    NotificationService.instance.initialize().then((_) {
+      NotificationService.instance.flushPendingNavigation();
+    }),
+  );
 }
 
 bool get _supportsStripePaymentSheet {

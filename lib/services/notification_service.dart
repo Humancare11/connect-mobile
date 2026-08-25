@@ -307,6 +307,10 @@ class NotificationService {
           );
           return;
         case _NotificationTarget.booking:
+          if (MainScreen.switchToTab(2)) {
+            navigator.popUntil((route) => route.isFirst);
+            return;
+          }
           navigator.pushAndRemoveUntil(
             MaterialPageRoute(
               builder: (_) => const MainScreen(initialIndex: 2),
@@ -315,6 +319,10 @@ class NotificationService {
           );
           return;
         case _NotificationTarget.home:
+          if (MainScreen.switchToTab(0)) {
+            navigator.popUntil((route) => route.isFirst);
+            return;
+          }
           navigator.pushAndRemoveUntil(
             MaterialPageRoute(builder: (_) => const MainScreen()),
             (route) => false,

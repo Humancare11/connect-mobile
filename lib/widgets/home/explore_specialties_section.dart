@@ -39,8 +39,12 @@ class ExploreSpecialtiesSection extends StatefulWidget {
       _ExploreSpecialtiesSectionState();
 }
 
-class _ExploreSpecialtiesSectionState extends State<ExploreSpecialtiesSection> {
+class _ExploreSpecialtiesSectionState extends State<ExploreSpecialtiesSection>
+    with AutomaticKeepAliveClientMixin {
   final _treeService = AppointmentTreeService();
+
+  @override
+  bool get wantKeepAlive => true;
 
   bool _loadingSpecialties = true;
   String? _specialtyError;
@@ -125,6 +129,7 @@ class _ExploreSpecialtiesSectionState extends State<ExploreSpecialtiesSection> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/api_result.dart';
@@ -8,12 +10,21 @@ import 'api_client.dart';
 import 'token_storage_service.dart';
 
 class TicketService {
-  TicketService({ApiClient? apiClient, TokenStorageService? tokenStorage})
-    : _apiClient = apiClient ?? ApiClient(),
-      _tokenStorage = tokenStorage ?? const TokenStorageService();
+  TicketService({
+    ApiClient? apiClient,
+    TokenStorageService? tokenStorage,
+    FlutterSecureStorage? secureStorage,
+  }) : _apiClient = apiClient ?? ApiClient(),
+       _tokenStorage = tokenStorage ?? const TokenStorageService(),
+       _secureStorage = secureStorage ?? const FlutterSecureStorage();
 
   final ApiClient _apiClient;
   final TokenStorageService _tokenStorage;
+  // Ticket titles/descriptions can contain PHI (patients describing
+  // symptoms), so this cache lives in flutter_secure_storage on mobile —
+  // same reasoning as the profile fields in TokenStorageService. Kept as
+  // plain SharedPreferences on web only, matching that same class's split.
+  final FlutterSecureStorage _secureStorage;
   static const String _ticketCacheKeyPrefix = 'support_tickets_cache';
 
   Future<ApiResult<Map<String, dynamic>>> createTicket({
@@ -44,7 +55,9 @@ class TicketService {
     );
   }
 
-  Future<ApiResult<List<Map<String, dynamic>>>> fetchTickets() async {
+  Future<ApiResult<List<Map<String, dynamic>>>> fetchTickets({
+    bool silent = false,
+  }) async {
     final isDoctor = await _isDoctor();
     final endpoints = isDoctor
         ? const [
@@ -67,7 +80,7 @@ class TicketService {
     ApiResult<Map<String, dynamic>>? lastFailure;
 
     for (final endpoint in endpoints) {
-      final result = await _apiClient.get(endpoint);
+      final result = await _apiClient.get(endpoint, null, silent);
       if (result.success) {
         return ApiResult<List<Map<String, dynamic>>>(
           success: true,
@@ -121,8 +134,10 @@ class TicketService {
   }
 
   Future<List<Map<String, dynamic>>> loadCachedTickets() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(await _cacheKey());
+    final key = await _cacheKey();
+    final raw = kIsWeb
+        ? (await SharedPreferences.getInstance()).getString(key)
+        : await _readMigratingTicketCache(key);
     if (raw == null || raw.trim().isEmpty) {
       return const <Map<String, dynamic>>[];
     }
@@ -143,8 +158,14 @@ class TicketService {
   }
 
   Future<void> saveCachedTickets(List<Map<String, dynamic>> tickets) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(await _cacheKey(), jsonEncode(tickets));
+    final key = await _cacheKey();
+    final encoded = jsonEncode(tickets);
+    if (kIsWeb) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(key, encoded);
+      return;
+    }
+    await _secureStorage.write(key: key, value: encoded);
   }
 
   Map<String, dynamic> _normalizeTicket(
@@ -166,6 +187,23 @@ class TicketService {
       'status': ticket['status'] ?? 'open',
       'createdAt': ticket['createdAt'] ?? DateTime.now().toIso8601String(),
     };
+  }
+
+  // Lazily migrates a cache entry that was written to plaintext
+  // SharedPreferences before this cache moved to secure storage — reads
+  // secure storage first, and only on a miss falls back to (then clears)
+  // the legacy plaintext copy. Mirrors TokenStorageService._readMigrating.
+  Future<String?> _readMigratingTicketCache(String key) async {
+    final secureValue = await _secureStorage.read(key: key);
+    if (secureValue != null && secureValue.isNotEmpty) return secureValue;
+
+    final prefs = await SharedPreferences.getInstance();
+    final legacyValue = prefs.getString(key);
+    if (legacyValue == null || legacyValue.isEmpty) return null;
+
+    await _secureStorage.write(key: key, value: legacyValue);
+    await prefs.remove(key);
+    return legacyValue;
   }
 
   Future<bool> _isDoctor() async {
