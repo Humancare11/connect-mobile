@@ -20,6 +20,17 @@ class AppointmentTreeService {
   static Future<ApiResult<List<AppointmentTreeCategory>>>? _inFlight;
   static const _cacheTtl = Duration(minutes: 2);
 
+  // Drops the cached tree so the next fetchTree() call always hits the
+  // network. Used when a category/specialty turns out to be stale — e.g.
+  // the backend rejects a booking's priceRef as unrecognized because the
+  // category was renamed/removed after this cache was populated — so the
+  // "go back and reselect" recovery path actually picks up current data
+  // instead of replaying the same stale (and now-invalid) tree.
+  static void invalidateCache() {
+    _cachedResult = null;
+    _cachedAt = null;
+  }
+
   Future<ApiResult<List<AppointmentTreeCategory>>> fetchTree() {
     final cached = _cachedResult;
     final cachedAt = _cachedAt;

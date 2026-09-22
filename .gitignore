@@ -1,11 +1,8 @@
-# Environment variables. These were previously tracked in git (habit risk —
-# nothing in them today is a real secret, since VITE_STRIPE_PUBLISHABLE_KEY
-# and *_GOOGLE_CLIENT_ID are meant to be public, but the next value added to
-# one of these files might not be). Untracked via `git rm --cached`; copy
-# the matching *.example file in this same directory to get started.
-.env
-.env.uat
-.env.production
+# Environment variables. The single `.env` is committed on purpose — every
+# value in it is public by design (Stripe *publishable* key, Google client
+# ID). Never put a real secret (sk_..., tokens, passwords) in `.env`; if a
+# secret is ever needed client-side, rethink the design. Machine-local
+# overrides stay untracked.
 .env.local
 .env.*.local
 

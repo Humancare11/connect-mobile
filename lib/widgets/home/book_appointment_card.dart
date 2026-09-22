@@ -587,7 +587,7 @@ class _AppointmentIllustration extends StatelessWidget {
         cacheWidth: cacheSize,
         cacheHeight: cacheSize,
         // Agar image load na ho paye to layout na toote:
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        errorBuilder: (_, _, _) => const SizedBox.shrink(),
       ),
     );
   }
@@ -610,7 +610,7 @@ class _CategoryIcon extends StatelessWidget {
         width: 14,
         height: 14,
         fit: BoxFit.contain,
-        errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+        errorBuilder: (_, _, _) => const SizedBox.shrink(),
       );
     }
 

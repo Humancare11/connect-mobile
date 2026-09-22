@@ -422,7 +422,7 @@ class ApiClient {
     if (response.statusCode == 405 ||
         contentType.contains('text/html') ||
         body.contains('<html')) {
-      return 'UAT API is not returning backend JSON. Please check server '
+      return 'The API is not returning backend JSON. Please check server '
           'routing for /api on ${ApiConfig.baseUrl}.';
     }
 
@@ -468,10 +468,10 @@ class ApiClient {
       if (detail.contains('network is unreachable') ||
           detail.contains('no route to host')) {
         return 'Cannot reach the API server at ${ApiConfig.baseUrl}. Please '
-            'check network access to this UAT host.';
+            'check this device\'s network access.';
       }
       return 'Unable to connect to ${ApiConfig.baseUrl}. Please check that '
-          'the UAT API host is reachable from this device.';
+          'the API host is reachable from this device.';
     }
 
     if (error is HandshakeException || error is TlsException) {
@@ -490,8 +490,19 @@ class ApiClient {
         return 'The connection to the server was interrupted. Please try '
             'again.';
       }
+      if (kIsWeb) {
+        // On Flutter web every network/CORS failure surfaces as an opaque
+        // ClientException with no detail. The production API only sends
+        // Access-Control-Allow-Origin for its own domain, so a browser build
+        // served from any other origin (e.g. `flutter run -d chrome` on
+        // localhost) is blocked before the request completes. Native
+        // Android/iOS builds send no Origin header and are unaffected.
+        return 'Could not reach ${ApiConfig.baseUrl} from this web build. '
+            'The API only accepts browser requests from its own domain — '
+            'run the app on an Android/iOS device or emulator instead.';
+      }
       return 'Unable to connect to ${ApiConfig.baseUrl}. Please check that '
-          'the UAT API host is reachable from this device.';
+          'the API host is reachable from this device.';
     }
 
     if (error is StateError) {

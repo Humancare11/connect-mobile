@@ -5,6 +5,7 @@ class AppointmentTreeCategory {
     required this.icon,
     required this.price,
     required this.specialties,
+    this.isActive = true,
   });
 
   final String id;
@@ -12,6 +13,13 @@ class AppointmentTreeCategory {
   final String icon;
   final num price;
   final List<AppointmentTreeSpecialty> specialties;
+
+  // The backend's price/booking lookup only resolves active categories —
+  // an inactive one is invisible to it even though this tree endpoint still
+  // lists it. Kept so parseAppointmentTree can drop these before the app
+  // ever lets someone select one, instead of letting them pick a category
+  // that will fail at payment time with an "unrecognized category" error.
+  final bool isActive;
 
   factory AppointmentTreeCategory.fromJson(Map<String, dynamic> json) {
     final label = _firstString(json, const [
@@ -48,6 +56,11 @@ class AppointmentTreeCategory {
       ]),
       price: price,
       specialties: specialties,
+      isActive: _firstBoolOrDefault(
+        json,
+        const ['isActive', 'active', 'enabled'],
+        true,
+      ),
     );
   }
 
@@ -108,6 +121,13 @@ class AppointmentTreeSpecialty {
       'specialtyName',
     ]);
     if (name.isEmpty) return null;
+    // Same reasoning as the category-level filter above: an inactive
+    // specialty still shows up in this tree response but the backend won't
+    // recognize it at booking time, so drop it here rather than let it be
+    // selected.
+    if (!_firstBoolOrDefault(json, const ['isActive', 'active', 'enabled'], true)) {
+      return null;
+    }
 
     return AppointmentTreeSpecialty(
       name: name,
@@ -184,6 +204,9 @@ class AppointmentTreeCondition {
       'symptom',
     ]);
     if (name.isEmpty) return null;
+    if (!_firstBoolOrDefault(json, const ['isActive', 'active', 'enabled'], true)) {
+      return null;
+    }
 
     return AppointmentTreeCondition(
       name: name,
@@ -205,7 +228,7 @@ List<AppointmentTreeCategory> parseAppointmentTree(dynamic response) {
       .whereType<Map>()
       .map((item) => item.map((key, value) => MapEntry(key.toString(), value)))
       .map(AppointmentTreeCategory.fromJson)
-      .where((category) => category.label.isNotEmpty)
+      .where((category) => category.label.isNotEmpty && category.isActive)
       .toList();
 }
 
@@ -272,6 +295,29 @@ bool _firstBool(Map<String, dynamic> json, List<String> keys) {
     }
   }
   return false;
+}
+
+// Unlike _firstBool (which defaults to false for a "was this flag set"
+// check), an isActive-style flag should default to active when the backend
+// simply omits the field rather than sending it as explicitly false.
+bool _firstBoolOrDefault(
+  Map<String, dynamic> json,
+  List<String> keys,
+  bool defaultValue,
+) {
+  for (final key in keys) {
+    final value = json[key];
+    if (value == null) continue;
+    if (value is bool) return value;
+    final normalized = value.toString().trim().toLowerCase();
+    if (normalized == 'true' || normalized == '1' || normalized == 'yes') {
+      return true;
+    }
+    if (normalized == 'false' || normalized == '0' || normalized == 'no') {
+      return false;
+    }
+  }
+  return defaultValue;
 }
 
 List<dynamic> _firstList(Map<String, dynamic> json, List<String> keys) {

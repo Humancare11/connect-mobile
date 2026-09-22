@@ -1,6 +1,4 @@
-import java.util.Base64
 import java.util.Properties
-import org.gradle.api.tasks.Copy
 
 plugins {
     id("com.android.application")
@@ -107,80 +105,9 @@ kotlin {
     }
 }
 
-// ── Strip dev/UAT env files from the production release bundle ───────────
-// flutter_dotenv needs .env, .env.uat, and .env.production all present at
-// *build* time — main.dart picks the right one at runtime via
-// dotenv.load(fileName: ...) based on --dart-define=APP_ENV — but pubspec.yaml
-// has no concept of a conditional asset, so by default all three ship inside
-// every APK/AAB, including production: the UAT backend URL and its OAuth
-// client ID sit right next to the production ones as plaintext, inspectable
-// by unzipping the artifact. This hook deletes the two production doesn't
-// need, but only for an actual production release build — local/UAT builds
-// are untouched.
-//
-// APP_ENV isn't visible here directly (it's a --dart-define, which Gradle
-// doesn't otherwise see); it's read via the same "dart-defines" project
-// property the Flutter Gradle plugin itself uses to forward --dart-define
-// values through to the Dart compiler (see BaseFlutterTaskHelper.kt) — a
-// long-standing, stable integration point, but still internal to Flutter's
-// tooling. If a future Flutter upgrade ever renames it, this fails *open*
-// (silently stops stripping) rather than failing the build, which is why
-// the release checklist includes actually inspecting the built .aab's
-// contents rather than trusting this hook blindly.
-fun releaseAppEnv(): String? {
-    val raw = project.findProperty("dart-defines")?.toString() ?: return null
-    return raw.split(",")
-        .asSequence()
-        .mapNotNull { encoded ->
-            runCatching {
-                String(Base64.getDecoder().decode(encoded), Charsets.UTF_8)
-            }.getOrNull()
-        }
-        .firstOrNull { it.startsWith("APP_ENV=") }
-        ?.removePrefix("APP_ENV=")
-}
-
-// Flutter copies flutter_assets (which is where .env/.env.uat/.env.production
-// land, per pubspec.yaml) into place via a task named copyFlutterAssets<Variant>
-// — e.g. copyFlutterAssetsRelease for the release build type used by both
-// `flutter build apk --release` and `flutter build appbundle --release`
-// (there are no product flavors here, so "release" is the only release
-// variant). That task runs after Android's own asset merge and before
-// anything packages/signs the result, so hooking its doLast is the latest
-// point that's still safe to delete from — stripping *after* signing would
-// invalidate the bundle's signature and Play Console would reject the
-// upload outright.
-tasks.matching { it.name == "copyFlutterAssetsRelease" }.configureEach {
-    doLast {
-        if (releaseAppEnv() != "production") return@doLast
-
-        val destinationDir = (this as? Copy)?.destinationDir
-        if (destinationDir == null || !destinationDir.exists()) return@doLast
-
-        val strippedNames = setOf(".env", ".env.uat")
-        var strippedCount = 0
-
-        destinationDir.walkTopDown()
-            .filter { it.isFile && it.name in strippedNames }
-            .forEach { file ->
-                logger.lifecycle(
-                    "[release-env] Removing ${file.name} from the production " +
-                        "release bundle: ${file.path}"
-                )
-                file.delete()
-                strippedCount++
-            }
-
-        if (strippedCount == 0) {
-            logger.warn(
-                "[release-env] Expected to strip .env/.env.uat from the " +
-                    "production release bundle but found neither under " +
-                    "$destinationDir — inspect the built .aab manually " +
-                    "before uploading to Play Console."
-            )
-        }
-    }
-}
+// There is a single `.env` asset (production config, see pubspec.yaml), and
+// it is exactly what every build — including the production release — is meant
+// to ship. Nothing to strip from the bundle.
 
 flutter {
     source = "../.."

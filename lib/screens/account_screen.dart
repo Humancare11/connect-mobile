@@ -6,6 +6,7 @@ import '../services/auth_repository.dart';
 import '../services/idle_session_timer.dart';
 import 'profile_settings_screen.dart';
 import 'my_records_screen.dart';
+import 'payment_history_screen.dart';
 import 'raise_ticket_screen.dart';
 import 'change_password_screen.dart';
 import 'delete_account_screen.dart';
@@ -131,6 +132,15 @@ class AccountScreen extends StatelessWidget {
       ),
     ];
 
+    final billingOptions = <_AccountOption>[
+      _AccountOption(
+        icon: Icons.receipt_long_outlined,
+        title: 'Payment History',
+        subtitle: 'View payments and download invoices',
+        builder: (_) => const PaymentHistoryScreen(),
+      ),
+    ];
+
     final supportOptions = <_AccountOption>[
       _AccountOption(
         icon: Icons.confirmation_number_outlined,
@@ -172,6 +182,11 @@ class AccountScreen extends StatelessWidget {
             const _SectionLabel('GENERAL'),
             const SizedBox(height: 10),
             _OptionGroup(options: accountOptions),
+
+            const SizedBox(height: 24),
+            const _SectionLabel('BILLING'),
+            const SizedBox(height: 10),
+            _OptionGroup(options: billingOptions),
 
             const SizedBox(height: 24),
             const _SectionLabel('SUPPORT'),

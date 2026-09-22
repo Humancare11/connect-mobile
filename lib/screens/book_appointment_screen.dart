@@ -115,6 +115,7 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
             activeSpec = {
               ...Map<String, dynamic>.from(spec),
               "catLabel": cat["label"],
+              "catId": cat["id"],
               "catIcon": cat["icon"],
             };
             tab = "cond";
@@ -134,6 +135,7 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
             return {
               ...Map<String, dynamic>.from(spec),
               "catLabel": cat["label"],
+              "catId": cat["id"],
               "catIcon": cat["icon"],
             };
           });
@@ -177,6 +179,7 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
         "specName": spec["name"],
         "specIcon": spec["icon"],
         "catLabel": spec["catLabel"] ?? activeCat?["label"],
+        "catId": spec["catId"] ?? activeCat?["id"],
         "cost": cost ?? spec["cost"],
         "condName": name,
         "condIcon": icon,
@@ -349,6 +352,7 @@ class _AppointmentBookingPageState extends State<AppointmentBookingPage> {
                 return {
                   ...Map<String, dynamic>.from(s),
                   "catLabel": activeCat!["label"],
+                  "catId": activeCat!["id"],
                 };
               })
               .where((s) {

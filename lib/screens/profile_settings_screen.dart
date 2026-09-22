@@ -4,6 +4,7 @@ import '../config/app_design_system.dart';
 import '../services/auth_service.dart';
 import '../services/auth_validators.dart';
 import '../services/token_storage_service.dart';
+import '../widgets/email_verification_dialog.dart';
 
 class EditProfilePage extends StatefulWidget {
   const EditProfilePage({super.key});
@@ -597,6 +598,36 @@ class _EditProfilePageState extends State<EditProfilePage> {
         const SnackBar(content: Text('Enter a valid email address')),
       );
       return;
+    }
+
+    // Changing the account email is gated behind an OTP sent to the user's
+    // current, already-verified address. The verification dialog returns true
+    // only once the correct code has been entered; a cancel leaves the form
+    // untouched so the user can retry.
+    final currentEmail = (originalData['email'] ?? '').trim();
+    final emailChanged =
+        trimmedEmail.toLowerCase() != currentEmail.toLowerCase();
+
+    if (emailChanged) {
+      if (currentEmail.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'We could not verify your current email. Please try again later.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      final verified = await showEmailVerificationDialog(
+        context: context,
+        currentEmail: currentEmail,
+        newEmail: trimmedEmail,
+        authService: _authService,
+      );
+
+      if (!mounted || !verified) return;
     }
 
     setState(() => saving = true);

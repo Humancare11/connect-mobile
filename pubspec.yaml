@@ -3,7 +3,7 @@ name: humancare_connect
 description: "GlobaL Health Passport"
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.0+6
 
 environment:
   sdk: ^3.12.0
@@ -70,8 +70,6 @@ flutter:
 
   assets:
     - .env
-    - .env.uat
-    - .env.production
     - assets/
 
   # Bundled rather than pulled at runtime through google_fonts: a downloaded

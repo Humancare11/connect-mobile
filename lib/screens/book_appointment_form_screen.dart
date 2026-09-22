@@ -1,4 +1,6 @@
+import 'package:flutter/gestures.dart' show TapGestureRecognizer;
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../utils/direct_upload.dart';
 
@@ -36,14 +38,50 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
     return slots;
   }
 
-  // Consent checkboxes are no longer pre-checked by default — they are
-  // force-reset to false every time the modal is opened (see
-  // _validateAndOpenConsent), mirroring the updated web behavior where
-  // users must explicitly re-affirm consent on every booking attempt.
-  bool telehealth = false;
-  bool terms = false;
-  bool hipaa = false;
-  bool age = false;
+  // Patient Informed Consent — mirrors the web appointment flow's consent
+  // modal (see AppointmentBookingForm.jsx): a single "I agree to the …"
+  // acknowledgement covering the four policy documents, plus an explicit
+  // 18-or-older confirmation. Both are force-reset to false every time the
+  // modal is opened (see _validateAndOpenConsent) — no pre-checked boxes, so
+  // the user re-affirms consent on every booking attempt.
+  bool _agreeConsent = false;
+  bool _ageConsent = false;
+
+  // Policy documents linked from the consent acknowledgement. Paths match the
+  // web routes; opened in an external browser like the Account screen's
+  // privacy-policy link.
+  static const String _webBaseUrl = 'https://humancareconnect.co';
+  static const List<_ConsentPolicyLink> _consentPolicyLinks = [
+    _ConsentPolicyLink(
+      'Telehealth Informed Consent',
+      '/telehealth-informed-consent',
+    ),
+    _ConsentPolicyLink('Terms of Service', '/terms-of-service'),
+    _ConsentPolicyLink('Privacy Policy', '/privacy-policy'),
+    _ConsentPolicyLink(
+      'HIPAA Notice of Privacy Practices',
+      '/hipaa-notice-of-privacy-practices',
+    ),
+  ];
+
+  // One tap recognizer per policy link, created once and reused across every
+  // consent-modal rebuild. Inline `TextSpan` recognizers (unlike a
+  // `WidgetSpan` + `GestureDetector`) let a long policy name wrap across
+  // lines instead of overflowing the narrow dialog on small screens — but
+  // they must be created once and disposed, never rebuilt per frame.
+  late final List<TapGestureRecognizer> _policyLinkRecognizers = [
+    for (final link in _consentPolicyLinks)
+      TapGestureRecognizer()..onTap = () => _openPolicy(link.path),
+  ];
+
+  @override
+  void dispose() {
+    notesCtrl.dispose();
+    for (final recognizer in _policyLinkRecognizers) {
+      recognizer.dispose();
+    }
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -522,13 +560,11 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
       return;
     }
 
-    // Force all consent checkboxes back to unchecked every time the modal
-    // is opened — no pre-checked boxes, matching the updated web behavior.
+    // Force both consent checkboxes back to unchecked every time the modal
+    // is opened — no pre-checked boxes, matching the web behavior.
     setState(() {
-      telehealth = false;
-      terms = false;
-      hipaa = false;
-      age = false;
+      _agreeConsent = false;
+      _ageConsent = false;
     });
 
     _showConsentDialog(selection);
@@ -582,43 +618,120 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
       builder: (_) {
         return StatefulBuilder(
           builder: (context, setModalState) {
-            final allChecked = telehealth && terms && hipaa && age;
+            final allChecked = _agreeConsent && _ageConsent;
 
             return AlertDialog(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(18),
               ),
-              title: const Text("Patient Informed Consent"),
-              content: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    const Text(
-                      "By booking this appointment, you consent to receive telehealth services from licensed physicians through Humancare Connect.",
+              titlePadding: const EdgeInsets.fromLTRB(24, 20, 12, 0),
+              title: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      "Patient Informed Consent",
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                    const SizedBox(height: 12),
-                    _checkRow("I agree to Telehealth Informed Consent",
-                        telehealth, (v) {
-                      setModalState(() => telehealth = v!);
-                    }),
-                    _checkRow("I agree to Terms & Privacy Policy", terms, (v) {
-                      setModalState(() => terms = v!);
-                    }),
-                    _checkRow("I have read HIPAA Notice", hipaa, (v) {
-                      setModalState(() => hipaa = v!);
-                    }),
-                    _checkRow("I am 18 years of age or older", age, (v) {
-                      setModalState(() => age = v!);
-                    }),
-                  ],
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close, size: 20),
+                    color: Colors.black45,
+                    splashRadius: 20,
+                    onPressed: _uploading ? null : () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        constraints: const BoxConstraints(maxHeight: 160),
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xfff9fafb),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Colors.black12),
+                        ),
+                        child: const SingleChildScrollView(
+                          child: Text.rich(
+                            TextSpan(
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                height: 1.65,
+                                color: Color(0xff374151),
+                              ),
+                              children: [
+                                TextSpan(
+                                  text: "Patient Informed Consent: ",
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xff1a3a5c),
+                                  ),
+                                ),
+                                TextSpan(
+                                  text:
+                                      "By booking this appointment, you consent to receive telehealth services from licensed physicians through Humancare Connect. You understand that (1) telehealth is not a substitute for in-person care in all situations; (2) physicians on this platform are independent contractors; (3) in a medical emergency, call 911 immediately. You have read and agree to our Telehealth Informed Consent policy.",
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      _consentCheckRow(
+                        value: _agreeConsent,
+                        onChanged: (v) =>
+                            setModalState(() => _agreeConsent = v ?? false),
+                        label: _agreementLabel(),
+                      ),
+                      const Divider(height: 1, color: Color(0xfff3f4f6)),
+                      _consentCheckRow(
+                        value: _ageConsent,
+                        onChanged: (v) =>
+                            setModalState(() => _ageConsent = v ?? false),
+                        label: const Text(
+                          "I confirm I am 18 years of age or older",
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.4,
+                            color: Color(0xff374151),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
+              actionsPadding: const EdgeInsets.fromLTRB(16, 4, 16, 14),
               actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
+                OutlinedButton(
+                  onPressed: _uploading ? null : () => Navigator.pop(context),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.black87,
+                    side: const BorderSide(color: Colors.black26),
+                  ),
                   child: const Text("Cancel"),
                 ),
                 ElevatedButton(
-                  onPressed: allChecked
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xff1a3a5c),
+                    foregroundColor: Colors.white,
+                    disabledBackgroundColor:
+                        const Color(0xff1a3a5c).withValues(alpha: 0.4),
+                    disabledForegroundColor: Colors.white70,
+                  ),
+                  onPressed: (allChecked && !_uploading)
                       ? () {
                           Navigator.pop(context);
                           _uploadAndProceed(selection);
@@ -634,15 +747,92 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
     );
   }
 
-  Widget _checkRow(String title, bool value, Function(bool?) onChanged) {
-    return CheckboxListTile(
-      value: value,
-      onChanged: onChanged,
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      title: Text(title),
-      controlAffinity: ListTileControlAffinity.leading,
+  // "I agree to the <Telehealth Informed Consent>, <Terms of Service>,
+  // <Privacy Policy>, and <HIPAA Notice of Privacy Practices>" — each policy
+  // name is a tappable link that opens the corresponding web page.
+  Widget _agreementLabel() {
+    const baseStyle = TextStyle(
+      fontSize: 13,
+      height: 1.4,
+      color: Color(0xff374151),
     );
+    const linkStyle = TextStyle(
+      fontSize: 13,
+      height: 1.4,
+      color: Color(0xff2563eb),
+      fontWeight: FontWeight.w600,
+    );
+
+    final children = <InlineSpan>[
+      const TextSpan(text: "I agree to the ", style: baseStyle),
+    ];
+    for (var i = 0; i < _consentPolicyLinks.length; i++) {
+      final link = _consentPolicyLinks[i];
+      if (i > 0) {
+        children.add(
+          TextSpan(
+            text: i == _consentPolicyLinks.length - 1 ? ", and " : ", ",
+            style: baseStyle,
+          ),
+        );
+      }
+      children.add(
+        TextSpan(
+          text: link.label,
+          style: linkStyle,
+          recognizer: _policyLinkRecognizers[i],
+        ),
+      );
+    }
+
+    return Text.rich(TextSpan(children: children));
+  }
+
+  Widget _consentCheckRow({
+    required bool value,
+    required ValueChanged<bool?> onChanged,
+    required Widget label,
+  }) {
+    return InkWell(
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: Checkbox(
+                value: value,
+                onChanged: onChanged,
+                activeColor: const Color(0xff1a3a5c),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(child: label),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openPolicy(String path) async {
+    final uri = Uri.parse('$_webBaseUrl$path');
+    var launched = false;
+    try {
+      launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      launched = false;
+    }
+    if (!launched && mounted) {
+      _snack("Couldn't open the page. Please try again.");
+    }
   }
 
   void _pickDate() async {
@@ -699,6 +889,15 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
       border: Border.all(color: Colors.black12),
     );
   }
+}
+
+/// A single policy document referenced by the Patient Informed Consent
+/// acknowledgement — a display [label] and the web [path] it opens.
+class _ConsentPolicyLink {
+  const _ConsentPolicyLink(this.label, this.path);
+
+  final String label;
+  final String path;
 }
 
 class _StepDot extends StatelessWidget {

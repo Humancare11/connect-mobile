@@ -4,6 +4,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../config/api_config.dart';
+import '../services/appointment_tree_service.dart';
 import '../services/payment_service.dart';
 
 class AppointmentPaymentPage extends StatefulWidget {
@@ -352,6 +353,30 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
         debugPrint(
           '[PaymentSheet] create-intent failed: ${intentResult.message}',
         );
+
+        // The backend resolves priceRef against its own current
+        // HealthcareCategory/ServicePrice records — if the category or
+        // service was renamed/removed after AppointmentTreeService cached
+        // the tree (cache TTL is 2 minutes, easily longer than filling out
+        // the booking form), this call fails with a "category/service not
+        // recognized" style message even though the tree screen still shows
+        // the now-stale option. Just showing the message and leaving the
+        // user on this screen means retrying resends the same stale
+        // priceRef and fails again. Clear the cache and send them back to
+        // reselect so the next pick comes from a fresh fetch.
+        if (_looksLikeStalePriceRefError(intentResult.message)) {
+          AppointmentTreeService.invalidateCache();
+          _snack(
+            intentResult.message.isEmpty
+                ? 'This option is no longer available. Please reselect and try again.'
+                : '${intentResult.message} Please reselect and try again.',
+          );
+          final navigator = Navigator.of(context);
+          navigator.pop();
+          if (navigator.canPop()) navigator.pop();
+          return;
+        }
+
         _snack(intentResult.message);
         return;
       }
@@ -659,9 +684,11 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     final appointmentDateTime = _combineDateAndTime(date, time);
 
     final serviceId = args['serviceId']?.toString() ?? '';
+    final categoryId = args['catId']?.toString() ?? '';
 
     return {
       'category': args['catLabel']?.toString() ?? '',
+      if (categoryId.isNotEmpty) 'categoryId': categoryId,
       'specialty': args['specName']?.toString() ?? '',
       'condition': args['condName']?.toString() ?? '',
       'consultationPrice': amount,
@@ -732,14 +759,40 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
         : 'category';
   }
 
-  // Must match the backend's lookup exactly: for 'category' it's
-  // HealthcareCategory.name (already what catLabel carries, verbatim from
-  // the tree API), for 'service' it's ServicePrice.name (already what
-  // specName carries for the Service tiles flow, verbatim from GET
-  // /api/services).
+  // For 'service' this is ServicePrice.name (what specName carries for the
+  // Service tiles flow, verbatim from GET /api/services). For 'category'
+  // this prefers catId — the category's stable Mongo _id, carried through
+  // the tree (see AppointmentTreeCategory.id) — over the display name in
+  // catLabel. The backend accepts either, but catId survives a category
+  // being renamed between fetching the tree and paying, where catLabel
+  // would not: a rename in that window used to make this call fail with an
+  // "unrecognized category" error after the tree screen had already shown
+  // the option as bookable.
   String _priceRef(Map<String, dynamic> args, String priceType) {
-    final ref = priceType == 'service' ? args['specName'] : args['catLabel'];
-    return ref?.toString().trim() ?? '';
+    if (priceType == 'service') {
+      return args['specName']?.toString().trim() ?? '';
+    }
+    final catId = args['catId']?.toString().trim() ?? '';
+    if (catId.isNotEmpty) return catId;
+    return args['catLabel']?.toString().trim() ?? '';
+  }
+
+  // Matches the backend's "priceRef didn't resolve to a known category/
+  // service" failure without hard-coding its exact wording — only the
+  // general shape (unrecognized/not found/no longer valid, scoped to a
+  // category or service reference) so this doesn't misfire on unrelated
+  // failures like a declined card or a network error.
+  bool _looksLikeStalePriceRefError(String message) {
+    final normalized = message.toLowerCase();
+    if (normalized.isEmpty) return false;
+    if (!normalized.contains('categ') && !normalized.contains('service')) {
+      return false;
+    }
+    return normalized.contains('unrecognized') ||
+        normalized.contains('not recognized') ||
+        normalized.contains('not found') ||
+        normalized.contains('invalid') ||
+        normalized.contains('no longer');
   }
 
   String _displayAmount(num amount) {
@@ -786,19 +839,16 @@ bool get _isStripeTestMode => _stripePublishableKey.startsWith('pk_test_');
 
 bool get _useLocalPaymentBypass {
   // kReleaseMode is a genuine compile-time constant set by the Flutter build
-  // tool itself (`flutter build ... --release`), not something any .env
-  // value or --dart-define can override. The three checks below it were all
-  // runtime-configurable, so a release build shipped with a misconfigured
-  // bundled .env (LOCAL_PAYMENT_BYPASS=true + an API host that happens to
-  // look local) could previously activate this path — marking appointments
-  // "paid" via a client-generated reference with no real Stripe charge and
-  // no server-side proof of payment at all. This makes that impossible
-  // regardless of env configuration.
+  // tool itself (`flutter build ... --release`), not something any .env value
+  // can override. A release build can never take this path — it would mark
+  // appointments "paid" via a client-generated reference with no real Stripe
+  // charge and no server-side proof of payment. The remaining checks only
+  // gate it further for local development: the flag must be set *and* the
+  // API base URL must point at a loopback host.
   if (kReleaseMode) return false;
 
-  const appEnv = String.fromEnvironment('APP_ENV', defaultValue: 'local');
   final enabled = _envFlag('LOCAL_PAYMENT_BYPASS') || _envFlag('DEV_BYPASS');
-  return appEnv == 'local' && enabled && _isLocalApiBaseUrl;
+  return enabled && _isLocalApiBaseUrl;
 }
 
 bool _envFlag(String key) {

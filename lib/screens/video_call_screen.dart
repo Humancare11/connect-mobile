@@ -925,8 +925,17 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     GestureDetector(
-                      onTap: () => unawaited(_controller.forceReconnect()),
-                      child: Text('  Retry', style: _sora(size: 12, weight: FontWeight.w700, color: _C.teal)),
+                      onTap: _controller.reconnectInProgress
+                          ? null
+                          : () => unawaited(_controller.forceReconnect()),
+                      child: Text(
+                        _controller.reconnectInProgress ? '  Retrying...' : '  Retry',
+                        style: _sora(
+                          size: 12,
+                          weight: FontWeight.w700,
+                          color: _controller.reconnectInProgress ? _C.gateBody : _C.teal,
+                        ),
+                      ),
                     ),
                     if (_controller.reconnectStallExhausted)
                       GestureDetector(

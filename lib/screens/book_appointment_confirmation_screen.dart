@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../config/app_design_system.dart';
+import 'payment_history_screen.dart';
 
 class AppointmentConfirmationPage extends StatelessWidget {
   const AppointmentConfirmationPage({super.key});
@@ -66,6 +67,13 @@ class AppointmentConfirmationPage extends StatelessWidget {
                   _line('Date', _formatDate(_parseDate(args['date']))),
                   _line('Time', args['time']),
                   _line('Payment ID', args['paymentIntentId']),
+                  const SizedBox(height: 6),
+                  Text(
+                    'An invoice has been emailed to you and is available under '
+                    'Payment History.',
+                    style: AppType.body(size: 12.5, height: 1.4)
+                        .copyWith(color: AppColors.textSecondary),
+                  ),
                 ],
               ),
             ),
@@ -87,6 +95,36 @@ class AppointmentConfirmationPage extends StatelessWidget {
                 ),
                 child: const Text(
                   'Done',
+                  style: TextStyle(
+                    fontFamily: AppFonts.family,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 52,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: BorderSide(
+                    color: AppColors.primary.withValues(alpha: 0.4),
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppRadius.md),
+                  ),
+                ),
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const PaymentHistoryScreen(expectRecentPayment: true),
+                  ),
+                ),
+                icon: const Icon(Icons.receipt_long_outlined, size: 18),
+                label: const Text(
+                  'View invoice',
                   style: TextStyle(
                     fontFamily: AppFonts.family,
                     fontWeight: FontWeight.w800,

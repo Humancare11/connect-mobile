@@ -250,7 +250,7 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
 class _ServiceTile extends StatefulWidget {
   final _MedService item;
 
-  const _ServiceTile({super.key, required this.item});
+  const _ServiceTile({required this.item});
 
   @override
   State<_ServiceTile> createState() => _ServiceTileState();
@@ -293,7 +293,7 @@ class _ServiceTileState extends State<_ServiceTile> {
         borderRadius: BorderRadius.circular(AppRadius.md),
         child: InkWell(
           borderRadius:       BorderRadius.circular(AppRadius.md),
-          splashColor:        item.accent.withOpacity(0.10),
+          splashColor:        item.accent.withValues(alpha: 0.10),
           highlightColor:     Colors.transparent,
           onHighlightChanged: (v) => setState(() => _pressed = v),
           onTap:              () => _openBookingForm(context),
@@ -358,7 +358,7 @@ class _ServiceTileState extends State<_ServiceTile> {
                           Icon(
                             Icons.chevron_right_rounded,
                             size:  20,
-                            color: AppColors.textSecondary.withOpacity(0.45),
+                            color: AppColors.textSecondary.withValues(alpha: 0.45),
                           ),
                         ],
                       ),

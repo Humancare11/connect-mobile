@@ -58,6 +58,18 @@ const int kIceRecoveryCooldownMs = 30000;
 // self-initiated offer.
 const int kOfferAnswerTimeoutMs = 8000;
 const int kStatsIntervalMs = 30000;
+// How long a freshly (re)built RTCPeerConnection is protected from being
+// torn down again by _handlePeerJoined's resumedCall-triggered rebuild
+// check below. (Re)joining the room — which every rebuild's own
+// startCallSession() does once local media is ready — makes the server
+// echo this very "peer-joined" straight back to us whenever a peer is
+// present, carrying resumedCall:true; that echo can arrive before a
+// brand-new pc has any realistic chance to negotiate (native ICE/DTLS
+// setup, offer/answer, isn't instant). Without this grace window, that
+// echo alone could re-satisfy "resumed but not yet healthy" and tear the
+// pc down again before it ever connects — an unbounded rebuild cascade.
+// Mirrors VideoCall.jsx's REBUILD_GRACE_MS.
+const int kRebuildGraceMs = 5000;
 // How long a mid-call drop (connection already reached "connected" at least
 // once) is allowed to sit unrecovered before surfacing the manual "Retry"
 // button — see _startReconnectStallWatch's call sites in
@@ -178,7 +190,12 @@ class VideoCallController extends ChangeNotifier {
     String initialRole = '',
     this.onCompletedByPeer,
   })  : appt = initialAppointment,
+        // Field is intentionally private; the parameter is intentionally
+        // public (`initialDoctor`). A private named parameter (`this._initialDoctor`)
+        // is a compile error, so an initializing formal isn't possible here.
+        // ignore: prefer_initializing_formals
         _initialDoctor = initialDoctor,
+        // ignore: prefer_initializing_formals
         _initialPatient = initialPatient,
         _initialRole = initialRole,
         activeRole = initialRole,
@@ -308,6 +325,11 @@ class VideoCallController extends ChangeNotifier {
   MediaStream? _localStream;
   MediaStream? _remoteStream;
   RTCPeerConnection? _pc;
+  // Wall-clock time _pc was constructed — see kRebuildGraceMs for why
+  // _handlePeerJoined needs this instead of relying on a per-call debounce
+  // alone (that would only protect a single rebuild, not the freshly
+  // rebuilt pc a self "peer-joined" echo lands on next).
+  DateTime _pcCreatedAt = DateTime.fromMillisecondsSinceEpoch(0);
   Completer<bool> _localReady = Completer<bool>();
   bool _isPolitePeer = false;
 
@@ -405,7 +427,13 @@ class VideoCallController extends ChangeNotifier {
   bool isSpeakerOn = true;
   bool isFrontCamera = true;
   bool isSwapped = false;
-  bool _reconnectInProgress = false;
+  // Public (not the usual leading-underscore private field) so the screen
+  // can disable/show a loading state on the manual "Retry" button while a
+  // forceReconnect() is already underway — mirrors retryingMedia's role for
+  // the camera-error retry button. The guard behavior this already provided
+  // internally (forceReconnect's own re-entrancy check, and the automatic
+  // rebuild check in _handlePeerJoined) is unchanged.
+  bool reconnectInProgress = false;
   bool camError = false;
   String camErrorReason = '';
   // idle | checking | ready | failed — mirrors React's `deviceCheck.status`.
@@ -484,10 +512,29 @@ class VideoCallController extends ChangeNotifier {
         _lastConnectivityResults,
       );
       _lastConnectivityResults = results;
+      final wasOffline = isOffline;
 
       if (offline != isOffline) {
         isOffline = offline;
         notifyListeners();
+      }
+
+      // The OS reports a fully offline device almost instantly — far sooner
+      // than libwebrtc's own ICE consent-check can notice a dead transport
+      // (several seconds, sometimes tens of seconds). Without this, the last
+      // received frame just sits frozen on screen with no indication
+      // anything is wrong until that real state-change callback eventually
+      // fires. Surface the "Reconnecting" UI immediately instead, and mark
+      // the remote renderer for a rebind so it doesn't stay stuck on the
+      // stale frame once media actually resumes — mirrors what
+      // _handleConnectionStateChange/_handleIceConnectionStateChange already
+      // do for a genuine pc-level drop.
+      if (offline && !wasOffline && _pc != null && hasConnectedOnce) {
+        connectionState = 'connecting';
+        isRemoteConnected = false;
+        _remoteRebindPending = true;
+        notifyListeners();
+        if (inCall) _startReconnectStallWatch(kMidCallReconnectStallMs);
       }
 
       // A network handoff (e.g. WiFi -> cellular) can silently degrade an
@@ -497,6 +544,13 @@ class VideoCallController extends ChangeNotifier {
       // no-op if the connection turns out fine by the time its own 2.5s
       // debounce timer fires.
       if (!offline && networkChanged && _pc != null) {
+        // The outage above may have been a false alarm — e.g. a brief
+        // connectivity-API flicker the peer connection itself never actually
+        // noticed. Resync from the pc's real state first so an already-
+        // healthy connection clears the "Reconnecting" banner right away,
+        // rather than only via an ICE restart that scheduleIceRestart()
+        // would skip as a no-op anyway.
+        _resyncConnectionStateFromPeerConnection();
         _scheduleIceRestart();
       }
     });
@@ -710,6 +764,7 @@ class VideoCallController extends ChangeNotifier {
       return;
     }
     _pc = pc;
+    _pcCreatedAt = DateTime.now();
     _logEvent('peer_connection_created', {
       'iceServerCount': (iceSetup.config['iceServers'] as List).length,
       'hasTurn': iceSetup.hasTurn,
@@ -894,6 +949,9 @@ class VideoCallController extends ChangeNotifier {
 
     _localStream = stream;
     pipRenderer.srcObject = stream;
+    for (final track in stream.getTracks()) {
+      _attachLocalTrackEndedListener(track);
+    }
 
     await _ensureMediaTransceivers(
       pc,
@@ -927,6 +985,49 @@ class VideoCallController extends ChangeNotifier {
 
     _assignStreams(isSwapped);
     return true;
+  }
+
+  // Detects the local camera/mic dying mid-call (permission revoked, device
+  // unplugged, an OEM battery manager killing the capture session while
+  // backgrounded) — previously nothing listened for this at all, so
+  // isCamOff/isMuted kept reporting whatever the user last toggled while
+  // the peer silently stopped receiving that track. `onEnded` is the one
+  // reliably-available signal for this (webrtc_interface's MediaStreamTrack
+  // has no readyState getter to poll instead).
+  void _attachLocalTrackEndedListener(MediaStreamTrack track) {
+    track.onEnded = () => _handleLocalTrackEnded(track);
+  }
+
+  void _handleLocalTrackEnded(MediaStreamTrack track) {
+    if (_disposed) return;
+    final stream = _localStream;
+    if (stream == null) return;
+    // Every call site that intentionally stops a local track (cleanup,
+    // camera switch, a fresh _attachLocalMediaStream replacing the whole
+    // stream) already removes/replaces it in _localStream — or never
+    // routed it through here in the first place — before stopping it, so
+    // onEnded firing for one of those finds it no longer "current" here and
+    // this is a no-op. Only an unexpected end reaches a track still
+    // recorded as part of the live local stream.
+    if (!stream.getTracks().any((t) => t.id == track.id)) return;
+
+    final kind = track.kind ?? '';
+    _logEvent('local_track_ended', {'kind': kind});
+    if (kind == 'video') {
+      isCamOff = true;
+    } else if (kind == 'audio') {
+      isMuted = true;
+    }
+    // Reuses the existing camError/camErrorReason banner and its "Retry"
+    // button (already wired to retryMediaPermissions()) rather than adding
+    // new UI/recovery machinery — the same real fix path already used for
+    // an initial getUserMedia failure applies equally well to losing a
+    // track mid-call.
+    camError = true;
+    camErrorReason = kind == 'video'
+        ? 'Your camera stopped working or its permission was revoked. Tap Retry to reconnect it.'
+        : 'Your microphone stopped working or its permission was revoked. Tap Retry to reconnect it.';
+    notifyListeners();
   }
 
   Future<RTCRtpSender?> _getSenderForKind(RTCPeerConnection pc, String kind) async {
@@ -1469,15 +1570,16 @@ class VideoCallController extends ChangeNotifier {
   /// rejoins the room from scratch. Mirrors `forceReconnect`'s nonce bump in
   /// VideoCall.jsx.
   Future<void> forceReconnect() async {
-    if (_reconnectInProgress) return;
-    _reconnectInProgress = true;
+    if (reconnectInProgress) return;
+    reconnectInProgress = true;
     reconnectStalled = false;
     notifyListeners();
     try {
       await _teardownSession(leaveRoom: false);
       await startCallSession();
     } finally {
-      _reconnectInProgress = false;
+      reconnectInProgress = false;
+      notifyListeners();
     }
   }
 
@@ -1491,8 +1593,21 @@ class VideoCallController extends ChangeNotifier {
   bool _resumeReconnectInProgress = false;
 
   void handleAppResumed() {
+    if (_disposed) return;
+    // The local self-view can be suspended by the OS/Flutter's own
+    // rendering pipeline while the app is backgrounded, even though the
+    // underlying camera track and its WebRTC transmission to the peer keep
+    // running unaffected (a separate pipeline from the local preview's
+    // decode/render) — mirrors _refreshRemoteStreamBinding's reasoning for
+    // the remote side. Replay it explicitly on resume instead of leaving it
+    // stuck on a frozen/black frame. Independent of the connection-recovery
+    // logic below (a purely local rendering concern), and a no-op if
+    // there's no local stream yet — see _refreshLocalStreamBinding's own
+    // guard.
+    _refreshLocalStreamBinding();
+
     final pc = _pc;
-    if (_disposed || pc == null) return;
+    if (pc == null) return;
     if (_resumeReconnectInProgress) return;
     if (_isConnectedState(pc)) {
       // A "connected" reading here can be stale: the OS may have frozen the
@@ -1868,6 +1983,41 @@ class VideoCallController extends ChangeNotifier {
     _announceCameraState();
 
     final pc = _pc;
+
+    // A peer connection that's missing, closed, or failed cannot be
+    // salvaged with an ICE restart against a peer that now has a brand-new
+    // connection/DTLS identity — rebuild it from scratch via the same path
+    // the manual "Retry" button uses. A resumed session whose pc is merely
+    // stuck at "disconnected" (rather than the unambiguous "failed" case)
+    // after a real network outage also won't reliably self-heal via ICE
+    // restart alone — mirrors VideoCall.jsx's handlePeerJoined/
+    // pcNeedsRebuild. That last case is gated on both resumedCall (so an
+    // ordinary first-time connect, whose fresh pc briefly sits at
+    // "new"/"connecting" — also "not healthy" — is never affected) and
+    // kRebuildGraceMs (so the rebuild this very check triggers can't be
+    // undone by its own room-rejoin echoing straight back to us — see
+    // kRebuildGraceMs's own comment for why).
+    final pcHealthy = pc != null && _isConnectedState(pc);
+    final pcAgeMs = DateTime.now().difference(_pcCreatedAt).inMilliseconds;
+    final pcNeedsRebuild = pc == null ||
+        pc.signalingState == RTCSignalingState.RTCSignalingStateClosed ||
+        pc.connectionState == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+        (resumedCall && !pcHealthy && pcAgeMs > kRebuildGraceMs);
+    if (pcNeedsRebuild && !reconnectInProgress) {
+      _logEvent('peer_rejoined_pc_rebuild', {
+        'reason': pc == null
+            ? 'missing'
+            : pc.connectionState == RTCPeerConnectionState.RTCPeerConnectionStateFailed
+                ? 'failed'
+                : pc.signalingState == RTCSignalingState.RTCSignalingStateClosed
+                    ? 'closed'
+                    : 'stale_resumed',
+        'resumedCall': resumedCall,
+      });
+      unawaited(forceReconnect());
+      return;
+    }
+
     if (isReady && !inCall) {
       _startConnectionWatchdog();
       _startReconnectStallWatch(resumedCall ? 8000 : 20000);
@@ -1961,7 +2111,7 @@ class VideoCallController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _handleApptUpdated(dynamic raw) {
+  Future<void> _handleApptUpdated(dynamic raw) async {
     if (_disposed) return;
     final data = _toMap(raw);
     if (data == null) return;
@@ -1972,6 +2122,21 @@ class VideoCallController extends ChangeNotifier {
       Timer(const Duration(seconds: 4), () {
         if (!_disposed) onCompletedByPeer?.call();
       });
+      return;
+    }
+    // This app only ever authenticates as a patient (see the class doc
+    // comment), so every appointment-cancelled-mid-call case lands here.
+    // Previously unhandled — only "complete" redirected the patient, so a
+    // mid-call cancellation (by the doctor or an admin) left the call
+    // silently stalling with no explanation once the server's
+    // evictAllFromAppointmentRoom dropped this socket from the room. Tear
+    // the session down the same way _handleRoomDenied/_handleDuplicateSession
+    // do — mirrors VideoCall.jsx's handleApptUpdated cancelled branch.
+    if (status == 'cancelled' && !isDoctor) {
+      await performCleanup();
+      if (_disposed) return;
+      apptError = 'This appointment was cancelled by an administrator.';
+      notifyListeners();
     }
   }
 
@@ -2000,7 +2165,15 @@ class VideoCallController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _handleRoomDenied(dynamic data) {
+  Future<void> _handleRoomDenied(dynamic data) async {
+    if (_disposed) return;
+    // Previously left the camera/mic and RTCPeerConnection running
+    // indefinitely behind the "Access Denied" screen — local media was
+    // already acquired by startCallSession() independently of whether the
+    // room join itself succeeded. Tear the session down the same way a
+    // duplicate session does, instead of only changing what's shown.
+    // Mirrors VideoCall.jsx's handleRoomDenied.
+    await performCleanup();
     if (_disposed) return;
     final msg = (data is Map) ? data['msg']?.toString() : null;
     apptError = msg ?? 'Access to this call room was denied.';
@@ -2024,6 +2197,28 @@ class VideoCallController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // The backend forcibly removes a socket from the appointment room (and
+  // emits this) when the appointment is reassigned to a different doctor,
+  // or — as a defensive fallback with no more specific reason — in any
+  // other case access is revoked outside the normal complete/cancel flow.
+  // "completed"/"cancelled" are deliberately excluded here: those already
+  // get their own, friendlier messaging via appointment-updated (the
+  // completed-overlay redirect and the cancellation handling above) —
+  // reacting to them here too would just race that messaging with a
+  // blunter "Access Denied" screen for the exact same event. Mirrors
+  // VideoCall.jsx's handleAccessRevoked.
+  Future<void> _handleAccessRevoked(dynamic data) async {
+    if (_disposed) return;
+    final map = _toMap(data);
+    final reason = map?['reason']?.toString();
+    if (reason == 'completed' || reason == 'cancelled') return;
+    await performCleanup();
+    if (_disposed) return;
+    final msg = map?['msg']?.toString();
+    apptError = msg ?? 'You no longer have access to this appointment.';
+    notifyListeners();
+  }
+
   // ── Socket connection lifecycle ──────────────────────────────────────
 
   void _registerSocketListeners() {
@@ -2040,6 +2235,7 @@ class VideoCallController extends ChangeNotifier {
     _socket.on('new-prescription', _handleNewPrescription);
     _socket.on('room-access-denied', _handleRoomDenied);
     _socket.on('duplicate-session', _handleDuplicateSession);
+    _socket.on('appointment-access-revoked', _handleAccessRevoked);
     _socket.on('connect', _handleSocketConnect);
     _socket.on('disconnect', _handleSocketDisconnect);
     _socket.on('connect_error', _handleSocketConnectError);
@@ -2060,6 +2256,7 @@ class VideoCallController extends ChangeNotifier {
     _socket.off('new-prescription', _handleNewPrescription);
     _socket.off('room-access-denied', _handleRoomDenied);
     _socket.off('duplicate-session', _handleDuplicateSession);
+    _socket.off('appointment-access-revoked', _handleAccessRevoked);
     _socket.off('connect', _handleSocketConnect);
     _socket.off('disconnect', _handleSocketDisconnect);
     _socket.off('connect_error', _handleSocketConnectError);
@@ -2349,6 +2546,12 @@ class VideoCallController extends ChangeNotifier {
     videoConstraints['facingMode'] = isFrontCamera ? 'environment' : 'user';
 
     MediaStream? newStream;
+    // True once newTrack has been committed to the outgoing sender — from
+    // that point on the peer is actively receiving it, so the failure
+    // cleanup below must never stop it (that would break their already-live
+    // video instead of just failing the switch); it only discards newTrack
+    // for a failure that happens before that commit point.
+    var committedToSender = false;
     try {
       newStream = await navigator.mediaDevices
           .getUserMedia({'audio': false, 'video': videoConstraints});
@@ -2369,6 +2572,7 @@ class VideoCallController extends ChangeNotifier {
       final sender = await _getSenderForKind(pc, 'video');
       if (sender != null) {
         await sender.replaceTrack(newTrack);
+        committedToSender = true;
         await _tuneSenderQuality(
           sender,
           maxBitrate: kCameraBitrate,
@@ -2378,6 +2582,7 @@ class VideoCallController extends ChangeNotifier {
       }
 
       newTrack.enabled = !isCamOff;
+      _attachLocalTrackEndedListener(newTrack);
       await stream.removeTrack(oldTrack);
       await stream.addTrack(newTrack);
       await oldTrack.stop();
@@ -2387,7 +2592,7 @@ class VideoCallController extends ChangeNotifier {
       notifyListeners();
     } catch (err) {
       debugPrint('[video-call] switchCamera failed: $err');
-      if (newStream != null) {
+      if (newStream != null && !committedToSender) {
         for (final t in newStream.getTracks()) {
           await t.stop();
         }

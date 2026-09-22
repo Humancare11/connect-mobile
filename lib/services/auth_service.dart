@@ -34,10 +34,17 @@ class AuthService {
   ];
 
   static String? get _googleServerClientId {
+    // google_sign_in's serverClientId must be the OAuth **web** client ID —
+    // it becomes the audience of the token the backend verifies, and the
+    // backend (and the React web app) expect the web client ID there. The
+    // Android client ID is picked up automatically from google-services.json
+    // and must not be used here. GOOGLE_CLIENT_ID / VITE_GOOGLE_CLIENT_ID
+    // hold that web client ID; ANDROID_GOOGLE_CLIENT_ID is a legacy fallback.
     final clientId =
-        dotenv.env['ANDROID_GOOGLE_CLIENT_ID'] ??
+        dotenv.env['GOOGLE_SERVER_CLIENT_ID'] ??
         dotenv.env['GOOGLE_CLIENT_ID'] ??
-        dotenv.env['VITE_GOOGLE_CLIENT_ID'];
+        dotenv.env['VITE_GOOGLE_CLIENT_ID'] ??
+        dotenv.env['ANDROID_GOOGLE_CLIENT_ID'];
     final trimmed = clientId?.trim() ?? '';
     return trimmed.isEmpty ? null : trimmed;
   }
@@ -118,10 +125,10 @@ class AuthService {
     );
   }
 
-  Future<ApiResult<void>> sendForgotOtp(String email) async {
+  Future<ApiResult<void>> sendForgotOtp(String email, {bool silent = false}) async {
     final result = await _apiClient.post('/auth/send-forgot-otp', {
       'email': email,
-    });
+    }, silent: silent);
 
     return ApiResult<void>(
       success: result.success,
@@ -134,11 +141,12 @@ class AuthService {
   Future<ApiResult<AuthResponse>> verifyForgotOtp({
     required String email,
     required String otp,
+    bool silent = false,
   }) async {
     final result = await _apiClient.post('/auth/verify-forgot-otp', {
       'email': email,
       'otp': otp,
-    });
+    }, silent: silent);
 
     final data = result.data ?? <String, dynamic>{};
     final responseData = asMap(data['data']);
@@ -173,6 +181,40 @@ class AuthService {
         resetToken: resetToken,
         user: UserModel.fromMaps(data, responseData),
       ),
+      raw: result.raw,
+      statusCode: result.statusCode,
+    );
+  }
+
+  // ── Email-change verification ──────────────────────────────────────────────
+  // Changing the account email is a sensitive action, so it is gated behind an
+  // OTP sent to the user's *current* (already-verified) address. The backend
+  // exposes no dedicated "verify email change" endpoint and must not be
+  // modified, so this reuses the password-reset OTP pair
+  // (`/auth/send-forgot-otp` + `/auth/verify-forgot-otp`): both operate on a
+  // registered user's own email and `verify-forgot-otp` has no side effect on
+  // the account beyond consuming the OTP (the short-lived reset token it
+  // returns is deliberately ignored here).
+
+  /// Sends a verification code to the account's current [email] before an
+  /// email change is applied. Runs silently — the calling dialog renders its
+  /// own progress, so the app-wide loading overlay would just stack on top.
+  Future<ApiResult<void>> sendEmailChangeOtp(String email) =>
+      sendForgotOtp(email, silent: true);
+
+  /// Verifies the code sent by [sendEmailChangeOtp]. Succeeds only when the
+  /// code is valid and unexpired.
+  Future<ApiResult<void>> verifyEmailChangeOtp({
+    required String email,
+    required String otp,
+  }) async {
+    final result = await verifyForgotOtp(email: email, otp: otp, silent: true);
+
+    return ApiResult<void>(
+      success: result.success,
+      message: result.success
+          ? 'Email verified successfully.'
+          : (result.message.isNotEmpty ? result.message : 'Invalid OTP.'),
       raw: result.raw,
       statusCode: result.statusCode,
     );
@@ -300,7 +342,7 @@ class AuthService {
         if (serverClientId == null) {
           return const GoogleAuthResult(
             success: false,
-            message: 'Google Sign-In is missing ANDROID_GOOGLE_CLIENT_ID.',
+            message: 'Google Sign-In is missing GOOGLE_CLIENT_ID in .env.',
           );
         }
 
