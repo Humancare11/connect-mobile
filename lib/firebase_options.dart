@@ -64,7 +64,16 @@ class DefaultFirebaseOptions {
     messagingSenderId: '909321726896',
     projectId: 'humancare-connect-69b09',
     storageBucket: 'humancare-connect-69b09.firebasestorage.app',
-    iosBundleId: 'com.example.helloApp',
+    // Matches ios/Runner.xcodeproj's PRODUCT_BUNDLE_IDENTIFIER, now fixed
+    // off the Flutter template default. This Firebase iOS app
+    // (1:909321726896:ios:6962ac6c4bf5deea328475) is still registered as
+    // com.example.helloApp server-side in the Firebase console as of this
+    // change — that registration itself needs updating there (or a new iOS
+    // app added under this bundle ID) before Firebase-side iOS features
+    // (and a working GoogleService-Info.plist for Google Sign-In) work;
+    // this value only affects what this local FirebaseOptions object
+    // reports, not the Console-side registration.
+    iosBundleId: 'com.humancareconnect.app',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(

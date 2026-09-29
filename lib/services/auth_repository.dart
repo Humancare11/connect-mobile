@@ -42,6 +42,8 @@ class AuthRepository {
       dob: request.dob,
       gender: request.gender,
       country: request.country,
+      state: request.state,
+      city: request.city,
       privacyConsent: request.privacyConsent,
       hipaaConsent: request.hipaaConsent,
       otp: request.otp,

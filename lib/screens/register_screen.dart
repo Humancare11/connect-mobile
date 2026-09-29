@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import '../models/api_result.dart';
+import '../models/auth_response.dart';
 import '../models/location_model.dart';
 import '../widgets/google_sign_in_web_stub.dart'
     if (dart.library.js_interop) 'package:google_sign_in_web/web_only.dart'
@@ -258,6 +260,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final LocationService _locationService = LocationService();
   StreamSubscription<GoogleSignInAuthenticationEvent>? _googleAuthSubscription;
   Timer? _googleWebTimeoutTimer;
+  Timer? _otpCountdownTimer;
 
   @override
   void initState() {
@@ -290,6 +293,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void dispose() {
     _googleAuthSubscription?.cancel();
     _googleWebTimeoutTimer?.cancel();
+    _otpCountdownTimer?.cancel();
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
@@ -512,16 +516,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // ── Timer ─────────────────────────────────────────────────────────────────
   void _startTimer() {
+    // Cancel any prior chain before starting a new one — without this, a
+    // submit → back-to-form → resubmit cycle could leave two countdowns
+    // running concurrently, halving the intended 60s cooldown.
+    _otpCountdownTimer?.cancel();
     setState(() => _otpTimer = 60);
-    _tickTimer();
-  }
-
-  void _tickTimer() {
-    Future.delayed(const Duration(seconds: 1), () {
-      if (mounted && _otpTimer > 0) {
-        setState(() => _otpTimer--);
-        _tickTimer();
+    _otpCountdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted || _otpTimer <= 1) {
+        timer.cancel();
+        if (mounted) setState(() => _otpTimer = 0);
+        return;
       }
+      setState(() => _otpTimer--);
     });
   }
 
@@ -604,7 +610,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
 
     final request = formData.toRegisterRequest(otp);
-    final result = await _authRepository.register(request);
+    final ApiResult<AuthResponse> result;
+    try {
+      result = await _authRepository.register(request);
+    } catch (_) {
+      // AuthRepository.register() saves the session (secure storage) after
+      // a successful API call — if that save throws (e.g. secure storage
+      // unavailable on this device), the account already exists server-side
+      // but we can't leave the button spinning forever with no way out.
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _setError(
+        'Your account was created, but we could not sign you in automatically. Please log in.',
+      );
+      return;
+    }
 
     if (!mounted) return;
     setState(() => _loading = false);
@@ -717,7 +737,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     if (result.authResponse == null) return;
-    await _authService.saveSession(result.authResponse!);
+    try {
+      await _authService.saveSession(result.authResponse!);
+    } catch (_) {
+      // The Google account was already registered server-side — only the
+      // local session save failed (e.g. secure storage unavailable), so
+      // don't leave the user staring at a button with no feedback.
+      if (!mounted) return;
+      setState(() {
+        _error =
+            'Your account was created, but we could not sign you in automatically. Please log in.';
+      });
+      return;
+    }
     if (!mounted) return;
     showAuthSnackBar(context, 'Registration Successful');
     Navigator.of(
@@ -817,7 +849,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
 
     if (!result.success || result.authResponse == null) return;
-    await _authService.saveSession(result.authResponse!);
+    try {
+      await _authService.saveSession(result.authResponse!);
+    } catch (_) {
+      // Profile completion already succeeded server-side — only the local
+      // session save failed, so surface a recoverable error instead of a
+      // silent no-op.
+      if (!mounted) return;
+      setState(() {
+        _error =
+            'Your account was created, but we could not sign you in automatically. Please log in.';
+      });
+      return;
+    }
     if (!mounted) return;
     showAuthSnackBar(context, 'Registration Successful');
     Navigator.of(
@@ -1195,12 +1239,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
             icon: Icons.location_on_outlined,
             selectedValue: _selectedState,
             loading: _loadingStates,
-            enabled:
-                _selectedCountry.isNotEmpty &&
-                !_loadingStates &&
-                _states.isNotEmpty,
+            // Stays enabled once a country is picked even if the last
+            // fetch failed or came back empty — a non-empty-list gate here
+            // left the field permanently disabled (and still mandatory)
+            // with no way to retry a transient failure.
+            enabled: _selectedCountry.isNotEmpty && !_loadingStates,
             validator: (v) => (v == null || v.isEmpty) ? 'Select state' : null,
             onTap: () async {
+              if (_states.isEmpty) {
+                // Retry instead of opening an empty sheet the user can't
+                // do anything with.
+                await _fetchStates(_selectedCountry);
+                if (!mounted || _states.isEmpty) return null;
+              }
               final picked = await _showSearchSheet('Select State', _states);
               if (picked != null && mounted) {
                 setState(() {
@@ -1229,10 +1280,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
             icon: Icons.location_city_outlined,
             selectedValue: _selectedCity,
             loading: _loadingCities,
-            enabled:
-                _selectedState != null && !_loadingCities && _cities.isNotEmpty,
+            // Same rationale as the State field above: don't gate on a
+            // non-empty list, or a failed/empty fetch permanently disables
+            // a mandatory field with no recovery path.
+            enabled: _selectedState != null && !_loadingCities,
             validator: (v) => (v == null || v.isEmpty) ? 'Select city' : null,
             onTap: () async {
+              if (_cities.isEmpty) {
+                await _fetchCities(_selectedCountry, _selectedState!);
+                if (!mounted || _cities.isEmpty) return null;
+              }
               final picked = await _showSearchSheet('Select City', _cities);
               if (picked != null && mounted) {
                 setState(() => _selectedCity = picked);

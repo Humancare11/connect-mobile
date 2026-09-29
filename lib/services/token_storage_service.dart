@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Service for secure token storage
@@ -217,6 +218,27 @@ class TokenStorageService {
   }
 
   Future<void> clearAll() async {
+    // Best-effort: also end the native Google session, so a later "Sign in
+    // with Google" on this device shows a fresh account picker instead of
+    // silently reusing this user's cached account — relevant on a shared
+    // device (this is a healthcare app). Every logout path (manual,
+    // session-expired, idle-timeout) already funnels through this one
+    // method, so this single call site covers all of them. Never allowed
+    // to block or fail the rest of logout below: GoogleSignIn.instance may
+    // not even be initialized for a user who only ever used email/password
+    // (AuthService only calls .initialize() the first time Google Sign-In
+    // is actually used), and the web build uses a separate Google sign-in
+    // flow entirely (see AuthService.googleLogin's kIsWeb branch) so this
+    // is skipped there.
+    if (!kIsWeb) {
+      try {
+        await GoogleSignIn.instance.signOut();
+      } catch (_) {
+        // Ignore — nothing here should ever prevent clearing the app's own
+        // session below.
+      }
+    }
+
     final prefs = await SharedPreferences.getInstance();
     if (kIsWeb) {
       await Future.wait([

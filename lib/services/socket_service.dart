@@ -58,7 +58,7 @@ class SocketService {
         .enableReconnection()
         .setReconnectionAttempts(double.infinity)
         .setReconnectionDelay(1000)
-        .setReconnectionDelayMax(30000)
+        .setReconnectionDelayMax(5000)
         .setRandomizationFactor(0.5)
         .setTimeout(20000)
         // Evaluated fresh on every connect/reconnect attempt (see

@@ -70,6 +70,14 @@ const int kStatsIntervalMs = 30000;
 // pc down again before it ever connects — an unbounded rebuild cascade.
 // Mirrors VideoCall.jsx's REBUILD_GRACE_MS.
 const int kRebuildGraceMs = 5000;
+
+/// A remote offer stashed while no pc was ready (or a rebuild was running) is
+/// dropped when older than this — the sender has long since rolled it back.
+const int kPendingOfferMaxAgeMs = 15000;
+
+/// A `request-peer-rebuild` is ignored when this side's pc is younger than
+/// this: it was just rebuilt, so the request is almost certainly stale.
+const int kPeerRebuildMinPcAgeMs = 5000;
 // How long a mid-call drop (connection already reached "connected" at least
 // once) is allowed to sit unrecovered before surfacing the manual "Retry"
 // button — see _startReconnectStallWatch's call sites in
@@ -85,9 +93,25 @@ const int kMidCallReconnectStallMs = 12000;
 // end the call instead of retrying silently forever. Mirrors
 // VideoCall.jsx's identical MAX_RECONNECT_STALL_RETRIES.
 const int kMaxReconnectStallRetries = 3;
+// How many consecutive failed token-refresh heartbeat attempts (one every 4
+// minutes — see _markInCall's _heartbeatTimer) are tolerated silently before
+// treating the session as no longer authenticatable.
+// ApiClient.refreshAccessToken collapses every failure reason (no stored
+// refresh token, a non-2xx response, a network error) into a single
+// `false`, so — unlike VideoCall.jsx's heartbeat, which can act immediately
+// on a definitive 401/403 — this can only threshold on repetition. Kept
+// slightly higher than the React side's threshold for that reason. Mirrors
+// VideoCall.jsx's AUTH_REFRESH_FAILURE_THRESHOLD.
+const int kAuthRefreshFailureThreshold = 3;
 const int kChatSendCooldownMs = 300;
 const int kPeerJoinTimeoutMs = 20000;
 const int kMediaAcquireTimeoutMs = 20000;
+// retryMediaPermissions() gets a tighter deadline than the initial join: the
+// user is actively watching the "Retrying..." button, so a stuck permission
+// prompt or native getUserMedia call must hand control back well before the
+// full kMediaAcquireTimeoutMs — mirrors VideoCall.jsx's
+// RETRY_MEDIA_PERMISSIONS_TIMEOUT_MS.
+const int kRetryMediaPermissionsTimeoutMs = 10000;
 // Telemetry events queued while the socket is disconnected are replayed once
 // it reconnects — see VideoCallController._logEvent/_flushTelemetryQueue.
 // Capped so a long outage can't grow this without bound (mirrors
@@ -103,6 +127,82 @@ const int kChatQueueMax = 20;
 // long-delayed remote description (e.g. a stuck media-permission prompt)
 // shouldn't let this grow without bound; drops the oldest once full.
 const int kPendingCandidatesMax = 50;
+
+// ── TEMPORARY: Retry-bug diagnostic logging ─────────────────────────────
+// Added to investigate "blank video on the other side after tapping Retry".
+// Logging only — no call/reconnect logic is changed by this block. Flip
+// kRetryDebug to false (or delete this block and its call sites, all tagged
+// "[RETRY-DEBUG]") once the investigation is closed. Mirrors
+// VideoCall.jsx's RETRY_DEBUG/retryDebugLog.
+const bool kRetryDebug = kDebugMode;
+
+void retryDebugLog(bool isDoctor, String appointmentId, String label, [Object? data]) {
+  if (!kRetryDebug) return;
+  final role = isDoctor ? 'doctor' : 'patient';
+  debugPrint(
+    '[RETRY-DEBUG] ${DateTime.now().toIso8601String()} role=$role appt=$appointmentId $label ${data ?? ''}',
+  );
+}
+
+/// DTLS fingerprint of an SDP blob. Real reconnect logic (NOT debug-only): a
+/// different fingerprint means the peer rebuilt its RTCPeerConnection.
+String? extractDtlsFingerprint(String? sdp) {
+  if (sdp == null) return null;
+  final match = RegExp(r'a=fingerprint:\S+\s+(\S+)', caseSensitive: false).firstMatch(sdp);
+  return match?.group(1);
+}
+
+// TEMPORARY (RETRY_DEBUG): pulls the DTLS fingerprint out of an SDP blob so
+// _handleOffer's diagnostic log can tell whether the peer's certificate (and
+// therefore its RTCPeerConnection) changed between offers. Read-only parse,
+// no effect on negotiation. Mirrors VideoCall.jsx's retryDebugExtractFingerprint.
+String? retryDebugExtractFingerprint(String? sdp) {
+  if (sdp == null) return null;
+  final match = RegExp(r'a=fingerprint:\S+\s+(\S+)', caseSensitive: false).firstMatch(sdp);
+  return match?.group(1);
+}
+
+// TEMPORARY (RETRY_DEBUG): samples getStats() every 2s for 20s (10 samples)
+// after an offer is applied, logging the inbound-rtp video report so we can
+// tell "media never arrived" apart from "media arrived but never rendered".
+// Read-only — never touches the RTCPeerConnection's negotiation state.
+// Mirrors VideoCall.jsx's retryDebugPollInboundVideoStats.
+void retryDebugPollInboundVideoStats(
+  RTCPeerConnection? pc,
+  bool isDoctor,
+  String appointmentId,
+  String label,
+) {
+  if (!kRetryDebug || pc == null) return;
+  var ticks = 0;
+  Timer.periodic(const Duration(seconds: 2), (timer) async {
+    ticks += 1;
+    try {
+      final reports = await pc.getStats();
+      Map<String, dynamic>? inboundVideo;
+      for (final report in reports) {
+        if (report.type == 'inbound-rtp' && report.values['kind'] == 'video') {
+          inboundVideo = {
+            'bytesReceived': report.values['bytesReceived'],
+            'framesDecoded': report.values['framesDecoded'],
+            'packetsReceived': report.values['packetsReceived'],
+            'packetsLost': report.values['packetsLost'],
+            'frameWidth': report.values['frameWidth'],
+            'frameHeight': report.values['frameHeight'],
+          };
+        }
+      }
+      retryDebugLog(isDoctor, appointmentId, '$label:stats_tick_$ticks/10', {
+        'inboundVideo': inboundVideo,
+      });
+    } catch (err) {
+      retryDebugLog(isDoctor, appointmentId, '$label:stats_tick_$ticks/10:ERROR', {
+        'message': err.toString(),
+      });
+    }
+    if (ticks >= 10) timer.cancel();
+  });
+}
 
 // Turns the stats already gathered by _startStatsCollection into a coarse,
 // user-facing quality bucket. Ported from VideoCall.jsx's
@@ -330,6 +430,24 @@ class VideoCallController extends ChangeNotifier {
   // alone (that would only protect a single rebuild, not the freshly
   // rebuilt pc a self "peer-joined" echo lands on next).
   DateTime _pcCreatedAt = DateTime.fromMillisecondsSinceEpoch(0);
+  // TEMPORARY (RETRY_DEBUG): last remote DTLS fingerprint applied, so
+  // _handleOffer's diagnostic log can report whether an incoming offer's
+  // fingerprint differs from the previous one (i.e. the peer rebuilt their
+  // RTCPeerConnection). Read/written only by retry-debug logging.
+  String? _retryDebugLastRemoteFingerprint;
+  // Last remote DTLS fingerprint applied via an offer/answer (real logic, not
+  // debug). Cleared on teardown and participant-left.
+  String? _lastRemoteFingerprint;
+  // A remote offer that arrived while _pc was null or a rebuild was running;
+  // replayed once the new pc and local media are ready (see
+  // _replayPendingRemoteOffer). Survives _teardownSession on purpose.
+  Map<String, dynamic>? _pendingRemoteOffer;
+  DateTime? _pendingRemoteOfferAt;
+  // TEMPORARY (RETRY_DEBUG): previous connectionState/iceConnectionState so
+  // the state-change handlers can log an old→new transition instead of just
+  // the new value. Read/written only by retry-debug logging.
+  RTCPeerConnectionState? _retryDebugPrevConnState;
+  RTCIceConnectionState? _retryDebugPrevIceState;
   Completer<bool> _localReady = Completer<bool>();
   bool _isPolitePeer = false;
 
@@ -382,12 +500,27 @@ class VideoCallController extends ChangeNotifier {
   // handler below reports "connected"/"completed" again — see
   // _refreshRemoteStreamBinding.
   bool _remoteRebindPending = false;
+  // Guards _handleNetworkInterfaceChanged() against overlapping runs — e.g.
+  // a device oscillating between two towers firing onConnectivityChanged
+  // again before the previous check's settle delay has finished. See that
+  // method's own doc comment for the full recovery-path reasoning.
+  bool _networkChangeRecoveryInProgress = false;
   bool retryingMedia = false;
 
   // ── Call lifecycle ────────────────────────────────────────────────────
   bool _completedFlag = false;
+  // Tracks whether the Android foreground service has been started for the
+  // current session, so it's requested exactly once as soon as local media
+  // is ready (see _startForegroundServiceIfNeeded) instead of waiting for
+  // offer/answer signaling to finish in _markInCall — a patient who
+  // backgrounds the app while still waiting for the other party to join
+  // otherwise has no foreground-service protection during that window.
+  bool _foregroundServiceStarted = false;
   Timer? _callTimer;
   Timer? _heartbeatTimer;
+  // Consecutive failed token-refresh heartbeat attempts — see
+  // kAuthRefreshFailureThreshold and _markInCall.
+  int _authRefreshFailureCount = 0;
   Timer? _statsTimer;
   bool isReady = false;
   bool peerJoined = false;
@@ -427,6 +560,8 @@ class VideoCallController extends ChangeNotifier {
   bool isSpeakerOn = true;
   bool isFrontCamera = true;
   bool isSwapped = false;
+  // Re-entrancy guard for switchCamera() — see its own comment.
+  bool _switchingCamera = false;
   // Public (not the usual leading-underscore private field) so the screen
   // can disable/show a loading state on the manual "Retry" button while a
   // forceReconnect() is already underway — mirrors retryingMedia's role for
@@ -436,6 +571,10 @@ class VideoCallController extends ChangeNotifier {
   bool reconnectInProgress = false;
   bool camError = false;
   String camErrorReason = '';
+  // True when the camera/mic permission is permanently denied ("don't ask
+  // again") — retrying getUserMedia can't re-prompt the OS in that state,
+  // so the UI needs to offer a way to the system settings screen instead.
+  bool camPermissionPermanentlyDenied = false;
   // idle | checking | ready | failed — mirrors React's `deviceCheck.status`.
   String deviceCheckStatus = 'idle';
   String deviceCheckCamera = 'unknown';
@@ -469,7 +608,15 @@ class VideoCallController extends ChangeNotifier {
     await mainRenderer.initialize();
     await pipRenderer.initialize();
     _rendererReady = true;
-    if (_disposed) return;
+    if (_disposed) {
+      // dispose() may already have run while the awaits above were still
+      // pending — it would have seen _rendererReady still false at that
+      // point and skipped disposing the renderers, so finish that cleanup
+      // here instead of leaking their native textures.
+      mainRenderer.dispose();
+      pipRenderer.dispose();
+      return;
+    }
 
     unawaited(_initConnectivityWatch());
 
@@ -519,6 +666,13 @@ class VideoCallController extends ChangeNotifier {
         notifyListeners();
       }
 
+      // Connectivity is back: reconnect signaling right now instead of
+      // waiting out the socket client's backoff timer.
+      if (!offline && (wasOffline || networkChanged) && !_socket.connected) {
+        retryDebugLog(isDoctor, appointmentId, 'connectivity:socket_connect_now');
+        _socket.connect();
+      }
+
       // The OS reports a fully offline device almost instantly — far sooner
       // than libwebrtc's own ICE consent-check can notice a dead transport
       // (several seconds, sometimes tens of seconds). Without this, the last
@@ -542,18 +696,95 @@ class VideoCallController extends ChangeNotifier {
       // consent-check notices (that can take ~20-30s). Nudge a restart
       // proactively instead of waiting it out — _scheduleIceRestart() is a
       // no-op if the connection turns out fine by the time its own 2.5s
-      // debounce timer fires.
+      // debounce timer fires. That "fine" outcome is exactly the case that
+      // used to leave the remote video renderer with no path back to a
+      // fresh frame (connectionState==connected is proof the transport
+      // recovered, not proof the renderer is still painting) — arm the
+      // same rebind flag the offline branch above uses, and let
+      // _handleNetworkInterfaceChanged() below consume it if nothing else
+      // (a genuine disconnect/reconnect cycle) already does.
       if (!offline && networkChanged && _pc != null) {
+        if (hasConnectedOnce) _remoteRebindPending = true;
         // The outage above may have been a false alarm — e.g. a brief
         // connectivity-API flicker the peer connection itself never actually
         // noticed. Resync from the pc's real state first so an already-
         // healthy connection clears the "Reconnecting" banner right away,
         // rather than only via an ICE restart that scheduleIceRestart()
-        // would skip as a no-op anyway.
+        // would skip as a no-op anyway. If this does end up calling
+        // _handleConnectedState(), it consumes the flag just armed above
+        // itself, and _handleNetworkInterfaceChanged() below correctly
+        // finds nothing left to do.
         _resyncConnectionStateFromPeerConnection();
         _scheduleIceRestart();
+        unawaited(_handleNetworkInterfaceChanged());
       }
     });
+  }
+
+  // Network interface changes (Wi-Fi <-> mobile data) can silently degrade
+  // the bundled audio/video transport without RTCPeerConnection ever
+  // reporting "disconnected" — libwebrtc's own ICE consent-check can
+  // re-nominate a working candidate pair, or simply never notice a brief
+  // enough gap, fast enough that connectionState never leaves "connected".
+  // When that happens, _resyncConnectionStateFromPeerConnection() and
+  // _scheduleIceRestart()'s own guard (both called just above, unchanged)
+  // correctly decline to do anything further — the transport genuinely is
+  // fine, so there is nothing to reconnect. But "the transport is fine" is
+  // not proof the remote video renderer is still painting fresh frames: the
+  // same track survives untouched, pc.onTrack never re-fires, and nothing
+  // else ever revisits the renderer binding. This gives the existing stack
+  // a short, fixed window to either genuinely fail (in which case the
+  // untouched connection-state-change handlers and _scheduleIceRestart's
+  // own timer already own recovery from there — this method does nothing
+  // further in that case) or silently self-heal; only once neither of
+  // those is going to trigger a rebind on its own does this proactively run
+  // the exact same rebind _handleConnectedState() already trusts for the
+  // analogous "recovered, same track" case. Idempotent and race-safe:
+  // _remoteRebindPending is the single shared signal armed by the call site
+  // above — if a genuine disconnect/reconnect cycle (or
+  // _resyncConnectionStateFromPeerConnection itself) beats this method to
+  // it, _handleConnectedState() will already have cleared the flag by the
+  // time this checks it, and this becomes a no-op.
+  Future<void> _handleNetworkInterfaceChanged() async {
+    if (_networkChangeRecoveryInProgress || _disposed) return;
+    final pc = _pc;
+    if (pc == null || !hasConnectedOnce) return;
+    // A manual Retry, or an app-resume recovery, is already actively
+    // driving this same PeerConnection toward a known state — piling
+    // another recovery attempt on top could race a rebuild in progress
+    // rather than help it. Those paths already cover their own rebind
+    // needs (forceReconnect tears down and re-establishes from scratch;
+    // _verifyConnectionAfterResume/_reconnectAfterResume own the app-resume
+    // case), so simply deferring to them here is correct, not a gap.
+    if (reconnectInProgress || _resumeReconnectInProgress) return;
+
+    _networkChangeRecoveryInProgress = true;
+    try {
+      // Reuses the same settle window _scheduleIceRestart() already waits
+      // out before deciding the connection needs help — no new timing
+      // constant introduced.
+      await Future.delayed(const Duration(milliseconds: kIceRestartDelayMs));
+      if (_disposed || _pc != pc) return; // torn down/rebuilt while waiting
+
+      if (!_isConnectedState(pc)) {
+        // Genuinely unhealthy — the connection-state-change handlers and/or
+        // _scheduleIceRestart's own timer own recovery from here; they will
+        // call _handleConnectedState() (which consumes _remoteRebindPending
+        // itself) once it genuinely reconnects. Nothing further to do here.
+        return;
+      }
+
+      // Still healthy after the settle window: no reconnect is coming to
+      // naturally re-trigger onTrack, so nothing else will ever consume
+      // _remoteRebindPending for this event. Only act if it's still
+      // armed — if a real disconnect/reconnect cycle already happened and
+      // _handleConnectedState() already cleared it, there is nothing to do.
+      if (!_remoteRebindPending) return;
+      _remoteRebindPending = false;
+      _refreshRemoteStreamBinding();
+    } finally {
+      _networkChangeRecoveryInProgress = false;
+    }
   }
 
   @override
@@ -678,7 +909,12 @@ class VideoCallController extends ChangeNotifier {
     // already-completed one.
     if (_disposed || _completedFlag) return;
     await _ensureAndroidRuntimePermissions();
-    if (_disposed) return;
+    // Rechecked after every await below, not just _disposed — performCleanup
+    // (e.g. from a room-access-denied/duplicate-session server event, or the
+    // user backing out) can flip _completedFlag true while any of these are
+    // in flight, and without this a stale in-flight call would otherwise
+    // resurrect a session that was already told to stop.
+    if (_disposed || _completedFlag) return;
 
     // Best-effort: a token that's gone stale while the app was backgrounded
     // would otherwise fail the ICE-config fetch and the room join below.
@@ -689,13 +925,13 @@ class VideoCallController extends ChangeNotifier {
     } catch (_) {
       // Ignore — fall through with the existing stored token.
     }
-    if (_disposed) return;
+    if (_disposed || _completedFlag) return;
 
     if (_fetchingIceConfig) return;
     _fetchingIceConfig = true;
     final iceSetup = await fetchIceServerConfig();
     _fetchingIceConfig = false;
-    if (_disposed) return;
+    if (_disposed || _completedFlag) return;
 
     if (!iceSetup.isUsable) {
       iceConfigError = iceSetup.error;
@@ -765,6 +1001,10 @@ class VideoCallController extends ChangeNotifier {
     }
     _pc = pc;
     _pcCreatedAt = DateTime.now();
+    // TEMPORARY (RETRY_DEBUG)
+    retryDebugLog(isDoctor, appointmentId, 'startCallSession:new_pc_created', {
+      'reconnectInProgress': reconnectInProgress,
+    });
     _logEvent('peer_connection_created', {
       'iceServerCount': (iceSetup.config['iceServers'] as List).length,
       'hasTurn': iceSetup.hasTurn,
@@ -820,14 +1060,27 @@ class VideoCallController extends ChangeNotifier {
       isReady = true;
       camError = false;
       camErrorReason = '';
+      camPermissionPermanentlyDenied = false;
       deviceCheckStatus = 'ready';
+      // Only one of audio/video may have actually been granted (see
+      // _getConsultationMediaStream's split-device fallback) — reflect that
+      // truthfully instead of leaving isCamOff/isMuted at their defaults, and
+      // tell the peer so their UI doesn't show a stale "camera on".
+      isCamOff = stream.getVideoTracks().isEmpty;
+      isMuted = stream.getAudioTracks().isEmpty;
       notifyListeners();
       _logEvent('media_ready', {
         'audioTracks': stream.getAudioTracks().length,
         'videoTracks': stream.getVideoTracks().length,
       });
 
+      // Local media is ready — protect the process with the foreground
+      // service now rather than waiting for the peer to join and signaling
+      // to complete (see _startForegroundServiceIfNeeded's doc comment).
+      _startForegroundServiceIfNeeded();
+
       if (_socket.connected) _emitOnlineAndJoinRoom();
+      _announceCameraState();
 
       if (!isDoctor && peerJoined) {
         Timer(const Duration(milliseconds: 300), () {
@@ -837,16 +1090,50 @@ class VideoCallController extends ChangeNotifier {
         });
       }
       if (!readyCompleter.isCompleted) readyCompleter.complete(true);
+      // Local tracks are attached now, so an offer that arrived during the
+      // rebuild is answered sendrecv rather than recvonly.
+      _replayPendingRemoteOffer(pc);
     } catch (err) {
       debugPrint('[video-call] media permission failed: $err');
       _logEvent('media_permission_failed', {'error': err.toString()});
-      if (!_disposed) {
-        camError = true;
-        camErrorReason = _mediaErrorMessage(err);
-        deviceCheckStatus = 'failed';
-        notifyListeners();
+      if (_disposed || _pc != pc) {
+        if (!readyCompleter.isCompleted) readyCompleter.complete(false);
+        return;
       }
-      if (!readyCompleter.isCompleted) readyCompleter.complete(false);
+      camError = true;
+      camErrorReason = _mediaErrorMessage(err);
+      deviceCheckStatus = 'failed';
+      await _refreshPermissionDenialState();
+      retryDebugLog(isDoctor, appointmentId, 'acquireLocalMedia:media_failed_joining_recvonly', {
+        'error': err.toString(),
+        'errorType': err.runtimeType.toString(),
+        'permanentlyDenied': camPermissionPermanentlyDenied,
+      });
+
+      // CRITICAL fix: still join the call receive-only instead of leaving it
+      // permanently unnegotiated. Mobile is always the offerer, so without
+      // this neither side ever exchanges an SDP offer/answer at all — the
+      // doctor would be stuck on "Waiting for patient..." forever even
+      // though the patient is actually in the room. Mirrors VideoCall.jsx's
+      // fix for the same scenario.
+      isCamOff = true;
+      isMuted = true;
+      await _ensureRecvOnlyTransceivers(pc, audio: true, video: true);
+      isReady = true;
+      notifyListeners();
+
+      if (_socket.connected) _emitOnlineAndJoinRoom();
+      _announceCameraState();
+
+      if (!isDoctor && peerJoined) {
+        Timer(const Duration(milliseconds: 300), () {
+          if (_disposed || _pc != pc) return;
+          if (_isConnectedState(pc)) return;
+          unawaited(_createAndSendOffer(iceRestart: inCall));
+        });
+      }
+      if (!readyCompleter.isCompleted) readyCompleter.complete(true);
+      _replayPendingRemoteOffer(pc);
     }
   }
 
@@ -879,17 +1166,7 @@ class VideoCallController extends ChangeNotifier {
         final partial = await createLocalMediaStream('partial');
         Object lastErr = secondErr;
 
-        try {
-          final videoOnly = await navigator.mediaDevices
-              .getUserMedia({'audio': false, 'video': kMediaConstraints['video']});
-          for (final track in videoOnly.getTracks()) {
-            await partial.addTrack(track);
-          }
-        } catch (videoErr) {
-          debugPrint('[video-call] video-only media failed: $videoErr');
-          lastErr = videoErr;
-        }
-
+        // Audio BEFORE video so the m-line order is always audio, video.
         try {
           final audioOnly = await navigator.mediaDevices
               .getUserMedia({'audio': kMediaConstraints['audio'], 'video': false});
@@ -899,6 +1176,25 @@ class VideoCallController extends ChangeNotifier {
         } catch (audioErr) {
           debugPrint('[video-call] audio-only media failed: $audioErr');
           lastErr = audioErr;
+          retryDebugLog(isDoctor, appointmentId, 'getConsultationMediaStream:kind_failed', {
+            'kind': 'audio',
+            'error': audioErr.toString(),
+          });
+        }
+
+        try {
+          final videoOnly = await navigator.mediaDevices
+              .getUserMedia({'audio': false, 'video': kMediaConstraints['video']});
+          for (final track in videoOnly.getTracks()) {
+            await partial.addTrack(track);
+          }
+        } catch (videoErr) {
+          debugPrint('[video-call] video-only media failed: $videoErr');
+          lastErr = videoErr;
+          retryDebugLog(isDoctor, appointmentId, 'getConsultationMediaStream:kind_failed', {
+            'kind': 'video',
+            'error': videoErr.toString(),
+          });
         }
 
         if (partial.getTracks().isNotEmpty) return partial;
@@ -924,14 +1220,48 @@ class VideoCallController extends ChangeNotifier {
     return 'Camera or microphone access failed. Check app permissions and reload.';
   }
 
+  /// Checked after a media-acquisition failure to tell a transient/denied
+  /// prompt apart from a "don't ask again" permanent denial — in the latter
+  /// case, getUserMedia will keep failing identically forever since the OS
+  /// won't re-show the prompt, so the UI needs [openPermissionSettings]
+  /// instead of another retry.
+  Future<void> _refreshPermissionDenialState() async {
+    if (kIsWeb) return;
+    try {
+      final cam = await ph.Permission.camera.status;
+      final mic = await ph.Permission.microphone.status;
+      final permanentlyDenied = cam.isPermanentlyDenied || mic.isPermanentlyDenied;
+      if (permanentlyDenied && !camPermissionPermanentlyDenied) {
+        retryDebugLog(isDoctor, appointmentId, 'permission:permanently_denied_detected', {
+          'camera': cam.toString(),
+          'microphone': mic.toString(),
+        });
+      }
+      camPermissionPermanentlyDenied = permanentlyDenied;
+    } catch (_) {
+      // Best-effort — leave the flag as-is if the platform channel isn't
+      // available rather than blocking the error UI on this check.
+    }
+  }
+
+  /// Opens this app's system settings screen so the user can grant a
+  /// permanently-denied camera/microphone permission manually.
+  Future<void> openPermissionSettings() async {
+    if (kIsWeb) return;
+    await ph.openAppSettings();
+  }
+
   /// Wraps [_getConsultationMediaStream] with a hard deadline: on some Android
   /// devices a stuck permission dialog or a native `getUserMedia` call that
   /// never resolves can otherwise leave the caller awaiting forever with no
   /// visible error — this turns that into an actionable, catchable failure
   /// after `kMediaAcquireTimeoutMs` instead of an unexplained infinite spinner.
-  Future<MediaStream> _acquireMediaWithTimeout() {
+  Future<MediaStream> _acquireMediaWithTimeout() =>
+      _acquireMediaWithTimeoutMs(kMediaAcquireTimeoutMs);
+
+  Future<MediaStream> _acquireMediaWithTimeoutMs(int timeoutMs) {
     return _getConsultationMediaStream().timeout(
-      const Duration(milliseconds: kMediaAcquireTimeoutMs),
+      Duration(milliseconds: timeoutMs),
       onTimeout: () => throw TimeoutException('getUserMedia timed out'),
     );
   }
@@ -953,7 +1283,12 @@ class VideoCallController extends ChangeNotifier {
       _attachLocalTrackEndedListener(track);
     }
 
-    await _ensureMediaTransceivers(
+    // Any kind this stream has no track for (denied/missing device, or a
+    // partial grant — e.g. mic yes, camera no) still needs a recvonly
+    // transceiver so this side keeps RECEIVING that kind from the peer even
+    // though it sends nothing for it. Mirrors VideoCall.jsx's
+    // ensureRecvOnlyTransceivers.
+    await _ensureRecvOnlyTransceivers(
       pc,
       audio: stream.getAudioTracks().isEmpty,
       video: stream.getVideoTracks().isEmpty,
@@ -961,14 +1296,40 @@ class VideoCallController extends ChangeNotifier {
 
     for (final track in stream.getTracks()) {
       final kind = track.kind ?? '';
-      final existingSender = await _getSenderForKind(pc, kind);
+      final existingTransceiver = await _getTransceiverForKind(pc, kind);
       RTCRtpSender activeSender;
-      if (existingSender != null) {
-        await existingSender.replaceTrack(track);
-        activeSender = existingSender;
+      if (existingTransceiver != null) {
+        await existingTransceiver.sender.replaceTrack(track);
+        activeSender = existingTransceiver.sender;
+        // Late-attach safety net: a transceiver created recvonly/inactive
+        // (the initial no-media join above, or a prior partial grant) must
+        // be switched to sendrecv now that it actually has a track to send,
+        // or the peer keeps not receiving it despite the track being
+        // attached — mirrors VideoCall.jsx's attachLocalMediaStream safety
+        // net.
+        try {
+          final currentDirection = await existingTransceiver.getCurrentDirection();
+          if (currentDirection == TransceiverDirection.RecvOnly ||
+              currentDirection == TransceiverDirection.Inactive) {
+            await existingTransceiver.setDirection(TransceiverDirection.SendRecv);
+            retryDebugLog(isDoctor, appointmentId, '_attachLocalMediaStream:direction_forced_sendrecv', {
+              'kind': kind,
+              'previousDirection': currentDirection.toString(),
+            });
+          }
+        } catch (err) {
+          debugPrint('[video-call] setDirection(sendRecv) failed for $kind: $err');
+        }
       } else {
         activeSender = await pc.addTrack(track, stream);
       }
+      // TEMPORARY (RETRY_DEBUG)
+      retryDebugLog(isDoctor, appointmentId, '_attachLocalMediaStream:track', {
+        'kind': kind,
+        'id': track.id,
+        'action': existingTransceiver != null ? 'replaceTrack' : 'addTrack',
+        'reconnectInProgress': reconnectInProgress,
+      });
       await _tuneSenderQuality(
         activeSender,
         maxBitrate: kind == 'video' ? kCameraBitrate : kVoiceBitrate,
@@ -1030,19 +1391,23 @@ class VideoCallController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<RTCRtpSender?> _getSenderForKind(RTCPeerConnection pc, String kind) async {
-    final senders = await pc.getSenders();
-    for (final s in senders) {
-      if (s.track?.kind == kind) return s;
-    }
+  Future<RTCRtpTransceiver?> _getTransceiverForKind(RTCPeerConnection pc, String kind) async {
     final transceivers = await pc.getTransceivers();
     for (final t in transceivers) {
-      if (t.receiver.track?.kind == kind) return t.sender;
+      if (t.sender.track?.kind == kind) return t;
+    }
+    for (final t in transceivers) {
+      if (t.receiver.track?.kind == kind) return t;
     }
     return null;
   }
 
-  Future<void> _ensureMediaTransceivers(
+  /// Adds a recvonly transceiver for whichever of [audio]/[video] this side
+  /// has no local track for — used when media acquisition fails entirely
+  /// (the call must still receive the peer's audio/video) and when only one
+  /// permission was granted (the missing kind still needs to receive).
+  /// Mirrors VideoCall.jsx's ensureRecvOnlyTransceivers.
+  Future<void> _ensureRecvOnlyTransceivers(
     RTCPeerConnection pc, {
     bool audio = true,
     bool video = true,
@@ -1055,14 +1420,16 @@ class VideoCallController extends ChangeNotifier {
     if (audio && !hasKind('audio')) {
       await pc.addTransceiver(
         kind: RTCRtpMediaType.RTCRtpMediaTypeAudio,
-        init: RTCRtpTransceiverInit(direction: TransceiverDirection.SendRecv),
+        init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
       );
+      retryDebugLog(isDoctor, appointmentId, 'ensureRecvOnlyTransceivers:added', {'kind': 'audio'});
     }
     if (video && !hasKind('video')) {
       await pc.addTransceiver(
         kind: RTCRtpMediaType.RTCRtpMediaTypeVideo,
-        init: RTCRtpTransceiverInit(direction: TransceiverDirection.SendRecv),
+        init: RTCRtpTransceiverInit(direction: TransceiverDirection.RecvOnly),
       );
+      retryDebugLog(isDoctor, appointmentId, 'ensureRecvOnlyTransceivers:added', {'kind': 'video'});
     }
   }
 
@@ -1128,6 +1495,7 @@ class VideoCallController extends ChangeNotifier {
     final incoming = event.streams.isNotEmpty
         ? event.streams.expand((s) => s.getTracks()).toList()
         : [event.track];
+    var retryDebugTrackWasReplaced = false;
 
     for (final track in incoming) {
       // The sender only ever sends one track per kind, so a new track of a
@@ -1140,15 +1508,31 @@ class VideoCallController extends ChangeNotifier {
           .getTracks()
           .where((t) => t.kind == track.kind && t.id != track.id)
           .toList();
+      if (stale.isNotEmpty) retryDebugTrackWasReplaced = true;
       for (final s in stale) {
         await remoteStream.removeTrack(s);
       }
       if (remoteStream.getTrackById(track.id ?? '') == null) {
         await remoteStream.addTrack(track);
       }
+      _attachRemoteTrackMuteListener(track);
     }
 
     if (_disposed) return;
+    // TEMPORARY (RETRY_DEBUG)
+    retryDebugLog(isDoctor, appointmentId, '_handleTrack', {
+      'trackWasReplaced': retryDebugTrackWasReplaced,
+      'tracks': incoming
+          .map((t) => {
+                'kind': t.kind,
+                'id': t.id,
+                'enabled': t.enabled,
+                'muted': t.muted,
+              })
+          .toList(),
+      'streamCount': event.streams.length,
+      'attachTarget': isSwapped ? 'pipRenderer(remote)' : 'mainRenderer(remote)',
+    });
     _logEvent('remote_track_received', {
       'tracks': incoming.map((t) => t.kind).toList(),
       'streamCount': event.streams.length,
@@ -1157,6 +1541,32 @@ class VideoCallController extends ChangeNotifier {
     isRemoteConnected = true;
     peerLeft = false;
     notifyListeners();
+  }
+
+  // A receiver's track fires onMute when RTP stops arriving for that
+  // specific SSRC (e.g. the sender's encoder hiccups, or a transient
+  // bandwidth squeeze starves video while audio keeps flowing) without any
+  // change to the overall connection/ICE state — none of the reconnection
+  // machinery below (_scheduleIceRestart, _remoteRebindPending) is reachable
+  // from that, so without this listener the renderer is left frozen on its
+  // last frame indefinitely even though audio (no comparable per-frame
+  // pipeline to freeze) recovers on its own. Reassigning these on every
+  // onTrack firing for this track is safe/idempotent — a single-callback
+  // field, not an accumulating listener list.
+  void _attachRemoteTrackMuteListener(MediaStreamTrack track) {
+    track.onMute = () {
+      _logEvent('remote_track_muted', {'kind': track.kind});
+    };
+    track.onUnMute = () {
+      _logEvent('remote_track_unmuted', {'kind': track.kind});
+      if (_disposed) return;
+      // Same track object, same MediaStream — reuses the existing recovery
+      // rebind rather than new logic: flutter_webrtc's renderer can fail to
+      // resume painting a track that stalled for a stretch of time, exactly
+      // like the connection-level recovery case _refreshRemoteStreamBinding
+      // already handles.
+      _refreshRemoteStreamBinding();
+    };
   }
 
   void _handleLocalIceCandidate(RTCIceCandidate candidate) {
@@ -1188,6 +1598,12 @@ class VideoCallController extends ChangeNotifier {
 
   void _handleConnectionStateChange(RTCPeerConnectionState state) {
     if (_disposed) return;
+    // TEMPORARY (RETRY_DEBUG)
+    retryDebugLog(isDoctor, appointmentId, '_handleConnectionStateChange', {
+      'oldState': _retryDebugPrevConnState?.toString(),
+      'newState': state.toString(),
+    });
+    _retryDebugPrevConnState = state;
     _logEvent('connection_state_changed', {'state': state.toString()});
     if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
       _handleConnectedState();
@@ -1218,6 +1634,14 @@ class VideoCallController extends ChangeNotifier {
   // (a socket reconnect finding the peer connection was fine all along) gets
   // the exact same recovery behavior as a real state-change event.
   void _handleConnectedState() {
+    // TEMPORARY (RETRY_DEBUG)
+    final pcForDebug = _pc;
+    retryDebugLog(isDoctor, appointmentId, '_handleConnectedState:called', {
+      'connectionState': pcForDebug?.connectionState?.toString(),
+      'iceConnectionState': pcForDebug?.iceConnectionState?.toString(),
+      'remoteRebindPending': _remoteRebindPending,
+      'hasConnectedOnce': hasConnectedOnce,
+    });
     _iceRestartTimer?.cancel();
     _iceRestartTimer = null;
     _connectionFailTimer?.cancel();
@@ -1245,6 +1669,12 @@ class VideoCallController extends ChangeNotifier {
   // Fallback for platforms where onConnectionState fires late or not at all.
   void _handleIceConnectionStateChange(RTCIceConnectionState state) {
     if (_disposed) return;
+    // TEMPORARY (RETRY_DEBUG)
+    retryDebugLog(isDoctor, appointmentId, '_handleIceConnectionStateChange', {
+      'oldState': _retryDebugPrevIceState?.toString(),
+      'newState': state.toString(),
+    });
+    _retryDebugPrevIceState = state;
     if (state == RTCIceConnectionState.RTCIceConnectionStateConnected ||
         state == RTCIceConnectionState.RTCIceConnectionStateCompleted) {
       _handleConnectedState();
@@ -1272,16 +1702,28 @@ class VideoCallController extends ChangeNotifier {
     }
   }
 
-  void _markInCall() {
-    if (inCall) return;
-    inCall = true;
-    notifyListeners();
-
+  // Starts the foreground service at most once per session. Safe to call
+  // from both the "local media just became ready" path (the earliest point
+  // the app is truly at risk of being suspended while backgrounded, before
+  // the peer has even joined) and _markInCall's "connected" path, which
+  // stays as a fallback for the (unexpected) case media readiness never
+  // fired it.
+  void _startForegroundServiceIfNeeded() {
+    if (_foregroundServiceStarted || _disposed) return;
+    _foregroundServiceStarted = true;
     final localTracks = _localStream?.getTracks() ?? const [];
     unawaited(CallForegroundService.start(
       hasAudio: localTracks.any((t) => t.kind == 'audio'),
       hasVideo: localTracks.any((t) => t.kind == 'video'),
     ));
+  }
+
+  void _markInCall() {
+    if (inCall) return;
+    inCall = true;
+    notifyListeners();
+
+    _startForegroundServiceIfNeeded();
 
     _callTimer?.cancel();
     _callTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -1292,11 +1734,39 @@ class VideoCallController extends ChangeNotifier {
     // A live call has no other API traffic, so the inactivity timer + short-
     // lived access token can expire mid-consultation. Refresh on a cadence
     // well under both timeouts, same as VideoCall.jsx's heartbeat effect.
+    // Failure handling: a single failed attempt is silent and non-fatal
+    // (refreshAccessToken already falls through to whatever's in storage on
+    // its own internal failures) — this only escalates once it has failed
+    // kAuthRefreshFailureThreshold times in a row, meaning the session
+    // genuinely can no longer be kept alive by retrying, not just a
+    // transient blip.
     _heartbeatTimer?.cancel();
-    _heartbeatTimer = Timer.periodic(const Duration(minutes: 4), (_) {
-      ApiService.instance
+    _authRefreshFailureCount = 0;
+    _heartbeatTimer = Timer.periodic(const Duration(minutes: 4), (_) async {
+      final refreshed = await ApiService.instance
           .refreshAccessToken(isDoctor ? 'doctor' : 'user')
           .catchError((_) => false);
+      if (refreshed) {
+        _authRefreshFailureCount = 0;
+        return;
+      }
+      _authRefreshFailureCount += 1;
+      if (_authRefreshFailureCount < kAuthRefreshFailureThreshold) {
+        return; // transient — the next scheduled attempt will try again
+      }
+      // Repeated failure: the session can no longer be kept alive by
+      // retrying. Stop the futile silent retries and surface the same
+      // terminal apptError gate _handleRoomDenied/_handleDuplicateSession
+      // already use, instead of a second authentication UI —
+      // performCleanup() also tears down the socket listeners and peer
+      // connection, so nothing is left running a reconnect loop against a
+      // session that's already been told it's unauthenticated.
+      _heartbeatTimer?.cancel();
+      await performCleanup();
+      if (_disposed) return;
+      apptError =
+          'Your session has expired. Please restart the app and log in again to continue.';
+      notifyListeners();
     });
   }
 
@@ -1384,12 +1854,25 @@ class VideoCallController extends ChangeNotifier {
       final offerId = _makeOfferId();
       _pendingOfferId = offerId;
       _logEvent('offer_sent', {'iceRestart': iceRestart, 'sdpLength': offer.sdp?.length ?? 0});
+      // TEMPORARY (RETRY_DEBUG)
+      retryDebugLog(isDoctor, appointmentId, '_createAndSendOffer:offer_sent', {
+        'offerId': offerId,
+        'iceRestart': iceRestart,
+        'reconnectInProgress': reconnectInProgress,
+        'dtlsFingerprint': retryDebugExtractFingerprint(offer.sdp),
+      });
       _socket.emit('video-offer', {
         'appointmentId': appointmentId,
         'offer': {'sdp': offer.sdp, 'type': offer.type},
         'offerId': offerId,
       });
       if (iceRestart) _logEvent('ice_restart_offer_sent', {});
+      final hasLocalMedia = _localStream != null && _localStream!.getTracks().isNotEmpty;
+      if (!hasLocalMedia) {
+        retryDebugLog(isDoctor, appointmentId, '_createAndSendOffer:receive_only_offer_sent', {
+          'offerId': offerId,
+        });
+      }
       _armOfferAnswerTimeout(pc, offerId);
       return true;
     } catch (err) {
@@ -1552,18 +2035,62 @@ class VideoCallController extends ChangeNotifier {
       if (_iceRecoveryAttempts >= kIceMaxRecoveryAttempts) {
         _logEvent('ice_recovery_exhausted', {'attempts': _iceRecoveryAttempts});
         _requestPeerIceRestart();
+        _rearmIceRecoveryLoop();
+        return;
+      }
+
+      if (_isPolitePeer) {
+        _iceRecoveryAttempts += 1;
+        _logEvent('ice_recovery_attempt', {'attempts': _iceRecoveryAttempts});
+        _requestPeerIceRestart();
+        _rearmIceRecoveryLoop();
+        return;
+      }
+
+      // A negotiation this same recovery machinery already kicked off (or
+      // one that raced in from elsewhere — e.g. the peer's own offer) is
+      // still outstanding. Perfect negotiation only ever tolerates one
+      // outstanding offer at a time (see _makingOffer/createAndSendOffer's
+      // own signalingState guard, which would otherwise silently drop this
+      // trigger with nothing to pick it back up) — sending a second,
+      // overlapping offer here would violate that invariant. The existing
+      // offer-answer-timeout watchdog (_armOfferAnswerTimeout) already owns
+      // rolling this specific negotiation back and retrying it if it
+      // stalls, so this doesn't spend an attempt or lose the trigger — it
+      // just re-checks on the next cycle via _rearmIceRecoveryLoop below,
+      // by which point that negotiation has either succeeded (the loop
+      // stops on its own) or been rolled back (signalingState is stable
+      // again, so the next tick sends a fresh restart offer normally).
+      if (_makingOffer || pc.signalingState == RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
+        _logEvent('ice_recovery_deferred_offer_in_flight', {'attempts': _iceRecoveryAttempts});
+        _rearmIceRecoveryLoop();
         return;
       }
 
       _iceRecoveryAttempts += 1;
       _logEvent('ice_recovery_attempt', {'attempts': _iceRecoveryAttempts});
-
-      if (_isPolitePeer) {
-        _requestPeerIceRestart();
-        return;
-      }
       await _createAndSendOffer(iceRestart: true);
+      _rearmIceRecoveryLoop();
     });
+  }
+
+  // Closes the gap where a single failed/unhealthy recovery attempt left
+  // nothing to automatically try again: re-arms _scheduleIceRestart() on
+  // the same debounce cadence it already uses, so the existing
+  // _iceRecoveryAttempts/kIceMaxRecoveryAttempts/kIceRecoveryCooldownMs
+  // constants above actually function as a bounded retry loop instead of
+  // firing once and stopping. Safe and idempotent to call unconditionally
+  // — checked here AND by _scheduleIceRestart's own guards on its next
+  // tick, so this naturally and immediately stops the moment the
+  // connection recovers, the controller is disposed, or the PeerConnection
+  // is torn down (_pc set to null by _teardownSession, which also
+  // explicitly cancels any pending _iceRestartTimer) — never sends
+  // anything by itself, only decides whether another check is warranted.
+  void _rearmIceRecoveryLoop() {
+    if (_disposed) return;
+    final pc = _pc;
+    if (pc == null || _isConnectedState(pc)) return;
+    _scheduleIceRestart();
   }
 
   /// Manual escape hatch: tears down and rebuilds the RTCPeerConnection and
@@ -1571,16 +2098,54 @@ class VideoCallController extends ChangeNotifier {
   /// VideoCall.jsx.
   Future<void> forceReconnect() async {
     if (reconnectInProgress) return;
+    // TEMPORARY (RETRY_DEBUG)
+    retryDebugLog(isDoctor, appointmentId, 'forceReconnect:TAPPED', {
+      'pcConnectionState': _pc?.connectionState?.toString(),
+      'pcIceConnectionState': _pc?.iceConnectionState?.toString(),
+    });
     reconnectInProgress = true;
     reconnectStalled = false;
     notifyListeners();
     try {
-      await _teardownSession(leaveRoom: false);
+      await _teardownSession(leaveRoom: false, keepListeners: true);
       await startCallSession();
     } finally {
       reconnectInProgress = false;
       notifyListeners();
     }
+  }
+
+  /// _handlePeerJoined's pcNeedsRebuild branch calls this instead of
+  /// forceReconnect() directly. The peer-joined event that triggered the
+  /// rebuild is itself proof the other party is already in the room, but
+  /// forceReconnect() -> _teardownSession() resets `peerJoined` to false
+  /// along with everything else, and only a *future* 'peer-joined' socket
+  /// event ever sets it back to true. Unlike a normal cold start, this
+  /// rebuilt session has no such event coming — the other party isn't
+  /// rejoining again, they already joined and *caused* this rebuild — so
+  /// the usual self-offer checks in _acquireLocalMedia/_handlePeerJoined
+  /// never see `peerJoined == true` and nothing ever calls
+  /// _createAndSendOffer for the new peer connection, leaving it stuck at
+  /// RTCPeerConnectionState.new. Only the Patient side self-initiates
+  /// offers (the Doctor stays a purely polite peer — see
+  /// _acquireLocalMedia), so only it needs to resend one here, once the
+  /// rebuilt session's local media is actually ready.
+  Future<void> _rebuildAfterPeerRejoin() async {
+    await forceReconnect();
+    if (isDoctor || _disposed || _completedFlag) return;
+
+    // Same readiness signal _handleOffer already awaits — sidesteps the
+    // fact that startCallSession() kicks off media acquisition without
+    // awaiting it itself.
+    final localReady = await _localReady.future;
+    if (_disposed || _completedFlag || !localReady) return;
+
+    final pc = _pc;
+    if (pc == null || _isConnectedState(pc)) return;
+    // _createAndSendOffer has its own _makingOffer/signalingState guards,
+    // so an overlapping call here (e.g. a second peer-joined arriving
+    // mid-rebuild) can't produce a duplicate offer.
+    unawaited(_createAndSendOffer(iceRestart: inCall));
   }
 
   /// No direct React equivalent (browser tabs don't get suspended the same
@@ -1606,6 +2171,12 @@ class VideoCallController extends ChangeNotifier {
     // guard.
     _refreshLocalStreamBinding();
 
+    // The user may have just come back from the OS Settings screen after
+    // tapping "Open Settings" on a permanently-denied camera/mic banner —
+    // re-check permission state now instead of waiting for another manual
+    // tap, and resume the join automatically if it's now granted.
+    if (camError) unawaited(_recheckPermissionAfterResume());
+
     final pc = _pc;
     if (pc == null) return;
     if (_resumeReconnectInProgress) return;
@@ -1622,6 +2193,32 @@ class VideoCallController extends ChangeNotifier {
       return;
     }
     unawaited(_reconnectAfterResume());
+  }
+
+  /// Re-checks camera/mic permission status after the app resumes and
+  /// automatically retries joining with real media if it's now granted —
+  /// otherwise a user who fixes the permission in Settings would have to
+  /// come back and tap Retry themselves for no reason. No-op unless the
+  /// camera-error banner is actually showing (camError).
+  Future<void> _recheckPermissionAfterResume() async {
+    if (kIsWeb || !camError) return;
+    try {
+      final cam = await ph.Permission.camera.status;
+      final mic = await ph.Permission.microphone.status;
+      final stillPermanentlyDenied = cam.isPermanentlyDenied || mic.isPermanentlyDenied;
+      camPermissionPermanentlyDenied = stillPermanentlyDenied;
+      if (!stillPermanentlyDenied && (cam.isGranted || mic.isGranted)) {
+        retryDebugLog(isDoctor, appointmentId, 'handleAppResumed:permission_granted_after_settings', {
+          'camera': cam.toString(),
+          'microphone': mic.toString(),
+        });
+        unawaited(retryMediaPermissions());
+      } else {
+        notifyListeners();
+      }
+    } catch (err) {
+      debugPrint('[video-call] permission recheck on resume failed: $err');
+    }
   }
 
   Future<num?> _sampleInboundBytes(RTCPeerConnection pc) async {
@@ -1690,6 +2287,21 @@ class VideoCallController extends ChangeNotifier {
       }
       if (_disposed) return;
       _socket.connect();
+      // The socket reconnecting on its own never touches the
+      // RTCPeerConnection — if it was already disconnected/failed before
+      // backgrounding (the branch that routes here rather than to
+      // _verifyConnectionAfterResume), nothing else on this path would
+      // otherwise retry it; recovery would depend entirely on whatever
+      // ICE-restart timer happened to already be pending from before the
+      // app was backgrounded. Ensure the existing recovery machinery is
+      // actually running now that signaling is being re-established — no
+      // new mechanism: _scheduleIceRestart's own guards (already-connected
+      // check, _iceRestartTimer != null reentrancy guard) make this a safe,
+      // duplicate-free no-op if a cycle is already in flight.
+      final pc = _pc;
+      if (pc != null && !_isConnectedState(pc)) {
+        _scheduleIceRestart();
+      }
     } finally {
       _resumeReconnectInProgress = false;
     }
@@ -1717,7 +2329,11 @@ class VideoCallController extends ChangeNotifier {
       deviceCheckSpeaker = summary['speaker'] ?? 'unknown';
       _logEvent('media_retry_started', summary);
 
-      final stream = await _acquireMediaWithTimeout();
+      // Tighter deadline than the initial join (kRetryMediaPermissionsTimeoutMs,
+      // not kMediaAcquireTimeoutMs): the user is actively watching this
+      // button, so a stuck prompt must hand back control well within ~10s
+      // rather than leaving "Retrying..." up for the full 20s join budget.
+      final stream = await _acquireMediaWithTimeoutMs(kRetryMediaPermissionsTimeoutMs);
       // A concurrent forceReconnect() can close this pc and open a new one
       // while the permission prompt above is still pending — mirrors the
       // same check _acquireLocalMedia already does after its own await, so
@@ -1733,20 +2349,29 @@ class VideoCallController extends ChangeNotifier {
         }
         return;
       }
+      // Late-attach: replaceTrack onto any existing (possibly recvonly)
+      // transceiver and force it to sendrecv — see _attachLocalMediaStream's
+      // safety net.
       await _attachLocalMediaStream(stream, pc);
       unawaited(_applySpeakerphonePreference());
 
       isReady = true;
       camError = false;
       camErrorReason = '';
+      camPermissionPermanentlyDenied = false;
       deviceCheckStatus = 'ready';
       retryingMedia = false;
+      // Reflects what was actually (re)captured — a partial grant (e.g. mic
+      // only) must not falsely report "camera on".
+      isCamOff = stream.getVideoTracks().isEmpty;
+      isMuted = stream.getAudioTracks().isEmpty;
       notifyListeners();
       _logEvent('media_retry_succeeded', {
         'audioTracks': stream.getAudioTracks().length,
         'videoTracks': stream.getVideoTracks().length,
       });
       _emitOnlineAndJoinRoom();
+      _announceCameraState();
 
       if (pc.signalingState == RTCSignalingState.RTCSignalingStateHaveRemoteOffer) {
         final answer = await pc.createAnswer({
@@ -1759,6 +2384,22 @@ class VideoCallController extends ChangeNotifier {
           'answer': {'sdp': answer.sdp, 'type': answer.type},
           'offerId': _lastReceivedOfferId,
         });
+      } else if (!isDoctor && peerJoined) {
+        // We're the offerer and the peer is already in the room — the
+        // original join may have sent no offer at all (no media at the
+        // time) or an offer with recvonly m-lines only. Either way, now
+        // that real tracks are attached, a fresh offer is needed for the
+        // peer to actually start receiving them. Deliberately NOT gated on
+        // "already connected": the pc can be connected receive-only from
+        // the earlier no-media join, which is exactly the case that still
+        // needs this renegotiation. Mirrors VideoCall.jsx's equivalent fix.
+        retryDebugLog(isDoctor, appointmentId, 'retryMediaPermissions:renegotiation_offer_scheduled', {
+          'connectionState': pc.connectionState?.toString(),
+        });
+        Timer(const Duration(milliseconds: 300), () {
+          if (_disposed || _pc != pc) return;
+          unawaited(_createAndSendOffer(iceRestart: inCall));
+        });
       }
     } catch (err) {
       camError = true;
@@ -1766,6 +2407,11 @@ class VideoCallController extends ChangeNotifier {
       deviceCheckStatus = 'failed';
       retryingMedia = false;
       _logEvent('media_retry_failed', {'error': err.toString()});
+      retryDebugLog(isDoctor, appointmentId, 'retryMediaPermissions:timed_out_or_failed', {
+        'error': err.toString(),
+        'errorType': err.runtimeType.toString(),
+      });
+      await _refreshPermissionDenialState();
       notifyListeners();
     }
   }
@@ -1782,6 +2428,87 @@ class VideoCallController extends ChangeNotifier {
     return null;
   }
 
+  // Stashes a remote offer that can't be applied yet (no pc / rebuild running).
+  void _stashRemoteOffer(Map<String, dynamic> data, String why) {
+    _pendingRemoteOffer = data;
+    _pendingRemoteOfferAt = DateTime.now();
+    retryDebugLog(isDoctor, appointmentId, 'pendingOffer:STASHED', {
+      'why': why,
+      'offerId': data['offerId'],
+    });
+  }
+
+  // Replays the stashed offer onto [pc] — called once its local media is
+  // attached, so the answer is sendrecv. Drops it if older than 15s.
+  void _replayPendingRemoteOffer(RTCPeerConnection pc) {
+    final offer = _pendingRemoteOffer;
+    final at = _pendingRemoteOfferAt;
+    if (offer == null || at == null || _disposed || _completedFlag || _pc != pc) return;
+    if (reconnectInProgress) {
+      // The rebuild that owns this pc hasn't released the in-progress flag
+      // yet — _handleOffer would just re-stash it. Try again shortly.
+      Timer(const Duration(milliseconds: 200), () => _replayPendingRemoteOffer(pc));
+      return;
+    }
+    _pendingRemoteOffer = null;
+    _pendingRemoteOfferAt = null;
+    final ageMs = DateTime.now().difference(at).inMilliseconds;
+    if (ageMs > kPendingOfferMaxAgeMs) {
+      retryDebugLog(isDoctor, appointmentId, 'pendingOffer:DROPPED_stale', {
+        'offerId': offer['offerId'],
+        'ageMs': ageMs,
+      });
+      return;
+    }
+    retryDebugLog(isDoctor, appointmentId, 'pendingOffer:REPLAY', {
+      'offerId': offer['offerId'],
+      'ageMs': ageMs,
+    });
+    unawaited(_handleOffer(offer));
+  }
+
+  // The single entry point for every automatic rebuild. reconnectInProgress
+  // is the one in-progress flag (forceReconnect sets it), so two rebuild
+  // paths can never run at the same time; an offer that couldn't be applied
+  // is stashed instead of lost.
+  Future<void> _rebuildPc(String reason, {Map<String, dynamic>? offerToReplay}) async {
+    if (_disposed || _completedFlag) return;
+    if (reconnectInProgress) {
+      if (offerToReplay != null) _stashRemoteOffer(offerToReplay, 'rebuild_in_progress');
+      retryDebugLog(isDoctor, appointmentId, 'rebuildPc:SKIPPED_in_progress', {'reason': reason});
+      return;
+    }
+    retryDebugLog(isDoctor, appointmentId, 'rebuildPc:START', {
+      'reason': reason,
+      'withOfferToReplay': offerToReplay != null,
+    });
+    if (offerToReplay != null) {
+      // We're going to ANSWER this offer on the new pc, not send our own.
+      _stashRemoteOffer(offerToReplay, reason);
+      await forceReconnect();
+    } else {
+      await _rebuildAfterPeerRejoin();
+    }
+  }
+
+  // Web doctor tapped Retry / rebuilt: same rebuild as our own Retry, unless
+  // our pc is brand new or a rebuild is already running.
+  void _handlePeerRebuildRequest(dynamic _) {
+    if (_disposed || _completedFlag) return;
+    final pc = _pc;
+    final pcAgeMs = DateTime.now().difference(_pcCreatedAt).inMilliseconds;
+    if (pc == null || reconnectInProgress || pcAgeMs < kPeerRebuildMinPcAgeMs) {
+      retryDebugLog(isDoctor, appointmentId, 'request-peer-rebuild:IGNORED', {
+        'pcMissing': pc == null,
+        'reconnectInProgress': reconnectInProgress,
+        'pcAgeMs': pcAgeMs,
+      });
+      return;
+    }
+    retryDebugLog(isDoctor, appointmentId, 'request-peer-rebuild:RECEIVED', {'pcAgeMs': pcAgeMs});
+    unawaited(_rebuildPc('peer_requested'));
+  }
+
   Future<void> _handleOffer(dynamic raw) async {
     if (_disposed) return;
     final data = _toMap(raw);
@@ -1790,7 +2517,31 @@ class VideoCallController extends ChangeNotifier {
     if (offerMap == null || offerMap is! Map) return;
     final incomingOfferId = data['offerId'] as String?;
     final pc = _pc;
-    if (pc == null) return;
+    if (pc == null || reconnectInProgress) {
+      // The offer beat our pc into existence (or a rebuild is tearing it
+      // down): keep it, and answer it once the new pc has local media.
+      if (!_completedFlag) _stashRemoteOffer(data, pc == null ? 'no_pc' : 'rebuild_running');
+      return;
+    }
+    // A newer offer supersedes anything stashed earlier.
+    _pendingRemoteOffer = null;
+    _pendingRemoteOfferAt = null;
+
+    // Peer rebuilt its RTCPeerConnection (new DTLS identity): this pc can
+    // never accept its offer (m-line order). Checked BEFORE the collision
+    // logic so it can't be ignored/rolled back; rebuild and answer the same
+    // offer on the fresh pc. Real logic — independent of kRetryDebug.
+    final incomingFingerprint = extractDtlsFingerprint(offerMap['sdp'] as String?);
+    final knownFingerprint = _lastRemoteFingerprint;
+    if (incomingFingerprint != null &&
+        knownFingerprint != null &&
+        incomingFingerprint != knownFingerprint) {
+      retryDebugLog(isDoctor, appointmentId, '_handleOffer:peer_rebuilt_detected_via_fingerprint', {
+        'offerId': incomingOfferId,
+      });
+      unawaited(_rebuildPc('fingerprint_changed', offerToReplay: data));
+      return;
+    }
 
     try {
       connectionState = 'connecting';
@@ -1806,13 +2557,39 @@ class VideoCallController extends ChangeNotifier {
       final offerCollision = !readyForOffer;
       final shouldIgnoreOffer = !_isPolitePeer && offerCollision;
 
+      // TEMPORARY (RETRY_DEBUG): snapshot everything relevant at the moment
+      // this offer arrived, before any of it is mutated below.
+      final retryDebugPcAgeMs = DateTime.now().difference(_pcCreatedAt).inMilliseconds;
+      final retryDebugIncomingFingerprint = retryDebugExtractFingerprint(offerMap['sdp'] as String?);
+      final retryDebugPrevFingerprint = _retryDebugLastRemoteFingerprint;
+      retryDebugLog(isDoctor, appointmentId, '_handleOffer:arrived', {
+        'offerId': incomingOfferId,
+        'signalingState': signalingState?.toString(),
+        'connectionState': pc.connectionState?.toString(),
+        'iceConnectionState': pc.iceConnectionState?.toString(),
+        'pcAgeMs': retryDebugPcAgeMs,
+        'pcLooksFreshlyRebuilt': retryDebugPcAgeMs < 3000,
+        'makingOffer': _makingOffer,
+        'settingRemoteAnswerPending': _settingRemoteAnswerPending,
+        'offerCollision': offerCollision,
+        'isPolitePeer': _isPolitePeer,
+        'shouldIgnoreOffer': shouldIgnoreOffer,
+        'incomingDtlsFingerprint': retryDebugIncomingFingerprint,
+        'previousRemoteDtlsFingerprint': retryDebugPrevFingerprint,
+        'dtlsFingerprintChanged': retryDebugIncomingFingerprint != null &&
+            retryDebugPrevFingerprint != null &&
+            retryDebugIncomingFingerprint != retryDebugPrevFingerprint,
+      });
+
       if (shouldIgnoreOffer) {
         _markIgnoredOffer();
+        retryDebugLog(isDoctor, appointmentId, '_handleOffer:IGNORED_collision', {'offerId': incomingOfferId});
         return;
       }
       _resetIgnoredOffer();
 
       if (offerCollision && signalingState == RTCSignalingState.RTCSignalingStateHaveLocalOffer) {
+        retryDebugLog(isDoctor, appointmentId, '_handleOffer:rollback_local_offer', {'offerId': incomingOfferId});
         await pc.setLocalDescription(RTCSessionDescription('', 'rollback'));
         // Our own outstanding offer was just discarded — any answer that
         // still shows up for it later is stale and must be rejected, and
@@ -1820,13 +2597,47 @@ class VideoCallController extends ChangeNotifier {
         _pendingOfferId = null;
         _clearOfferAnswerTimeout();
       } else if (offerCollision) {
+        retryDebugLog(isDoctor, appointmentId, '_handleOffer:IGNORED_in_progress', {
+          'offerId': incomingOfferId,
+          'signalingState': signalingState?.toString(),
+        });
         return;
       }
 
-      await pc.setRemoteDescription(RTCSessionDescription(
-        offerMap['sdp'] as String?,
-        offerMap['type'] as String?,
-      ));
+      try {
+        await pc.setRemoteDescription(RTCSessionDescription(
+          offerMap['sdp'] as String?,
+          offerMap['type'] as String?,
+        ));
+      } catch (err) {
+        retryDebugLog(isDoctor, appointmentId, '_handleOffer:setRemoteDescription:ERROR', {
+          'offerId': incomingOfferId,
+          'error': err.toString(),
+        });
+        // Reactive twin of the fingerprint check (the first offer after a
+        // rebuild has nothing to compare against). flutter_webrtc errors are
+        // Strings. Skipped for a brand-new pc so a genuinely bad offer can't
+        // loop rebuilds.
+        final errText = err.toString();
+        final looksRebuilt = errText.contains('m-line') ||
+            errText.contains('SetRemoteDescriptionFailed') ||
+            errText.contains('WEBRTC_SET_REMOTE_DESCRIPTION_ERROR');
+        if (looksRebuilt &&
+            DateTime.now().difference(_pcCreatedAt).inMilliseconds > 2000) {
+          retryDebugLog(isDoctor, appointmentId, '_handleOffer:peer_rebuilt_detected_via_sdp_error', {
+            'offerId': incomingOfferId,
+          });
+          unawaited(_rebuildPc('sdp_error', offerToReplay: data));
+          return;
+        }
+        rethrow;
+      }
+      if (incomingFingerprint != null) _lastRemoteFingerprint = incomingFingerprint;
+      // Diagnostic bookkeeping only — records the fingerprint we just
+      // applied so the *next* offer's arrival log can report whether it
+      // changed (i.e. the peer's RTCPeerConnection was rebuilt).
+      _retryDebugLastRemoteFingerprint = retryDebugIncomingFingerprint;
+      retryDebugLog(isDoctor, appointmentId, '_handleOffer:setRemoteDescription:ok', {'offerId': incomingOfferId});
       // Record which offer we just accepted as soon as it's applied, not
       // only once we get around to answering it — if local media isn't
       // ready yet, retryMediaPermissions() answers this same remote
@@ -1837,27 +2648,70 @@ class VideoCallController extends ChangeNotifier {
 
       final localReady = await _localReady.future;
       if (_disposed) return;
-      if (!localReady) {
+      final hasLocalMedia = _localStream != null && _localStream!.getTracks().isNotEmpty;
+      if (!localReady || !hasLocalMedia) {
+        // Parity fix with VideoCall.jsx: answer recvonly instead of bailing
+        // out without answering at all. Bailing here would starve the
+        // offerer's own answer-timeout watchdog forever (it never gets a
+        // video-answer), which otherwise causes an infinite rebuild loop —
+        // the call must still connect and receive the peer's media even
+        // though this side has none to send.
         camError = true;
         camErrorReason =
             'Allow camera or microphone access, then retry to join the consultation.';
         notifyListeners();
-        return;
+        retryDebugLog(isDoctor, appointmentId, '_handleOffer:local_media_not_ready_answering_recvonly', {
+          'offerId': incomingOfferId,
+          'localReady': localReady,
+        });
+        final transceivers = await pc.getTransceivers();
+        for (final t in transceivers) {
+          if (t.sender.track == null) {
+            try {
+              await t.setDirection(TransceiverDirection.RecvOnly);
+            } catch (_) {
+              // Best-effort — createAnswer below still reflects whatever
+              // direction libwebrtc settled on if this fails.
+            }
+          }
+        }
       }
 
-      final answer = await pc.createAnswer({
-        'offerToReceiveAudio': true,
-        'offerToReceiveVideo': true,
-      });
-      await pc.setLocalDescription(answer);
+      RTCSessionDescription answer;
+      try {
+        answer = await pc.createAnswer({
+          'offerToReceiveAudio': true,
+          'offerToReceiveVideo': true,
+        });
+      } catch (err) {
+        retryDebugLog(isDoctor, appointmentId, '_handleOffer:createAnswer:ERROR', {
+          'offerId': incomingOfferId,
+          'error': err.toString(),
+        });
+        rethrow;
+      }
+      try {
+        await pc.setLocalDescription(answer);
+      } catch (err) {
+        retryDebugLog(isDoctor, appointmentId, '_handleOffer:setLocalDescription:ERROR', {
+          'offerId': incomingOfferId,
+          'error': err.toString(),
+        });
+        rethrow;
+      }
+      retryDebugLog(isDoctor, appointmentId, '_handleOffer:answer_sent', {'offerId': incomingOfferId});
       _socket.emit('video-answer', {
         'appointmentId': appointmentId,
         'answer': {'sdp': answer.sdp, 'type': answer.type},
         'offerId': incomingOfferId,
       });
       _markInCall();
+      // TEMPORARY (RETRY_DEBUG): watch whether media actually starts
+      // flowing on this pc after answering this offer.
+      retryDebugPollInboundVideoStats(pc, isDoctor, appointmentId, '_handleOffer:post_answer');
     } catch (err) {
       debugPrint('[video-call] offer error: $err');
+      retryDebugLog(isDoctor, appointmentId, '_handleOffer:ERROR', {'error': err.toString()});
     }
   }
 
@@ -1870,6 +2724,14 @@ class VideoCallController extends ChangeNotifier {
     final receivedOfferId = data['offerId'] as String?;
     final pc = _pc;
     if (pc == null) return;
+
+    // TEMPORARY (RETRY_DEBUG)
+    retryDebugLog(isDoctor, appointmentId, '_handleAnswer:received', {
+      'offerId': receivedOfferId,
+      'expectedOfferId': _pendingOfferId,
+      'signalingState': pc.signalingState?.toString(),
+      'reconnectInProgress': reconnectInProgress,
+    });
 
     try {
       if (pc.signalingState != RTCSignalingState.RTCSignalingStateHaveLocalOffer &&
@@ -1890,21 +2752,42 @@ class VideoCallController extends ChangeNotifier {
         debugPrint('[video-call] rejecting answer: offerId mismatch (expected $expectedOfferId, got $receivedOfferId)');
         return;
       }
+      // An answer from a rebuilt peer (different DTLS identity) can't be
+      // applied to this pc — rebuild instead (the patient then sends a fresh
+      // offer). Real logic — independent of kRetryDebug.
+      final answerFingerprint = extractDtlsFingerprint(answerMap['sdp'] as String?);
+      final knownFingerprint = _lastRemoteFingerprint;
+      if (answerFingerprint != null &&
+          knownFingerprint != null &&
+          answerFingerprint != knownFingerprint) {
+        retryDebugLog(isDoctor, appointmentId, '_handleAnswer:REJECTED_fingerprint_changed', {
+          'offerId': receivedOfferId,
+        });
+        unawaited(_rebuildPc('answer_fingerprint_changed'));
+        return;
+      }
       _settingRemoteAnswerPending = true;
       _logEvent('answer_received', {'sdpLength': answerMap['sdp']?.toString().length ?? 0});
       await pc.setRemoteDescription(RTCSessionDescription(
         answerMap['sdp'] as String?,
         answerMap['type'] as String?,
       ));
+      if (answerFingerprint != null) _lastRemoteFingerprint = answerFingerprint;
       _pendingOfferId = null;
       _clearOfferAnswerTimeout();
       _logEvent('answer_accepted', {'offerId': receivedOfferId});
       _resetIgnoredOffer();
       await _flushPendingIceCandidates();
       _markInCall();
+      // TEMPORARY (RETRY_DEBUG)
+      retryDebugLog(isDoctor, appointmentId, '_handleAnswer:applied_ok', {'offerId': receivedOfferId});
     } catch (err) {
       debugPrint('[video-call] answer error: $err');
       _logEvent('answer_error', {'error': err.toString()});
+      retryDebugLog(isDoctor, appointmentId, '_handleAnswer:ERROR', {
+        'offerId': receivedOfferId,
+        'error': err.toString(),
+      });
     } finally {
       _settingRemoteAnswerPending = false;
     }
@@ -2003,6 +2886,19 @@ class VideoCallController extends ChangeNotifier {
         pc.signalingState == RTCSignalingState.RTCSignalingStateClosed ||
         pc.connectionState == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
         (resumedCall && !pcHealthy && pcAgeMs > kRebuildGraceMs);
+    // TEMPORARY (RETRY_DEBUG)
+    retryDebugLog(isDoctor, appointmentId, '_handlePeerJoined', {
+      'resumedCall': resumedCall,
+      'existingPcConnectionState': pc?.connectionState?.toString(),
+      'existingPcIceConnectionState': pc?.iceConnectionState?.toString(),
+      'existingPcSignalingState': pc?.signalingState?.toString(),
+      'pcHealthy': pcHealthy,
+      'pcAgeMs': pcAgeMs,
+      'rebuildGraceMs': kRebuildGraceMs,
+      'pcNeedsRebuild': pcNeedsRebuild,
+      'branch': pcNeedsRebuild ? 'REBUILD' : 'NO_REBUILD',
+      'reconnectAlreadyInProgress': reconnectInProgress,
+    });
     if (pcNeedsRebuild && !reconnectInProgress) {
       _logEvent('peer_rejoined_pc_rebuild', {
         'reason': pc == null
@@ -2014,7 +2910,7 @@ class VideoCallController extends ChangeNotifier {
                     : 'stale_resumed',
         'resumedCall': resumedCall,
       });
-      unawaited(forceReconnect());
+      unawaited(_rebuildPc(pc == null ? 'missing' : 'peer_joined'));
       return;
     }
 
@@ -2048,6 +2944,7 @@ class VideoCallController extends ChangeNotifier {
     if (_disposed) return;
     _clearJoinTimeout();
     peerJoined = false;
+    _lastRemoteFingerprint = null;
     isRemoteConnected = false;
     connectionState = 'disconnected';
     peerLeft = true;
@@ -2222,10 +3119,14 @@ class VideoCallController extends ChangeNotifier {
   // ── Socket connection lifecycle ──────────────────────────────────────
 
   void _registerSocketListeners() {
+    // Idempotent: listeners now survive a rebuild, so startCallSession must
+    // not stack a second copy of each handler.
+    _unregisterSocketListeners();
     _socket.on('video-offer', _handleOffer);
     _socket.on('video-answer', _handleAnswer);
     _socket.on('ice-candidate', _handleIce);
     _socket.on('ice-restart-request', _handleIceRestartRequest);
+    _socket.on('request-peer-rebuild', _handlePeerRebuildRequest);
     _socket.on('camera-state', _handleCameraState);
     _socket.on('peer-joined', _handlePeerJoined);
     _socket.on('participant-left', _handleParticipantLeft);
@@ -2247,6 +3148,7 @@ class VideoCallController extends ChangeNotifier {
     _socket.off('video-answer', _handleAnswer);
     _socket.off('ice-candidate', _handleIce);
     _socket.off('ice-restart-request', _handleIceRestartRequest);
+    _socket.off('request-peer-rebuild', _handlePeerRebuildRequest);
     _socket.off('camera-state', _handleCameraState);
     _socket.off('peer-joined', _handlePeerJoined);
     _socket.off('participant-left', _handleParticipantLeft);
@@ -2338,6 +3240,10 @@ class VideoCallController extends ChangeNotifier {
       'userId': activeUserId,
       'role': role,
       'token': token,
+      // Items 1-4 (listeners kept across rebuilds, offer stash, fingerprint
+      // rebuilds, request-peer-rebuild) are implemented — tell the server
+      // a peer doctor may use the request-peer-rebuild handshake with us.
+      'capabilities': {'peerRebuild': true},
     });
     _logEvent('appointment_room_join_requested', {'socketId': _socket.id});
   }
@@ -2524,6 +3430,14 @@ class VideoCallController extends ChangeNotifier {
   // it treat the new track as a genuine source change.
   Future<void> switchCamera() async {
     if (kIsWeb) return;
+    // Re-entrancy guard: a second tap landing before the first call's
+    // getUserMedia/replaceTrack sequence finishes would otherwise read the
+    // same stale oldTrack/isFrontCamera, race to replace the sender
+    // independently, and leak whichever track loses the race — see the
+    // switchCamera concurrency finding this guard fixes. Checked/set
+    // synchronously, before this call's first await, so no interleaving
+    // invocation can slip through.
+    if (_switchingCamera) return;
     final pc = _pc;
     final stream = _localStream;
     if (pc == null || stream == null) return;
@@ -2531,73 +3445,79 @@ class VideoCallController extends ChangeNotifier {
         stream.getVideoTracks().isNotEmpty ? stream.getVideoTracks().first : null;
     if (oldTrack == null) return;
 
+    _switchingCamera = true;
     try {
-      final cams = await Helper.cameras;
-      if (cams.length < 2) {
-        _showInlineMessage('No other camera is available on this device.');
-        return;
-      }
-    } catch (_) {
-      // Best-effort — if enumeration fails, fall through and let the
-      // getUserMedia call below be the source of truth.
-    }
-
-    final videoConstraints = Map<String, dynamic>.from(kMediaConstraints['video'] as Map);
-    videoConstraints['facingMode'] = isFrontCamera ? 'environment' : 'user';
-
-    MediaStream? newStream;
-    // True once newTrack has been committed to the outgoing sender — from
-    // that point on the peer is actively receiving it, so the failure
-    // cleanup below must never stop it (that would break their already-live
-    // video instead of just failing the switch); it only discards newTrack
-    // for a failure that happens before that commit point.
-    var committedToSender = false;
-    try {
-      newStream = await navigator.mediaDevices
-          .getUserMedia({'audio': false, 'video': videoConstraints});
-      final newTrack =
-          newStream.getVideoTracks().isNotEmpty ? newStream.getVideoTracks().first : null;
-      if (newTrack == null) throw 'no video track returned';
-
-      // The session moved on (disposed / peer connection or local stream
-      // replaced) while getUserMedia was in flight — discard the freshly
-      // captured track rather than attaching it to a stale session.
-      if (_disposed || _pc != pc || _localStream != stream) {
-        for (final t in newStream.getTracks()) {
-          await t.stop();
+      try {
+        final cams = await Helper.cameras;
+        if (cams.length < 2) {
+          _showInlineMessage('No other camera is available on this device.');
+          return;
         }
-        return;
+      } catch (_) {
+        // Best-effort — if enumeration fails, fall through and let the
+        // getUserMedia call below be the source of truth.
       }
 
-      final sender = await _getSenderForKind(pc, 'video');
-      if (sender != null) {
-        await sender.replaceTrack(newTrack);
-        committedToSender = true;
-        await _tuneSenderQuality(
-          sender,
-          maxBitrate: kCameraBitrate,
-          maxFramerate: 30,
-          maintainResolution: true,
-        );
-      }
+      final videoConstraints = Map<String, dynamic>.from(kMediaConstraints['video'] as Map);
+      videoConstraints['facingMode'] = isFrontCamera ? 'environment' : 'user';
 
-      newTrack.enabled = !isCamOff;
-      _attachLocalTrackEndedListener(newTrack);
-      await stream.removeTrack(oldTrack);
-      await stream.addTrack(newTrack);
-      await oldTrack.stop();
+      MediaStream? newStream;
+      // True once newTrack has been committed to the outgoing sender — from
+      // that point on the peer is actively receiving it, so the failure
+      // cleanup below must never stop it (that would break their already-live
+      // video instead of just failing the switch); it only discards newTrack
+      // for a failure that happens before that commit point.
+      var committedToSender = false;
+      try {
+        newStream = await navigator.mediaDevices
+            .getUserMedia({'audio': false, 'video': videoConstraints});
+        final newTrack =
+            newStream.getVideoTracks().isNotEmpty ? newStream.getVideoTracks().first : null;
+        if (newTrack == null) throw 'no video track returned';
 
-      isFrontCamera = !isFrontCamera;
-      _refreshLocalStreamBinding();
-      notifyListeners();
-    } catch (err) {
-      debugPrint('[video-call] switchCamera failed: $err');
-      if (newStream != null && !committedToSender) {
-        for (final t in newStream.getTracks()) {
-          await t.stop();
+        // The session moved on (disposed / peer connection or local stream
+        // replaced) while getUserMedia was in flight — discard the freshly
+        // captured track rather than attaching it to a stale session.
+        if (_disposed || _pc != pc || _localStream != stream) {
+          for (final t in newStream.getTracks()) {
+            await t.stop();
+          }
+          return;
         }
+
+        final transceiver = await _getTransceiverForKind(pc, 'video');
+        final sender = transceiver?.sender;
+        if (sender != null) {
+          await sender.replaceTrack(newTrack);
+          committedToSender = true;
+          await _tuneSenderQuality(
+            sender,
+            maxBitrate: kCameraBitrate,
+            maxFramerate: 30,
+            maintainResolution: true,
+          );
+        }
+
+        newTrack.enabled = !isCamOff;
+        _attachLocalTrackEndedListener(newTrack);
+        await stream.removeTrack(oldTrack);
+        await stream.addTrack(newTrack);
+        await oldTrack.stop();
+
+        isFrontCamera = !isFrontCamera;
+        _refreshLocalStreamBinding();
+        notifyListeners();
+      } catch (err) {
+        debugPrint('[video-call] switchCamera failed: $err');
+        if (newStream != null && !committedToSender) {
+          for (final t in newStream.getTracks()) {
+            await t.stop();
+          }
+        }
+        _showInlineMessage('Could not switch camera on this device.');
       }
-      _showInlineMessage('Could not switch camera on this device.');
+    } finally {
+      _switchingCamera = false;
     }
   }
 
@@ -2709,8 +3629,11 @@ class VideoCallController extends ChangeNotifier {
   // Call lifecycle: leave / complete / cleanup
   // ─────────────────────────────────────────────────────────────────────
 
-  Future<void> _teardownSession({bool leaveRoom = true}) async {
-    _unregisterSocketListeners();
+  Future<void> _teardownSession({bool leaveRoom = true, bool keepListeners = false}) async {
+    // A rebuild keeps the listeners registered — unregistering them left a
+    // "deaf window" in which an offer from the peer's own rebuild was dropped.
+    if (!keepListeners) _unregisterSocketListeners();
+    _lastRemoteFingerprint = null;
     _callTimer?.cancel();
     _callTimer = null;
     _heartbeatTimer?.cancel();
@@ -2731,10 +3654,20 @@ class VideoCallController extends ChangeNotifier {
     }
 
     final pc = _pc;
+    // TEMPORARY (RETRY_DEBUG)
+    if (pc != null) {
+      retryDebugLog(isDoctor, appointmentId, '_teardownSession:closing_pc', {
+        'connectionState': pc.connectionState?.toString(),
+        'iceConnectionState': pc.iceConnectionState?.toString(),
+        'signalingState': pc.signalingState?.toString(),
+        'pcAgeMs': DateTime.now().difference(_pcCreatedAt).inMilliseconds,
+      });
+    }
     _pc = null;
     await pc?.close();
 
     await CallForegroundService.stop();
+    _foregroundServiceStarted = false;
 
     _pendingRemoteCandidates.clear();
     _joinedSocketId = '';
@@ -2767,6 +3700,7 @@ class VideoCallController extends ChangeNotifier {
     isFrontCamera = true;
     camError = false;
     camErrorReason = '';
+    camPermissionPermanentlyDenied = false;
     deviceCheckStatus = 'idle';
     connectionState = 'idle';
     _iceRecoveryAttempts = 0;
@@ -2787,6 +3721,8 @@ class VideoCallController extends ChangeNotifier {
     _completedFlag = true;
 
     await _teardownSession(leaveRoom: emitLeave);
+    _pendingRemoteOffer = null;
+    _pendingRemoteOfferAt = null;
 
     final tracks = _localStream?.getTracks() ?? const [];
     for (final t in tracks) {

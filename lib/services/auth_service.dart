@@ -101,6 +101,8 @@ class AuthService {
     required String dob,
     required String gender,
     required String country,
+    required String state,
+    required String city,
     required String password,
     required bool privacyConsent,
     required bool hipaaConsent,
@@ -117,6 +119,8 @@ class AuthService {
       if (mobile.trim().isNotEmpty) 'mobile': mobile.trim(),
       if (gender.trim().isNotEmpty) 'gender': gender.trim(),
       if (country.trim().isNotEmpty) 'country': country.trim(),
+      if (state.trim().isNotEmpty) 'state': state.trim(),
+      if (city.trim().isNotEmpty) 'city': city.trim(),
     });
 
     return _authResult(
@@ -358,6 +362,22 @@ class AuthService {
       final accessToken = authorization.accessToken;
 
       return googleLoginWithAccessToken(accessToken);
+    } on GoogleSignInException catch (error, stackTrace) {
+      // Diagnostic-only: surfaces the typed fields GoogleSignInException
+      // carries (code/description/details) that get flattened away in the
+      // generic catch below's `$error` interpolation, so the Cloud
+      // Console-side misconfiguration this code points at (wrong GCP
+      // project, unregistered SHA-1, etc.) can be identified from the
+      // debug console without changing what's returned to the caller.
+      debugPrint('Google Sign-In failed: code=${error.code}');
+      debugPrint('Google Sign-In failed: description=${error.description}');
+      debugPrint('Google Sign-In failed: details=${error.details}');
+      debugPrint('Google Sign-In failed: $error');
+      debugPrint('$stackTrace');
+      return GoogleAuthResult(
+        success: false,
+        message: 'Google Sign-In failed: ${_googleErrorMessage(error)}',
+      );
     } catch (error, stackTrace) {
       debugPrint('Google Sign-In failed: $error');
       debugPrint('$stackTrace');

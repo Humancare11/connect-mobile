@@ -676,12 +676,22 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
             ),
             const SizedBox(width: 10),
             GestureDetector(
-              onTap: _controller.retryingMedia ? null : () => unawaited(_controller.retryMediaPermissions()),
+              // A permanently-denied ("don't ask again") permission can't be
+              // re-prompted by another getUserMedia call — Retry would just
+              // fail identically forever, so send the user to Settings
+              // instead once that state is detected.
+              onTap: _controller.camPermissionPermanentlyDenied
+                  ? () => unawaited(_controller.openPermissionSettings())
+                  : (_controller.retryingMedia
+                        ? null
+                        : () => unawaited(_controller.retryMediaPermissions())),
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(6)),
                 child: Text(
-                  _controller.retryingMedia ? 'Retrying...' : 'Retry',
+                  _controller.camPermissionPermanentlyDenied
+                      ? 'Open Settings'
+                      : (_controller.retryingMedia ? 'Retrying...' : 'Retry'),
                   style: _sora(size: 12, weight: FontWeight.w700, color: _C.toastText),
                 ),
               ),
@@ -899,7 +909,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
           Positioned.fill(
             child: RTCVideoView(
               _controller.mainRenderer,
-              mirror: _controller.isSwapped,
+              // Only mirror the tile currently showing the local stream, and
+              // only while the front (selfie) camera is active — mirroring
+              // the rear camera's feed would show it backwards.
+              mirror: _controller.isSwapped && _controller.isFrontCamera,
               objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
             ),
           ),
@@ -1102,7 +1115,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
             padding: const EdgeInsets.symmetric(horizontal: 24),
             child: Text(
               _controller.camError && !_controller.peerJoined
-                  ? 'Allow camera and microphone access below, then tap Retry to join.'
+                  ? (_controller.camPermissionPermanentlyDenied
+                        ? 'Camera/microphone access is blocked. Tap Open Settings below to allow it, then return here.'
+                        : 'Allow camera and microphone access below, then tap Retry to join.')
                   : _controller.peerJoined
                       ? (_controller.hasConnectedOnce
                             ? 'Restoring your connection to the call.'
@@ -1171,7 +1186,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
                 borderRadius: BorderRadius.circular(12),
                 child: RTCVideoView(
                   _controller.pipRenderer,
-                  mirror: !_controller.isSwapped,
+                  mirror: !_controller.isSwapped && _controller.isFrontCamera,
                   objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
                 ),
               ),
@@ -1609,6 +1624,15 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
                 setSheetState(() {});
               },
             ),
+            if (_controller.supportsCameraSwitch)
+              _moreOptionRow(
+                icon: Icons.cameraswitch_outlined,
+                label: 'Switch Camera',
+                onTap: () async {
+                  await _controller.switchCamera();
+                  setSheetState(() {});
+                },
+              ),
             if (_controller.inCall)
               Padding(
                 padding: const EdgeInsets.only(top: 10),

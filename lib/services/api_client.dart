@@ -581,7 +581,9 @@ class ApiClient {
         final normalizedKey = key.toString().toLowerCase();
         if (normalizedKey.contains('token') ||
             normalizedKey.contains('secret') ||
-            normalizedKey == 'authorization') {
+            normalizedKey == 'authorization' ||
+            normalizedKey.contains('password') ||
+            normalizedKey.contains('otp')) {
           return MapEntry(key.toString(), _redactSecretValue(mapValue));
         }
 
