@@ -3533,6 +3533,7 @@ class VideoCallController extends ChangeNotifier {
     if (oldTrack == null) return;
 
     _switchingCamera = true;
+    await _camSnapshot('1 start (old track)', oldTrack);
     try {
       try {
         final cams = await Helper.cameras;
@@ -3561,6 +3562,7 @@ class VideoCallController extends ChangeNotifier {
         final newTrack =
             newStream.getVideoTracks().isNotEmpty ? newStream.getVideoTracks().first : null;
         if (newTrack == null) throw 'no video track returned';
+        await _camSnapshot('2 new track created (before replaceTrack)', newTrack);
 
         // The session moved on (disposed / peer connection or local stream
         // replaced) while getUserMedia was in flight — discard the freshly
@@ -3584,6 +3586,7 @@ class VideoCallController extends ChangeNotifier {
             maintainResolution: true,
           );
         }
+        await _camSnapshot('3 after replaceTrack (sender=${sender != null})', newTrack);
 
         newTrack.enabled = !isCamOff;
         _attachLocalTrackEndedListener(newTrack);
@@ -3599,9 +3602,13 @@ class VideoCallController extends ChangeNotifier {
         // (or unless) that racy re-bind landed, which is the frozen self
         // preview after a flip. Awaited and track-specific instead.
         isFrontCamera = !isFrontCamera;
+        _camWatchRenderer();
         await _bindLocalPreviewTo(stream, newTrack);
+        await _camSnapshot('4 after preview rebind (old track still running)', newTrack);
         await oldTrack.stop();
+        await _camSnapshot('5 after old track stopped', newTrack);
         notifyListeners();
+        unawaited(_camDelayedChecks(pc, newTrack));
       } catch (err) {
         debugPrint('[video-call] switchCamera failed: $err');
         if (newStream != null && !committedToSender) {
@@ -3613,6 +3620,76 @@ class VideoCallController extends ChangeNotifier {
       }
     } finally {
       _switchingCamera = false;
+    }
+  }
+
+  // ── TEMPORARY [CAM-SWITCH] diagnostics (debug builds only) ─────────────
+  void _camLog(String msg) {
+    if (kDebugMode) debugPrint('[CAM-SWITCH] $msg');
+  }
+
+  Future<void> _camSnapshot(String phase, MediaStreamTrack? track) async {
+    if (!kDebugMode) return;
+    try {
+      final r = isSwapped ? mainRenderer : pipRenderer;
+      Object? settings;
+      try {
+        settings = track?.getSettings();
+      } catch (e) {
+        settings = 'n/a($e)';
+      }
+      _camLog(
+        '$phase | localView=${isSwapped ? "main" : "pip"} front=$isFrontCamera '
+        'track=${track?.id} enabled=${track?.enabled} muted=${track?.muted} '
+        'settings=$settings | renderer.srcObject=${r.srcObject?.id} '
+        'texture=${r.textureId} size=${r.value.width}x${r.value.height} '
+        'renderVideo=${r.renderVideo}',
+      );
+    } catch (e) {
+      _camLog('$phase snapshot failed: $e');
+    }
+  }
+
+  // Logs renderer events for the local preview while a switch settles.
+  void _camWatchRenderer() {
+    if (!kDebugMode) return;
+    final r = isSwapped ? mainRenderer : pipRenderer;
+    final started = DateTime.now();
+    int ms() => DateTime.now().difference(started).inMilliseconds;
+    r.onFirstFrameRendered = () => _camLog('renderer onFirstFrameRendered +${ms()}ms');
+    r.onResize = () =>
+        _camLog('renderer onResize +${ms()}ms size=${r.value.width}x${r.value.height} rot=${r.value.rotation}');
+    Future.delayed(const Duration(seconds: 5), () {
+      r.onFirstFrameRendered = null;
+      r.onResize = null;
+    });
+  }
+
+  // After 1s and 3s: is the NEW track producing frames (outbound stats) and
+  // is the local renderer still alive? If framesEncoded keeps growing but the
+  // renderer never reports frames, the freeze is in the renderer/texture; if
+  // framesEncoded is flat, the new capture session itself is not running.
+  Future<void> _camDelayedChecks(RTCPeerConnection pc, MediaStreamTrack track) async {
+    if (!kDebugMode) return;
+    for (final secs in const [1, 3]) {
+      await Future.delayed(Duration(seconds: secs == 1 ? 1 : 2));
+      if (_disposed) return;
+      await _camSnapshot('6 +${secs}s', track);
+      try {
+        final reports = await pc.getStats(track);
+        for (final rep in reports) {
+          if (rep.type == 'outbound-rtp' && rep.values['kind'] == 'video') {
+            _camLog(
+              '+${secs}s outbound video framesEncoded=${rep.values['framesEncoded']} '
+              'framesSent=${rep.values['framesSent']} '
+              '${rep.values['frameWidth']}x${rep.values['frameHeight']} '
+              'fps=${rep.values['framesPerSecond']}',
+            );
+          }
+        }
+      } catch (e) {
+        _camLog('+${secs}s getStats failed: $e');
+      }
     }
   }
 
