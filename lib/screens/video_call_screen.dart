@@ -959,6 +959,23 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
                 ),
               )),
             ),
+          // The peer's socket dropped but they haven't been declared gone
+          // (participant-left) yet — this side's own connection is fine, so
+          // don't show the "Retry" banner, which would misleadingly suggest
+          // OUR connection needs fixing. Takes a back seat to reconnectStalled
+          // itself (mutually exclusive in the controller already, but kept
+          // explicit here) since a real problem on this side should always
+          // win the banner.
+          if (_controller.waitingForPeerSocket && !_controller.reconnectStalled)
+            Positioned(
+              bottom: 118,
+              left: 16,
+              right: 16,
+              child: Center(child: _pillNotice(
+                icon: Icons.autorenew,
+                text: 'Waiting for the other person to reconnect…',
+              )),
+            ),
           if (_controller.peerLeft)
             Positioned(
               bottom: 62,

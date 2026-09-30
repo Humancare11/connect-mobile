@@ -103,6 +103,29 @@ const int kMaxReconnectStallRetries = 3;
 // slightly higher than the React side's threshold for that reason. Mirrors
 // VideoCall.jsx's AUTH_REFRESH_FAILURE_THRESHOLD.
 const int kAuthRefreshFailureThreshold = 3;
+// ── Inbound-media watchdog ───────────────────────────────────────────────
+// A pc can read "connected" while inbound media has silently stopped, or sit
+// in new/connecting without ever firing a state-change event — mirrors
+// VideoCall.jsx's identically-named constants.
+const int kMediaWatchdogIntervalMs = 5000;
+const int kMediaStallNeverConnectedMs = 10000;
+// Two consecutive stalled samples before acting — a single bad sample is too
+// easy to hit on an otherwise-healthy link (mirrors the patient's stricter
+// threshold on the web side; this app has no doctor/patient asymmetry here).
+const int kMediaStallRequiredSamples = 2;
+// Quiet period after a watchdog-triggered rebuild — a fresh pc needs real
+// time to reconnect and start producing inbound media again before the
+// watchdog is allowed to judge it stalled a second time.
+const int kMediaStallCooldownMs = 25000;
+const int kAutoRebuildMaxCount = 3;
+const int kAutoRebuildWindowMs = 60000;
+// How long "waiting for the other person to reconnect" is shown (driven by
+// the server's peer-socket-down/peer-socket-up events) before falling back
+// to the ordinary manual Retry banner. Slightly past the server's own
+// SOCKET_LEAVE_GRACE_MS (30s): normally participant-left arrives first and
+// supersedes this with the "peer left" UI — this timer is just a safety net
+// for the rare case that event is delayed or dropped.
+const int kWaitingForPeerSocketTimeoutMs = 40000;
 const int kChatSendCooldownMs = 300;
 const int kPeerJoinTimeoutMs = 20000;
 const int kMediaAcquireTimeoutMs = 20000;
@@ -522,6 +545,21 @@ class VideoCallController extends ChangeNotifier {
   // kAuthRefreshFailureThreshold and _markInCall.
   int _authRefreshFailureCount = 0;
   Timer? _statsTimer;
+  // Inbound-media watchdog (kMediaWatchdogIntervalMs et al.) — see
+  // _startMediaWatchdog. Runs from pc creation, independent of _statsTimer
+  // (which only starts once connected).
+  Timer? _mediaWatchdogTimer;
+  Map<String, num?>? _mediaWatchdogPrev;
+  int _mediaWatchdogStallCount = 0;
+  bool _mediaWatchdogBusy = false;
+  DateTime _mediaStallCooldownUntil = DateTime.fromMillisecondsSinceEpoch(0);
+  final List<DateTime> _autoRebuildTimestamps = [];
+  // True when the peer's socket dropped (peer-socket-down) and hasn't come
+  // back yet (peer-socket-up) or timed out into a real participant-left —
+  // drives a "waiting for the other person to reconnect" message instead of
+  // the manual Retry banner, since this side's own connection is fine.
+  bool waitingForPeerSocket = false;
+  Timer? _waitingForPeerSocketTimer;
   bool isReady = false;
   bool peerJoined = false;
   bool peerLeft = false;
@@ -1001,6 +1039,7 @@ class VideoCallController extends ChangeNotifier {
     }
     _pc = pc;
     _pcCreatedAt = DateTime.now();
+    _startMediaWatchdog(pc);
     // TEMPORARY (RETRY_DEBUG)
     retryDebugLog(isDoctor, appointmentId, 'startCallSession:new_pc_created', {
       'reconnectInProgress': reconnectInProgress,
@@ -2849,6 +2888,7 @@ class VideoCallController extends ChangeNotifier {
   void _handlePeerJoined(dynamic raw) {
     if (_disposed) return;
     _clearJoinTimeout();
+    _clearWaitingForPeerSocket();
     final data = _toMap(raw);
     final resumedCall = data?['resumedCall'] == true;
     _logEvent('peer_joined', {'resumedCall': resumedCall, 'isReady': isReady});
@@ -2951,6 +2991,49 @@ class VideoCallController extends ChangeNotifier {
     peerCameraOff = false;
     notifyListeners();
     _clearReconnectStallWatch();
+    // The peer is confirmedly gone (not just their socket) — the ordinary
+    // "peer left" UI (peerLeft) takes over from here, not the "waiting"
+    // banner this was standing in for.
+    _clearWaitingForPeerSocket();
+  }
+
+  void _clearWaitingForPeerSocket() {
+    _waitingForPeerSocketTimer?.cancel();
+    _waitingForPeerSocketTimer = null;
+    if (!waitingForPeerSocket) return;
+    waitingForPeerSocket = false;
+    notifyListeners();
+  }
+
+  /// The peer's socket just dropped (server-side "disconnect", before its own
+  /// SOCKET_LEAVE_GRACE_MS grace period decides whether to declare them gone
+  /// via participant-left). This side's own connection is fine — show
+  /// "waiting for the other person to reconnect" instead of treating it as
+  /// our own reconnect trouble. See _handlePeerSocketUp/_handleParticipantLeft
+  /// for how this resolves, and kWaitingForPeerSocketTimeoutMs for the
+  /// fallback if neither arrives.
+  void _handlePeerSocketDown(dynamic _) {
+    if (_disposed || _completedFlag || peerLeft) return;
+    retryDebugLog(isDoctor, appointmentId, 'peer-socket-down:RECEIVED', {});
+    waitingForPeerSocket = true;
+    notifyListeners();
+    _waitingForPeerSocketTimer?.cancel();
+    _waitingForPeerSocketTimer = Timer(
+      const Duration(milliseconds: kWaitingForPeerSocketTimeoutMs),
+      () {
+        if (_disposed || !waitingForPeerSocket) return;
+        waitingForPeerSocket = false;
+        reconnectStalled = true;
+        notifyListeners();
+      },
+    );
+  }
+
+  /// The same peer whose socket dropped has rejoined the room.
+  void _handlePeerSocketUp(dynamic _) {
+    if (_disposed) return;
+    retryDebugLog(isDoctor, appointmentId, 'peer-socket-up:RECEIVED', {});
+    _clearWaitingForPeerSocket();
   }
 
   void _handleChatMessage(dynamic raw) {
@@ -3130,6 +3213,8 @@ class VideoCallController extends ChangeNotifier {
     _socket.on('camera-state', _handleCameraState);
     _socket.on('peer-joined', _handlePeerJoined);
     _socket.on('participant-left', _handleParticipantLeft);
+    _socket.on('peer-socket-down', _handlePeerSocketDown);
+    _socket.on('peer-socket-up', _handlePeerSocketUp);
     _socket.on('appointment-message', _handleChatMessage);
     _socket.on('appointment-chat-history', _handleChatHistory);
     _socket.on('appointment-updated', _handleApptUpdated);
@@ -3152,6 +3237,8 @@ class VideoCallController extends ChangeNotifier {
     _socket.off('camera-state', _handleCameraState);
     _socket.off('peer-joined', _handlePeerJoined);
     _socket.off('participant-left', _handleParticipantLeft);
+    _socket.off('peer-socket-down', _handlePeerSocketDown);
+    _socket.off('peer-socket-up', _handlePeerSocketUp);
     _socket.off('appointment-message', _handleChatMessage);
     _socket.off('appointment-chat-history', _handleChatHistory);
     _socket.off('appointment-updated', _handleApptUpdated);
@@ -3648,6 +3735,10 @@ class VideoCallController extends ChangeNotifier {
     _reconnectStallTimer = null;
     _clearJoinTimeout();
     _stopStatsCollection();
+    _stopMediaWatchdog();
+    _waitingForPeerSocketTimer?.cancel();
+    _waitingForPeerSocketTimer = null;
+    waitingForPeerSocket = false;
 
     if (leaveRoom && _joinedSocketId.isNotEmpty && _socket.connected) {
       _socket.emit('leave-appointment-room', {'appointmentId': appointmentId});
@@ -3775,6 +3866,144 @@ class VideoCallController extends ChangeNotifier {
     _statsTimer = null;
     _lastStatsSample = null;
     connectionQuality = 'unknown';
+  }
+
+  void _stopMediaWatchdog() {
+    _mediaWatchdogTimer?.cancel();
+    _mediaWatchdogTimer = null;
+    _mediaWatchdogPrev = null;
+    _mediaWatchdogStallCount = 0;
+  }
+
+  /// A pc can read "connected" while inbound media has silently stopped, or
+  /// sit in new/connecting without ever firing a state-change event. Runs on
+  /// its own kMediaWatchdogIntervalMs tick from pc creation — independent of
+  /// _startStatsCollection, which only starts once actually connected.
+  /// Mirrors VideoCall.jsx's mediaWatchdogTimer.
+  void _startMediaWatchdog(RTCPeerConnection pc) {
+    _stopMediaWatchdog();
+    _mediaWatchdogTimer = Timer.periodic(
+      const Duration(milliseconds: kMediaWatchdogIntervalMs),
+      (_) async {
+        if (_disposed || _completedFlag || _pc != pc || _mediaWatchdogBusy) {
+          return;
+        }
+        if (pc.signalingState == RTCSignalingState.RTCSignalingStateClosed) {
+          _stopMediaWatchdog();
+          return;
+        }
+        if (!peerJoined || !isReady) {
+          _mediaWatchdogPrev = null;
+          _mediaWatchdogStallCount = 0;
+          return;
+        }
+        _mediaWatchdogBusy = true;
+        try {
+          final reports = await pc.getStats();
+          if (_disposed || _pc != pc) return;
+
+          num? videoBytes;
+          num? videoFrames;
+          num? audioBytes;
+          for (final report in reports) {
+            if (report.type != 'inbound-rtp') continue;
+            final kind = report.values['kind'] ?? report.values['mediaType'];
+            if (kind == 'video') {
+              final b = report.values['bytesReceived'];
+              if (b is num) videoBytes = b;
+              final f = report.values['framesDecoded'];
+              if (f is num) videoFrames = f;
+            } else if (kind == 'audio') {
+              final b = report.values['bytesReceived'];
+              if (b is num) audioBytes = b;
+            }
+          }
+
+          final prev = _mediaWatchdogPrev;
+          _mediaWatchdogPrev = {
+            'videoBytes': videoBytes,
+            'videoFrames': videoFrames,
+            'audioBytes': audioBytes,
+          };
+          if (prev == null) return; // first sample — nothing to diff yet
+
+          // Missing data on either side of the comparison is inconclusive,
+          // not a stall — a stat field flutter_webrtc doesn't populate on
+          // some device/OS combos must never by itself trigger a rebuild.
+          bool grew(num? now, num? before) {
+            if (now == null || before == null) return true;
+            return now > before;
+          }
+
+          final audioGrew = grew(audioBytes, prev['audioBytes']);
+          final videoGrew = grew(videoBytes, prev['videoBytes']) ||
+              grew(videoFrames, prev['videoFrames']);
+          if (audioGrew || videoGrew) {
+            _mediaWatchdogStallCount = 0;
+            _clearWaitingForPeerSocket();
+            return;
+          }
+
+          final pcAgeMs = DateTime.now().difference(_pcCreatedAt).inMilliseconds;
+          final connected = _isConnectedState(pc);
+          final neverConnected = !connected &&
+              (pc.connectionState ==
+                      RTCPeerConnectionState.RTCPeerConnectionStateNew ||
+                  pc.connectionState ==
+                      RTCPeerConnectionState.RTCPeerConnectionStateConnecting) &&
+              pcAgeMs > kMediaStallNeverConnectedMs;
+          final connectedButSilent = connected && !peerCameraOff;
+          if (!neverConnected && !connectedButSilent) {
+            _mediaWatchdogStallCount = 0;
+            return;
+          }
+          if (DateTime.now().isBefore(_mediaStallCooldownUntil)) {
+            _mediaWatchdogStallCount = 0;
+            return;
+          }
+
+          _mediaWatchdogStallCount += 1;
+          retryDebugLog(isDoctor, appointmentId, 'mediaWatchdog:sample', {
+            'neverConnected': neverConnected,
+            'connectedButSilent': connectedButSilent,
+            'peerCameraOff': peerCameraOff,
+            'connectionState': pc.connectionState?.toString(),
+            'pcAgeMs': pcAgeMs,
+            'consecutiveCount': _mediaWatchdogStallCount,
+          });
+          if (_mediaWatchdogStallCount < kMediaStallRequiredSamples) return;
+          _mediaWatchdogStallCount = 0;
+          _mediaStallCooldownUntil =
+              DateTime.now().add(const Duration(milliseconds: kMediaStallCooldownMs));
+
+          final now = DateTime.now();
+          _autoRebuildTimestamps.removeWhere(
+            (t) => now.difference(t).inMilliseconds >= kAutoRebuildWindowMs,
+          );
+          if (_autoRebuildTimestamps.length >= kAutoRebuildMaxCount) {
+            retryDebugLog(isDoctor, appointmentId, 'mediaWatchdog:BLOCKED_rate_limit', {
+              'recentCount': _autoRebuildTimestamps.length,
+              'windowMs': kAutoRebuildWindowMs,
+            });
+            // Stop auto-rebuilding and fall back to the existing manual-Retry
+            // banner rather than looping forever.
+            reconnectStalled = true;
+            notifyListeners();
+            return;
+          }
+          _autoRebuildTimestamps.add(now);
+
+          final reason = neverConnected ? 'media_never_connected' : 'media_stall';
+          retryDebugLog(isDoctor, appointmentId, 'mediaWatchdog:TRIGGERING_rebuild', {'reason': reason});
+          _logEvent('media_stall_detected', {'reason': reason, 'pcAgeMs': pcAgeMs});
+          unawaited(_rebuildPc(reason));
+        } catch (err) {
+          debugPrint('[video-call] media watchdog getStats failed: $err');
+        } finally {
+          _mediaWatchdogBusy = false;
+        }
+      },
+    );
   }
 
   void _startStatsCollection(RTCPeerConnection pc) {
