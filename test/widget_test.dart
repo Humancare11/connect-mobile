@@ -41,6 +41,10 @@ void main() {
       MaterialApp(home: AccountScreen(authRepository: authRepository)),
     );
 
+    // The tile sits at the bottom of a ListView, off-screen in the default
+    // test viewport.
+    await tester.ensureVisible(find.text('Log Out'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Log Out'));
     await tester.pumpAndSettle();
 

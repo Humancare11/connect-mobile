@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
@@ -71,7 +73,7 @@ String _guessContentType(String fileName) {
 final TokenStorageService _tokenStorage = const TokenStorageService();
 
 Future<UploadCandidate?> pickFileForUpload() async {
-  final result = await FilePicker.platform.pickFiles(withData: true);
+  final result = await FilePicker.platform.pickFiles(withData: kIsWeb);
   final file = result?.files.single;
   if (file == null) return null;
 
@@ -86,7 +88,8 @@ Future<UploadCandidate?> pickFileForUpload() async {
 /// the web version's `<input type="file" multiple accept="...">`.
 Future<List<UploadCandidate>> pickFilesForUpload() async {
   final result = await FilePicker.platform.pickFiles(
-    withData: true,
+    // Mobile streams from the file path; only web has no path to read.
+    withData: kIsWeb,
     allowMultiple: true,
     type: FileType.custom,
     allowedExtensions: bookingUploadExtensions,
@@ -110,11 +113,14 @@ Future<List<UploadCandidate>> pickFilesForUpload() async {
 /// the web version) — only the S3 PUT is allowed to fall back.
 Future<UploadedFile> uploadFileDirectToS3(UploadCandidate file) async {
   if (file.sizeBytes > _maxUploadBytes) {
-    throw Exception('Max 10 MB per file.');
+    throw Exception(
+      '"${file.name}" is larger than 10 MB. Please choose a smaller file.',
+    );
   }
 
+  final path = kIsWeb ? null : file.platformFile.path;
   final bytes = file.platformFile.bytes;
-  if (bytes == null) {
+  if (path == null && bytes == null) {
     throw Exception('Could not read the selected file.');
   }
 
@@ -142,9 +148,26 @@ Future<UploadedFile> uploadFileDirectToS3(UploadCandidate file) async {
       });
     }
 
-    final putResponse = await http
-        .put(Uri.parse(uploadUrl), headers: headers, body: bytes)
-        .timeout(const Duration(seconds: 60));
+    final http.Response putResponse;
+    if (path != null) {
+      // Stream from disk so the whole file is never held in memory.
+      final putRequest = http.StreamedRequest('PUT', Uri.parse(uploadUrl))
+        ..headers.addAll(headers)
+        ..contentLength = file.sizeBytes;
+      File(path).openRead().listen(
+        putRequest.sink.add,
+        onError: putRequest.sink.addError,
+        onDone: putRequest.sink.close,
+        cancelOnError: true,
+      );
+      putResponse = await http.Response.fromStream(
+        await putRequest.send().timeout(const Duration(seconds: 60)),
+      );
+    } else {
+      putResponse = await http
+          .put(Uri.parse(uploadUrl), headers: headers, body: bytes)
+          .timeout(const Duration(seconds: 60));
+    }
 
     if (putResponse.statusCode < 200 || putResponse.statusCode >= 300) {
       throw Exception('Upload to S3 failed.');
@@ -166,13 +189,14 @@ Future<UploadedFile> uploadFileDirectToS3(UploadCandidate file) async {
       sizeBytes: file.sizeBytes,
     );
   } catch (_) {
-    return _uploadViaMultipartFallback(file, bytes, contentType);
+    return _uploadViaMultipartFallback(file, path, bytes, contentType);
   }
 }
 
 Future<UploadedFile> _uploadViaMultipartFallback(
   UploadCandidate file,
-  Uint8List bytes,
+  String? path,
+  Uint8List? bytes,
   String contentType,
 ) async {
   final token = await _tokenStorage.getToken() ?? '';
@@ -184,7 +208,9 @@ Future<UploadedFile> _uploadViaMultipartFallback(
       if (token.isNotEmpty) 'Authorization': 'Bearer $token',
     })
     ..files.add(
-      http.MultipartFile.fromBytes('file', bytes, filename: file.name),
+      path != null
+          ? await http.MultipartFile.fromPath('file', path, filename: file.name)
+          : http.MultipartFile.fromBytes('file', bytes!, filename: file.name),
     );
 
   final streamedResponse = await request.send().timeout(

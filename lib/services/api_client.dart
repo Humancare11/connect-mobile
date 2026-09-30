@@ -111,9 +111,7 @@ class ApiClient {
       }
       _log('GET $uri');
 
-      final response = await _client
-          .get(uri, headers: headers)
-          .timeout(const Duration(seconds: 30));
+      final response = await _getWithRetry(uri, headers);
 
       return await _handleResponse(
         'GET',
@@ -132,6 +130,31 @@ class ApiClient {
       if (!silent) LoadingService.instance.hide();
     }
   }
+
+  /// GETs are idempotent, so a timeout or socket failure is retried up to
+  /// [_maxGetRetries] times with a short backoff. POST/PUT/PATCH are never
+  /// retried — a repeated write could be applied twice.
+  Future<http.Response> _getWithRetry(
+    Uri uri,
+    Map<String, String> headers,
+  ) async {
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await _client
+            .get(uri, headers: headers)
+            .timeout(const Duration(seconds: 30));
+      } on TimeoutException catch (error) {
+        if (attempt >= _maxGetRetries) rethrow;
+        _log('GET $uri retry ${attempt + 1} after: $error');
+      } on SocketException catch (error) {
+        if (attempt >= _maxGetRetries) rethrow;
+        _log('GET $uri retry ${attempt + 1} after: $error');
+      }
+      await Future<void>.delayed(Duration(milliseconds: 500 * (attempt + 1)));
+    }
+  }
+
+  static const int _maxGetRetries = 2;
 
   Future<ApiResult<Map<String, dynamic>>> put(
     String path,
@@ -416,17 +439,12 @@ class ApiClient {
   }
 
   String _unexpectedResponseMessage(http.Response response) {
-    final contentType = response.headers['content-type']?.toLowerCase() ?? '';
-    final body = response.body.toLowerCase();
-
-    if (response.statusCode == 405 ||
-        contentType.contains('text/html') ||
-        body.contains('<html')) {
-      return 'The API is not returning backend JSON. Please check server '
-          'routing for /api on ${ApiConfig.baseUrl}.';
-    }
-
-    return 'Unexpected response from the server (${response.statusCode}).';
+    _log(
+      'Unexpected response: status=${response.statusCode} '
+      'content-type=${response.headers['content-type']} '
+      'base=${ApiConfig.baseUrl}',
+    );
+    return 'Something went wrong on our side. Please try again later.';
   }
 
   /// Maps a thrown exception (connectivity, timeout, TLS, etc.) into a
@@ -447,67 +465,24 @@ class ApiClient {
     );
   }
 
+  // User-facing text stays generic; the underlying cause is logged by
+  // [_handleError] (debug builds only).
   String _friendlyErrorMessage(Object error) {
     if (error is TimeoutException) {
-      return 'The server took too long to respond. Please check your '
+      return 'The server took too long to respond. Please try again.';
+    }
+
+    if (error is SocketException || error is http.ClientException) {
+      return 'Cannot connect right now. Please check your internet '
           'connection and try again.';
     }
 
-    if (error is SocketException) {
-      final detail = '${error.message} ${error.osError?.message ?? ''}'
-          .toLowerCase();
-      if (error.osError?.errorCode == 7 ||
-          detail.contains('failed host lookup') ||
-          detail.contains('no address associated with hostname')) {
-        return 'Cannot reach the server. Please check your internet '
-            'connection (DNS lookup failed).';
-      }
-      if (detail.contains('connection refused')) {
-        return 'The API server refused the connection at ${ApiConfig.baseUrl}.';
-      }
-      if (detail.contains('network is unreachable') ||
-          detail.contains('no route to host')) {
-        return 'Cannot reach the API server at ${ApiConfig.baseUrl}. Please '
-            'check this device\'s network access.';
-      }
-      return 'Unable to connect to ${ApiConfig.baseUrl}. Please check that '
-          'the API host is reachable from this device.';
-    }
-
     if (error is HandshakeException || error is TlsException) {
-      return 'Secure connection to the server failed. Please try again.';
-    }
-
-    if (error is http.ClientException) {
-      final detail = error.message.toLowerCase();
-      if (detail.contains('failed host lookup') ||
-          detail.contains('no address associated with hostname')) {
-        return 'Cannot reach the server. Please check your internet '
-            'connection (DNS lookup failed).';
-      }
-      if (detail.contains('connection closed') ||
-          detail.contains('connection reset')) {
-        return 'The connection to the server was interrupted. Please try '
-            'again.';
-      }
-      if (kIsWeb) {
-        // On Flutter web every network/CORS failure surfaces as an opaque
-        // ClientException with no detail. The production API only sends
-        // Access-Control-Allow-Origin for its own domain, so a browser build
-        // served from any other origin (e.g. `flutter run -d chrome` on
-        // localhost) is blocked before the request completes. Native
-        // Android/iOS builds send no Origin header and are unaffected.
-        return 'Could not reach ${ApiConfig.baseUrl} from this web build. '
-            'The API only accepts browser requests from its own domain — '
-            'run the app on an Android/iOS device or emulator instead.';
-      }
-      return 'Unable to connect to ${ApiConfig.baseUrl}. Please check that '
-          'the API host is reachable from this device.';
+      return 'A secure connection could not be established. Please try again.';
     }
 
     if (error is StateError) {
-      // e.g. API_BASE_URL missing from .env
-      return 'App is not configured correctly. Please contact support.';
+      return 'The app is not configured correctly. Please contact support.';
     }
 
     return 'Something went wrong. Please try again.';
