@@ -3589,10 +3589,18 @@ class VideoCallController extends ChangeNotifier {
         _attachLocalTrackEndedListener(newTrack);
         await stream.removeTrack(oldTrack);
         await stream.addTrack(newTrack);
-        await oldTrack.stop();
 
+        // Point the self-view at the NEW track before the old one is
+        // stopped. Stopping a local track makes the plugin natively detach
+        // any renderer still bound to it (Android: removeTrackForRendererById
+        // -> setStream(null); iOS: the track is pulled from the stream), so
+        // the previous order — stop, then an un-awaited srcObject=null /
+        // srcObject=stream toggle — left the preview on a dead track until
+        // (or unless) that racy re-bind landed, which is the frozen self
+        // preview after a flip. Awaited and track-specific instead.
         isFrontCamera = !isFrontCamera;
-        _refreshLocalStreamBinding();
+        await _bindLocalPreviewTo(stream, newTrack);
+        await oldTrack.stop();
         notifyListeners();
       } catch (err) {
         debugPrint('[video-call] switchCamera failed: $err');
@@ -3605,6 +3613,20 @@ class VideoCallController extends ChangeNotifier {
       }
     } finally {
       _switchingCamera = false;
+    }
+  }
+
+  // Awaited, track-specific bind of the renderer showing the local stream
+  // (see switchCamera). No null-toggle: the renderer goes straight from the
+  // old track to the new one.
+  Future<void> _bindLocalPreviewTo(MediaStream stream, MediaStreamTrack track) async {
+    if (_disposed) return;
+    final localRenderer = isSwapped ? mainRenderer : pipRenderer;
+    try {
+      await localRenderer.setSrcObject(stream: stream, trackId: track.id);
+    } catch (err) {
+      debugPrint('[video-call] local preview rebind failed: $err');
+      _refreshLocalStreamBinding();
     }
   }
 
