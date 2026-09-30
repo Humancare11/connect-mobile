@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../config/app_design_system.dart';
 import '../services/auth_service.dart';
 import '../services/auth_validators.dart';
+import '../services/backend_location_service.dart';
 import '../services/token_storage_service.dart';
 import '../widgets/email_verification_dialog.dart';
+import '../widgets/search_picker.dart';
 
 class EditProfilePage extends StatefulWidget {
   const EditProfilePage({super.key});
@@ -46,6 +50,21 @@ class _EditProfilePageState extends State<EditProfilePage> {
   String state = '';
   String city = '';
   String location = '';
+  // "ip" while the saved location is only the backend's IP-based estimate
+  // from sign-up (becomes "user" once the user saves their own).
+  String locationSource = '';
+  // True once the server copy of the profile has loaded. Until then the form
+  // may hold an empty/stale cache, so a save must not blank optional fields.
+  bool remoteLoaded = false;
+
+  static const String _unsetOption = 'Not set';
+  final _locations = BackendLocationService();
+  List<BackendCountry> _countryList = [];
+  List<String> _stateList = [];
+  List<String> _cityList = [];
+  bool _loadingCountries = false;
+  bool _loadingStates = false;
+  bool _loadingCities = false;
 
   Map<String, String> originalData = {
     'userId': '',
@@ -345,12 +364,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                 const SizedBox(height: 14),
                 _dobField(),
                 const SizedBox(height: 14),
-                _field(
-                  label: "Country",
-                  icon: "🌍",
-                  controller: countryCtrl,
-                  hint: "e.g. India, USA",
-                ),
+                _locationFields(),
                 const SizedBox(height: 22),
                 _actions(),
               ],
@@ -389,13 +403,14 @@ class _EditProfilePageState extends State<EditProfilePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label("Gender"),
+        _label("Gender (optional)"),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
-          initialValue: gender.isEmpty ? null : gender,
+          initialValue: gender,
           style: AppType.body(size: 14)
               .copyWith(color: AppColors.textPrimary),
           items: const [
+            DropdownMenuItem(value: "", child: Text("Select gender")),
             DropdownMenuItem(value: "Male", child: Text("Male")),
             DropdownMenuItem(value: "Female", child: Text("Female")),
             DropdownMenuItem(value: "Other", child: Text("Other")),
@@ -416,7 +431,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label("Date of Birth"),
+        _label("Date of Birth (optional)"),
         const SizedBox(height: 8),
         InkWell(
           borderRadius: BorderRadius.circular(AppRadius.sm),
@@ -429,18 +444,299 @@ class _EditProfilePageState extends State<EditProfilePage> {
               borderRadius: BorderRadius.circular(AppRadius.sm),
               border: Border.all(color: AppColors.border),
             ),
-            child: Text(
-              dob == null
-                  ? "Select date of birth"
-                  : "${dob!.day}-${dob!.month}-${dob!.year}",
-              style: AppType.body(size: 14, weight: FontWeight.w600).copyWith(
-                color: dob == null
-                    ? AppColors.textSecondary
-                    : AppColors.textPrimary,
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    dob == null
+                        ? "Select date of birth"
+                        : "${dob!.day}-${dob!.month}-${dob!.year}",
+                    style: AppType.body(size: 14, weight: FontWeight.w600)
+                        .copyWith(
+                      color: dob == null
+                          ? AppColors.textSecondary
+                          : AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                if (dob != null)
+                  InkWell(
+                    onTap: () => setState(() {
+                      dob = null;
+                      saved = false;
+                    }),
+                    child: const Icon(Icons.close, size: 18),
+                  ),
+              ],
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  // ── Country → State / Province → City (same lists as the web profile) ──
+  BackendCountry? _resolveCountry() {
+    final value = countryCtrl.text.trim().toLowerCase();
+    if (value.isEmpty) return null;
+    for (final c in _countryList) {
+      if (c.name.toLowerCase() == value || c.isoCode.toLowerCase() == value) {
+        return c;
+      }
+    }
+    return null;
+  }
+
+  String? _matchedState() {
+    final value = state.trim().toLowerCase();
+    if (value.isEmpty) return null;
+    for (final name in _stateList) {
+      if (name.toLowerCase() == value) return name;
+    }
+    return null;
+  }
+
+  Future<void> _loadLocationLists() async {
+    if (_countryList.isEmpty && !_loadingCountries) {
+      setState(() => _loadingCountries = true);
+      final result = await _locations.countries();
+      if (!mounted) return;
+      setState(() {
+        _loadingCountries = false;
+        if (result.success) _countryList = result.data ?? [];
+      });
+    }
+    await _refreshStates();
+  }
+
+  Future<void> _refreshStates() async {
+    final country = _resolveCountry();
+    if (country == null) {
+      if (!mounted) return;
+      setState(() {
+        _stateList = [];
+        _cityList = [];
+      });
+      return;
+    }
+    setState(() => _loadingStates = true);
+    final result = await _locations.states(country.name);
+    if (!mounted) return;
+    // The user may have picked another country while this was loading.
+    if (_resolveCountry()?.name != country.name) return;
+    setState(() {
+      _loadingStates = false;
+      _stateList = result.success ? (result.data ?? []) : [];
+    });
+    await _refreshCities();
+  }
+
+  Future<void> _refreshCities() async {
+    final country = _resolveCountry();
+    final matchedState = _matchedState();
+    if (country == null || matchedState == null) {
+      if (!mounted) return;
+      setState(() => _cityList = []);
+      return;
+    }
+    setState(() => _loadingCities = true);
+    final result = await _locations.cities(country.name, matchedState);
+    if (!mounted) return;
+    if (_resolveCountry()?.name != country.name ||
+        _matchedState() != matchedState) {
+      return;
+    }
+    setState(() {
+      _loadingCities = false;
+      _cityList = result.success ? (result.data ?? []) : [];
+    });
+  }
+
+  Future<void> _pickCountry() async {
+    final picked = await showSearchPicker(
+      context,
+      title: 'Select country',
+      options: [_unsetOption, ..._countryList.map((c) => c.name)],
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      countryCtrl.text = picked == _unsetOption ? '' : picked;
+      state = '';
+      city = '';
+      _stateList = [];
+      _cityList = [];
+      saved = false;
+    });
+    await _refreshStates();
+  }
+
+  Future<void> _pickState() async {
+    final picked = await showSearchPicker(
+      context,
+      title: 'Select state / province',
+      options: [_unsetOption, ..._stateList],
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      state = picked == _unsetOption ? '' : picked;
+      city = '';
+      _cityList = [];
+      saved = false;
+    });
+    await _refreshCities();
+  }
+
+  Future<void> _pickCity() async {
+    final picked = await showSearchPicker(
+      context,
+      title: 'Select city',
+      options: [_unsetOption, ..._cityList],
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      city = picked == _unsetOption ? '' : picked;
+      saved = false;
+    });
+  }
+
+  Widget _pickerField({
+    required String label,
+    required String value,
+    required String placeholder,
+    required VoidCallback? onTap,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _label(label),
+        const SizedBox(height: 8),
+        InkWell(
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+          onTap: onTap,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(15),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    value.isEmpty ? placeholder : value,
+                    style: AppType.body(size: 14, weight: FontWeight.w600)
+                        .copyWith(
+                      color: value.isEmpty
+                          ? AppColors.textSecondary
+                          : AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+                const Icon(Icons.arrow_drop_down, size: 20),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _freeTextField({
+    required String label,
+    required String hint,
+    required String value,
+    required ValueChanged<String> onChanged,
+    required Key key,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _label(label),
+        const SizedBox(height: 8),
+        TextFormField(
+          key: key,
+          initialValue: value,
+          maxLength: 100,
+          style: AppType.body(size: 14).copyWith(color: AppColors.textPrimary),
+          onChanged: (v) => setState(() {
+            onChanged(v);
+            saved = false;
+          }),
+          decoration:
+              _inputDecoration(icon: "📍", hint: hint).copyWith(counterText: ''),
+        ),
+      ],
+    );
+  }
+
+  Widget _locationFields() {
+    final countryResolved = _resolveCountry() != null;
+    final matchedState = _matchedState();
+    // Same rules as the web LocationSelects: a country with no subdivisions,
+    // or a state with no city list, falls back to free text so a stored
+    // value is never blanked on save.
+    final stateIsFreeText =
+        countryResolved && !_loadingStates && _stateList.isEmpty;
+    final cityIsFreeText =
+        !_loadingStates && !_loadingCities && _cityList.isEmpty;
+    final countryText = _resolveCountry()?.name ?? countryCtrl.text.trim();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _pickerField(
+          label: "Country (optional)",
+          value: countryText,
+          placeholder: _loadingCountries ? "Loading…" : "Select country",
+          onTap: _loadingCountries || _countryList.isEmpty ? null : _pickCountry,
+        ),
+        const SizedBox(height: 14),
+        if (stateIsFreeText)
+          _freeTextField(
+            label: "State / Province (optional)",
+            hint: "State / Province",
+            value: state,
+            onChanged: (v) => state = v,
+            key: ValueKey('state-text-$countryText'),
+          )
+        else
+          _pickerField(
+            label: "State / Province (optional)",
+            value: matchedState ?? state.trim(),
+            placeholder: !countryResolved
+                ? "Select country first"
+                : _loadingStates
+                    ? "Loading…"
+                    : "Select state / province",
+            onTap: countryResolved && !_loadingStates ? _pickState : null,
+          ),
+        const SizedBox(height: 14),
+        if (cityIsFreeText)
+          _freeTextField(
+            label: "City (optional)",
+            hint: "City",
+            value: city,
+            onChanged: (v) => city = v,
+            key: ValueKey('city-text-$countryText-${state.trim()}'),
+          )
+        else
+          _pickerField(
+            label: "City (optional)",
+            value: city.trim(),
+            placeholder: _loadingCities ? "Loading…" : "Select city",
+            onTap: _loadingCities ? null : _pickCity,
+          ),
+        if (locationSource == 'ip') ...[
+          const SizedBox(height: 8),
+          Text(
+            "📍 We estimated your location from your internet connection. "
+            "Please confirm or correct it.",
+            style: AppType.body(size: 12)
+                .copyWith(color: AppColors.textSecondary),
+          ),
+        ],
       ],
     );
   }
@@ -580,6 +876,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       dob = _parseDob(originalData['dob'] ?? '');
       saved = false;
     });
+    unawaited(_loadLocationLists());
   }
 
   void _save() async {
@@ -641,9 +938,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
       dob: _formatDob(dob),
       gender: gender,
       country: countryCtrl.text.trim(),
-      state: state,
-      city: city,
+      state: state.trim(),
+      city: city.trim(),
       location: location,
+      sendEmptyOptionals: remoteLoaded,
     );
 
     if (!mounted) return;
@@ -706,6 +1004,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
       syncingProfile = true;
       profileSyncError = '';
     });
+    unawaited(_loadLocationLists());
 
     final remoteResult = await _authService.fetchCurrentProfile(silent: true);
 
@@ -741,9 +1040,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
     setState(() {
       _applyProfile(remoteProfile);
+      remoteLoaded = true;
       syncingProfile = false;
       profileSyncError = '';
     });
+    unawaited(_loadLocationLists());
   }
 
   void _applyProfile(Map<String, String> profile) {
@@ -759,6 +1060,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
     state = profile['state'] ?? '';
     city = profile['city'] ?? '';
     location = profile['location'] ?? '';
+    if (profile.containsKey('locationSource')) {
+      locationSource = profile['locationSource'] ?? '';
+    }
     dob = _parseDob(profile['dob'] ?? '');
 
     originalData = {

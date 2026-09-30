@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../widgets/google_sign_in_web_stub.dart'
     if (dart.library.js_interop) 'package:google_sign_in_web/web_only.dart'
     as web_only;
@@ -11,6 +12,7 @@ import 'register_screen.dart';
 import '../services/auth_service.dart';
 import '../services/auth_validators.dart';
 import '../widgets/auth_widgets.dart';
+import '../widgets/mobile_phone_field.dart';
 import 'forgot_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -25,8 +27,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _authService = AuthService();
-  final _mobileController = TextEditingController();
-  final _dobController = TextEditingController();
+  final _googlePhone = MobilePhoneController();
 
   bool _loading = false;
   bool _googleLoading = false;
@@ -34,11 +35,10 @@ class _LoginScreenState extends State<LoginScreen> {
   Timer? _googleWebTimeoutTimer;
   bool _obscurePassword = true;
   bool _showGoogleComplete = false;
+  bool _termsConsent = false;
   bool _privacyConsent = false;
   bool _hipaaConsent = false;
   String _error = '';
-  String _selectedGender = '';
-  String _selectedCountry = '';
   String _googleAccessToken = '';
   String _googleName = '';
   String _googleEmail = '';
@@ -122,10 +122,8 @@ class _LoginScreenState extends State<LoginScreen> {
         _googleAccessToken = result.accessToken;
         _googleName = result.googleName;
         _googleEmail = result.googleEmail;
-        _mobileController.clear();
-        _dobController.clear();
-        _selectedGender = '';
-        _selectedCountry = '';
+        _googlePhone.number.clear();
+        _termsConsent = false;
         _privacyConsent = false;
         _hipaaConsent = false;
       });
@@ -165,10 +163,8 @@ class _LoginScreenState extends State<LoginScreen> {
           _googleAccessToken = result.accessToken;
           _googleName = result.googleName;
           _googleEmail = result.googleEmail;
-          _mobileController.clear();
-          _dobController.clear();
-          _selectedGender = '';
-          _selectedCountry = '';
+          _googlePhone.number.clear();
+          _termsConsent = false;
           _privacyConsent = false;
           _hipaaConsent = false;
         });
@@ -193,28 +189,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _completeGoogleRegistration() async {
     if (_loading) return;
-    if (_mobileController.text.trim().isEmpty) {
-      setState(() => _error = 'Enter mobile number');
+    final mobileError = AuthValidators.mobileError(_googlePhone.fullNumber);
+    if (mobileError.isNotEmpty) {
+      setState(() => _error = mobileError);
       return;
     }
 
-    final dobError = AuthValidators.dobError(_dobController.text.trim());
-    if (dobError.isNotEmpty) {
-      setState(() => _error = dobError);
-      return;
-    }
-
-    if (_selectedGender.isEmpty) {
-      setState(() => _error = 'Select Gender');
-      return;
-    }
-
-    if (_selectedCountry.isEmpty) {
-      setState(() => _error = 'Select your country');
-      return;
-    }
-
-    if (!_privacyConsent || !_hipaaConsent) {
+    if (!_termsConsent || !_privacyConsent || !_hipaaConsent) {
       setState(() => _error = 'Accept Terms, Privacy Policy, and HIPAA consent requirements');
       return;
     }
@@ -226,10 +207,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     final result = await _authService.completeGoogleRegistration(
       accessToken: _googleAccessToken,
-      mobile: _mobileController.text.trim(),
-      dob: _dobController.text.trim(),
-      gender: _selectedGender,
-      country: _selectedCountry,
+      mobile: _googlePhone.fullNumber,
       privacyConsent: _privacyConsent,
       hipaaConsent: _hipaaConsent,
     );
@@ -280,8 +258,7 @@ class _LoginScreenState extends State<LoginScreen> {
     _googleWebTimeoutTimer?.cancel();
     _emailController.dispose();
     _passwordController.dispose();
-    _mobileController.dispose();
-    _dobController.dispose();
+    _googlePhone.dispose();
     super.dispose();
   }
 
@@ -441,62 +418,31 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
               _label('Mobile Number'),
               const SizedBox(height: 8),
-              TextField(
-                controller: _mobileController,
-                keyboardType: TextInputType.phone,
-                decoration: _inputDecoration(
-                  hint: 'Enter mobile number',
-                  icon: Icons.phone_outlined,
-                ),
-              ),
+              MobilePhoneField(controller: _googlePhone),
               const SizedBox(height: 16),
-              _label('Date of Birth'),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _dobController,
-                readOnly: true,
-                onTap: _pickDob,
-                decoration: _inputDecoration(
-                  hint: 'Select date of birth',
-                  icon: Icons.cake_outlined,
+              CheckboxListTile(
+                value: _termsConsent,
+                onChanged: (value) => setState(() => _termsConsent = value ?? false),
+                title: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    const Text('I agree to the '),
+                    GestureDetector(
+                      onTap: _openTerms,
+                      child: const Text(
+                        'Terms of Service',
+                        style: TextStyle(
+                          color: Color(0xff2563eb),
+                          fontWeight: FontWeight.w600,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
               ),
-              const SizedBox(height: 16),
-              _label('Gender'),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedGender.isEmpty ? null : _selectedGender,
-                decoration: _inputDecoration(
-                  hint: 'Select gender',
-                  icon: Icons.wc_outlined,
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'Male', child: Text('Male')),
-                  DropdownMenuItem(value: 'Female', child: Text('Female')),
-                  DropdownMenuItem(value: 'Other', child: Text('Other')),
-                  DropdownMenuItem(value: 'Prefer Not to Say', child: Text('Prefer Not to Say')),
-                ],
-                onChanged: (value) => setState(() => _selectedGender = value ?? ''),
-              ),
-              const SizedBox(height: 16),
-              _label('Country'),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _selectedCountry.isEmpty ? null : _selectedCountry,
-                decoration: _inputDecoration(
-                  hint: 'Select country',
-                  icon: Icons.public_outlined,
-                ),
-                items: const [
-                  DropdownMenuItem(value: 'India', child: Text('India')),
-                  DropdownMenuItem(value: 'United States', child: Text('United States')),
-                  DropdownMenuItem(value: 'United Kingdom', child: Text('United Kingdom')),
-                  DropdownMenuItem(value: 'Canada', child: Text('Canada')),
-                  DropdownMenuItem(value: 'Australia', child: Text('Australia')),
-                ],
-                onChanged: (value) => setState(() => _selectedCountry = value ?? ''),
-              ),
-              const SizedBox(height: 16),
               CheckboxListTile(
                 value: _privacyConsent,
                 onChanged: (value) => setState(() => _privacyConsent = value ?? false),
@@ -725,16 +671,18 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Future<void> _pickDob() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: DateTime.now().subtract(const Duration(days: 365 * 18)),
-      firstDate: DateTime(1900),
-      lastDate: DateTime.now(),
-    );
-
-    if (picked != null) {
-      setState(() => _dobController.text = '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}');
+  Future<void> _openTerms() async {
+    var launched = false;
+    try {
+      launched = await launchUrl(
+        Uri.parse('https://humancareconnect.co/terms-of-service'),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      launched = false;
+    }
+    if (!launched && mounted) {
+      setState(() => _error = "Couldn't open the Terms of Service. Please try again.");
     }
   }
 

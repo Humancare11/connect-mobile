@@ -391,9 +391,6 @@ class AuthService {
   Future<GoogleAuthResult> completeGoogleRegistration({
     required String accessToken,
     required String mobile,
-    required String dob,
-    required String gender,
-    required String country,
     required bool privacyConsent,
     required bool hipaaConsent,
   }) async {
@@ -401,9 +398,6 @@ class AuthService {
       final result = await _apiClient.post('/auth/google', {
         'accessToken': accessToken,
         'mobile': mobile,
-        'dob': dob,
-        'gender': gender,
-        'country': country,
         'privacyConsent': privacyConsent,
         'hipaaConsent': hipaaConsent,
       });
@@ -522,6 +516,9 @@ class AuthService {
     String state = '',
     String city = '',
     String location = '',
+    // When true (the caller has the server's current copy of the profile),
+    // empty optional fields are sent too so the user can clear them.
+    bool sendEmptyOptionals = false,
   }) async {
     final current = await _tokenStorage.getUserProfile();
     final requestData = <String, String>{
@@ -543,9 +540,13 @@ class AuthService {
       'name': name.trim(),
       'email': email.trim().toLowerCase(),
       if (mobile.trim().isNotEmpty) 'mobile': mobile.trim(),
-      if (dob.trim().isNotEmpty) 'dob': dob.trim(),
-      if (gender.trim().isNotEmpty) 'gender': gender.trim(),
-      if (country.trim().isNotEmpty) 'country': country.trim(),
+      if (sendEmptyOptionals || dob.trim().isNotEmpty) 'dob': dob.trim(),
+      if (sendEmptyOptionals || gender.trim().isNotEmpty)
+        'gender': gender.trim(),
+      if (sendEmptyOptionals || country.trim().isNotEmpty)
+        'country': country.trim(),
+      if (sendEmptyOptionals || state.trim().isNotEmpty) 'state': state.trim(),
+      if (sendEmptyOptionals || city.trim().isNotEmpty) 'city': city.trim(),
     };
 
     final result = await _apiClient.put(_updateProfileEndpoint, payload);
@@ -616,6 +617,8 @@ class AuthService {
       'state': pick('state', user.state),
       'city': pick('city', user.city),
       'location': pick('location', user.location),
+      'locationSource':
+          (responseUser['locationSource'] ?? '').toString().trim(),
     };
   }
 
