@@ -220,40 +220,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _confirmPasswordController = TextEditingController();
   final _mobileController = TextEditingController();
+  // Only used by the Google Sign-In profile-completion screen below — the
+  // email/OTP registration form (the one being aligned with the web app's
+  // fields) no longer collects DOB, gender or country.
   final _dobController = TextEditingController();
 
   String _selectedGender = '';
   String _selectedCountry = '';
-  String? _selectedState;
-  String? _selectedCity;
   String _selectedDialCode = '';
   bool _obscurePassword = true;
-  bool _obscureConfirmPassword = true;
   bool _termsConsent = false;
   bool _privacyConsent = false;
   bool _hipaaConsent = false;
 
-  // Location data — all loaded from API
+  // Country list, loaded from the location API — also only feeds the Google
+  // completion screen's country dropdown and this form's phone dial-code
+  // picker below now, not a standalone "Country" field.
   List<String> _countries = [];
-  List<String> _states = [];
-  List<String> _cities = [];
   Map<String, Country> _countryLookup = {};
   bool _loadingCountries = false;
-  bool _loadingStates = false;
-  bool _loadingCities = false;
 
   // OTP
   final _otpController = TextEditingController();
   int _otpTimer = 0;
-
-  final GlobalKey<FormFieldState<String>> _countryFieldKey =
-      GlobalKey<FormFieldState<String>>();
-  final GlobalKey<FormFieldState<String>> _stateFieldKey =
-      GlobalKey<FormFieldState<String>>();
-  final GlobalKey<FormFieldState<String>> _cityFieldKey =
-      GlobalKey<FormFieldState<String>>();
 
   final _authRepository = AuthRepository();
   final _authService = AuthService();
@@ -265,6 +255,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void initState() {
     super.initState();
+    // Same default as the web app's PhoneInputField (defaultCountry="IN") —
+    // set instantly rather than waiting on the country-list fetch below, so
+    // the field never shows a blank/unresolved dial code.
+    _selectedDialCode = '+91';
     _fetchCountries();
     if (kIsWeb) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -297,7 +291,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
-    _confirmPasswordController.dispose();
     _mobileController.dispose();
     _dobController.dispose();
     _otpController.dispose();
@@ -328,58 +321,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _setLocationError(result.message);
     }
     setState(() => _loadingCountries = false);
-  }
-
-  Future<void> _fetchStates(String country) async {
-    // Drop a stale lookup error the moment the country changes, rather than
-    // leaving it under a spinner until the new request comes back.
-    _clearLocationError();
-    setState(() {
-      _loadingStates = true;
-      _states = [];
-      _selectedState = null;
-      _cities = [];
-      _selectedCity = null;
-    });
-    final result = await _locationService.getStates(country);
-    if (!mounted) return;
-    if (result.success) {
-      setState(() {
-        _states = (result.data ?? [])
-            .map((s) => _normalizeLocationName(s.name))
-            .where((name) => name.isNotEmpty)
-            .toSet()
-            .toList();
-      });
-      _clearLocationError();
-    } else {
-      _setLocationError(result.message);
-    }
-    setState(() => _loadingStates = false);
-  }
-
-  Future<void> _fetchCities(String country, String state) async {
-    _clearLocationError();
-    setState(() {
-      _loadingCities = true;
-      _cities = [];
-      _selectedCity = null;
-    });
-    final result = await _locationService.getCities(country, state);
-    if (!mounted) return;
-    if (result.success) {
-      setState(() {
-        _cities = (result.data ?? [])
-            .map((city) => _normalizeLocationName(city))
-            .where((name) => name.isNotEmpty)
-            .toSet()
-            .toList();
-      });
-      _clearLocationError();
-    } else {
-      _setLocationError(result.message);
-    }
-    setState(() => _loadingCities = false);
   }
 
   void _applyDialCodeForCountry(String? iso2) {
@@ -549,7 +490,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final result = await _authRepository.sendRegisterOtp(
       email: _emailController.text.trim().toLowerCase(),
       password: _passwordController.text,
-      dob: _dobController.text.trim(),
+      name: _nameController.text.trim(),
+      mobile: _selectedDialCode.isEmpty || _mobileController.text.trim().isEmpty
+          ? ''
+          : '$_selectedDialCode${_mobileController.text.trim()}',
       privacyConsent: _privacyConsent,
       hipaaConsent: _hipaaConsent,
     );
@@ -600,11 +544,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ? ''
           : '$_selectedDialCode${_mobileController.text.trim()}',
       countryCode: _selectedDialCode,
-      dob: _dobController.text.trim(),
-      gender: _selectedGender,
-      country: _selectedCountry,
-      state: _selectedState ?? '',
-      city: _selectedCity ?? '',
       privacyConsent: _privacyConsent,
       hipaaConsent: _hipaaConsent,
     );
@@ -655,7 +594,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final result = await _authRepository.sendRegisterOtp(
       email: _emailController.text.trim().toLowerCase(),
       password: _passwordController.text,
-      dob: _dobController.text.trim(),
+      name: _nameController.text.trim(),
+      mobile: _selectedDialCode.isEmpty || _mobileController.text.trim().isEmpty
+          ? ''
+          : '$_selectedDialCode${_mobileController.text.trim()}',
       privacyConsent: _privacyConsent,
       hipaaConsent: _hipaaConsent,
     );
@@ -930,86 +872,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
-  // ── Searchable picker field (replaces DropdownButtonFormField) ────────────
-  // Uses FormField so it integrates with Form validation.
-  Widget _locationField({
-    required Key fieldKey,
-    required String label,
-    required IconData icon,
-    required String? selectedValue,
-    required bool loading,
-    required bool enabled,
-    required String? Function(String?) validator,
-    required Future<String?> Function() onTap,
-  }) {
-    return FormField<String>(
-      key: fieldKey,
-      initialValue: selectedValue,
-      validator: validator,
-      builder: (state) {
-        // Keep form field value in sync when parent clears it via key rebuild.
-        return Opacity(
-          opacity: enabled ? 1.0 : 0.6,
-          child: GestureDetector(
-            onTap: (enabled && !loading)
-                ? () async {
-                    final picked = await onTap();
-                    state.didChange(picked ?? selectedValue);
-                  }
-                : null,
-            child: InputDecorator(
-              decoration:
-                  _dec(
-                    label: label,
-                    icon: icon,
-                    suffix: loading
-                        ? const Padding(
-                            padding: EdgeInsets.all(14),
-                            child: SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Color(0xff1a3a5c),
-                              ),
-                            ),
-                          )
-                        : Icon(
-                            enabled
-                                ? Icons.arrow_drop_down
-                                : Icons.lock_outline,
-                            color: enabled
-                                ? const Color(0xff1a3a5c)
-                                : Colors.grey[400],
-                            size: 20,
-                          ),
-                  ).copyWith(
-                    errorText: state.errorText,
-                    enabled: enabled,
-                    fillColor: enabled
-                        ? const Color(0xfff9fafb)
-                        : Colors.grey[100],
-                  ),
-              isEmpty: selectedValue == null || selectedValue.isEmpty,
-              child: selectedValue != null && selectedValue.isNotEmpty
-                  ? Text(
-                      selectedValue,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Colors.black87,
-                        fontWeight: FontWeight.w500,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    )
-                  : null,
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   // ── Section header ────────────────────────────────────────────────────────
   Widget _section(String title) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
@@ -1142,165 +1004,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
               return null;
             },
           ),
-          const SizedBox(height: 14),
-
-          // Date of Birth
-          TextFormField(
-            controller: _dobController,
-            readOnly: true,
-            onTap: _pickDob,
-            style: const TextStyle(fontSize: 14, color: Colors.black87),
-            decoration: _dec(
-              label: 'Date of Birth',
-              icon: Icons.calendar_today_outlined,
-              suffix: const Icon(
-                Icons.edit_calendar_outlined,
-                size: 18,
-                color: Color(0xff1a3a5c),
-              ),
-            ),
-            validator: (v) {
-              final err = _getDobError(v ?? '');
-              return err.isEmpty ? null : err;
-            },
-          ),
-          const SizedBox(height: 14),
-
-          // Gender
-          DropdownButtonFormField<String>(
-            initialValue: _selectedGender.isEmpty ? null : _selectedGender,
-            decoration: _dec(label: 'Gender', icon: Icons.wc_outlined),
-            isExpanded: true,
-            style: const TextStyle(fontSize: 14, color: Colors.black87),
-            items: _genders
-                .map(
-                  (g) => DropdownMenuItem(
-                    value: g,
-                    child: Text(
-                      g,
-                      style: const TextStyle(fontSize: 14),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                )
-                .toList(),
-            onChanged: (v) => setState(() => _selectedGender = v ?? ''),
-            validator: (v) => (v == null || v.isEmpty) ? 'Select Gender' : null,
-          ),
-          const SizedBox(height: 24),
-
-          // ── Address Information ─────────────────────────────────────────
-          _section('Address Information'),
-
-          // Country — searchable picker, loaded from API
-          _locationField(
-            fieldKey: _countryFieldKey,
-            label: _loadingCountries ? 'Loading countries...' : 'Country',
-            icon: Icons.public_outlined,
-            selectedValue: _selectedCountry.isEmpty ? null : _selectedCountry,
-            loading: _loadingCountries,
-            enabled: !_loadingCountries,
-            validator: (v) =>
-                (v == null || v.isEmpty) ? 'Select your country' : null,
-            onTap: () async {
-              final picked = await _showSearchSheet(
-                'Select Country',
-                _countries,
-              );
-              if (picked != null && mounted) {
-                final countryMeta = _countryLookup[picked];
-                setState(() {
-                  _selectedCountry = picked;
-                  _applyDialCodeForCountry(countryMeta?.iso2);
-                  _selectedState = null;
-                  _selectedCity = null;
-                  _states = [];
-                  _cities = [];
-                });
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
-                  _countryFieldKey.currentState?.didChange(picked);
-                  _stateFieldKey.currentState?.didChange(null);
-                  _cityFieldKey.currentState?.didChange(null);
-                });
-                await _fetchStates(picked);
-              }
-              return picked;
-            },
-          ),
-          const SizedBox(height: 14),
-
-          // State picker
-          _locationField(
-            fieldKey: _stateFieldKey,
-            label: _selectedCountry.isEmpty
-                ? 'Select country first'
-                : (_loadingStates ? 'Loading states...' : 'State / Province'),
-            icon: Icons.location_on_outlined,
-            selectedValue: _selectedState,
-            loading: _loadingStates,
-            // Stays enabled once a country is picked even if the last
-            // fetch failed or came back empty — a non-empty-list gate here
-            // left the field permanently disabled (and still mandatory)
-            // with no way to retry a transient failure.
-            enabled: _selectedCountry.isNotEmpty && !_loadingStates,
-            validator: (v) => (v == null || v.isEmpty) ? 'Select state' : null,
-            onTap: () async {
-              if (_states.isEmpty) {
-                // Retry instead of opening an empty sheet the user can't
-                // do anything with.
-                await _fetchStates(_selectedCountry);
-                if (!mounted || _states.isEmpty) return null;
-              }
-              final picked = await _showSearchSheet('Select State', _states);
-              if (picked != null && mounted) {
-                setState(() {
-                  _selectedState = picked;
-                  _selectedCity = null;
-                  _cities = [];
-                });
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
-                  _stateFieldKey.currentState?.didChange(picked);
-                  _cityFieldKey.currentState?.didChange(null);
-                });
-                await _fetchCities(_selectedCountry, picked);
-              }
-              return picked;
-            },
-          ),
-          const SizedBox(height: 14),
-
-          // City picker
-          _locationField(
-            fieldKey: _cityFieldKey,
-            label: _selectedState == null
-                ? 'Select state first'
-                : (_loadingCities ? 'Loading cities...' : 'City'),
-            icon: Icons.location_city_outlined,
-            selectedValue: _selectedCity,
-            loading: _loadingCities,
-            // Same rationale as the State field above: don't gate on a
-            // non-empty list, or a failed/empty fetch permanently disables
-            // a mandatory field with no recovery path.
-            enabled: _selectedState != null && !_loadingCities,
-            validator: (v) => (v == null || v.isEmpty) ? 'Select city' : null,
-            onTap: () async {
-              if (_cities.isEmpty) {
-                await _fetchCities(_selectedCountry, _selectedState!);
-                if (!mounted || _cities.isEmpty) return null;
-              }
-              final picked = await _showSearchSheet('Select City', _cities);
-              if (picked != null && mounted) {
-                setState(() => _selectedCity = picked);
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (!mounted) return;
-                  _cityFieldKey.currentState?.didChange(picked);
-                });
-              }
-              return picked;
-            },
-          ),
           const SizedBox(height: 24),
 
           // ── Contact Information ─────────────────────────────────────────
@@ -1311,38 +1014,77 @@ class _RegisterScreenState extends State<RegisterScreen> {
               crossAxisAlignment:
                   CrossAxisAlignment.stretch, // forces equal height
               children: [
-                // Dial code
+                // Dial code — searchable country picker, same idea as the web
+                // app's PhoneInputField (defaultCountry "IN", searchable list).
+                // Defaults to +91 instantly (see initState) rather than
+                // waiting on the country-list fetch below.
                 SizedBox(
-                  width: 64,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xfff9fafb),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(
-                        color: Colors.black.withValues(alpha: 0.09),
+                  width: 84,
+                  child: GestureDetector(
+                    onTap: _loadingCountries
+                        ? null
+                        : () async {
+                            final picked = await _showSearchSheet(
+                              'Select Country Code',
+                              _countries,
+                            );
+                            if (picked != null && mounted) {
+                              final countryMeta = _countryLookup[picked];
+                              setState(() {
+                                _applyDialCodeForCountry(countryMeta?.iso2);
+                              });
+                            }
+                          },
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xfff9fafb),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: Colors.black.withValues(alpha: 0.09),
+                        ),
                       ),
-                    ),
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    alignment: Alignment.center,
-                    child: Text(
-                      // Previously showed a hardcoded "+91" placeholder here
-                      // even when no dial code had actually resolved for the
-                      // selected country — visually implying a code that
-                      // wasn't what would actually be submitted (see the
-                      // guard in _handleOtpSubmit, which now blocks
-                      // submission instead of silently sending a mobile
-                      // number with no country code at all).
-                      _selectedDialCode.isEmpty ? '+--' : _selectedDialCode,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w600,
-                        color: _selectedDialCode.isEmpty
-                            ? Colors.grey[400]!
-                            : const Color(0xff1a3a5c),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      alignment: Alignment.center,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              _selectedDialCode.isEmpty
+                                  ? '+--'
+                                  : _selectedDialCode,
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: _selectedDialCode.isEmpty
+                                    ? Colors.grey[400]!
+                                    : const Color(0xff1a3a5c),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                          _loadingCountries
+                              ? const Padding(
+                                  padding: EdgeInsets.only(left: 4),
+                                  child: SizedBox(
+                                    width: 12,
+                                    height: 12,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 1.5,
+                                      color: Color(0xff1a3a5c),
+                                    ),
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.arrow_drop_down,
+                                  size: 18,
+                                  color: Color(0xff1a3a5c),
+                                ),
+                        ],
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
                     ),
                   ),
                 ),
@@ -1390,10 +1132,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     validator: (v) {
                       final val = v?.trim() ?? '';
                       if (val.isEmpty) return 'Enter mobile number';
-                      if (!RegExp(r'^[\d\-\+\s\(\)]{7,}$').hasMatch(val)) {
-                        return 'Enter a valid mobile number';
-                      }
-                      return null;
+                      final err = AuthValidators.mobileError(
+                        '$_selectedDialCode$val',
+                      );
+                      return err.isEmpty ? null : err;
                     },
                   ),
                 ),
@@ -1431,35 +1173,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 8),
           _buildPasswordChecklist(),
-          const SizedBox(height: 14),
-
-          TextFormField(
-            controller: _confirmPasswordController,
-            obscureText: _obscureConfirmPassword,
-            style: const TextStyle(fontSize: 14, color: Colors.black87),
-            decoration: _dec(
-              label: 'Confirm Password',
-              icon: Icons.lock_outline,
-              suffix: IconButton(
-                icon: Icon(
-                  _obscureConfirmPassword
-                      ? Icons.visibility_off_outlined
-                      : Icons.visibility_outlined,
-                  size: 20,
-                ),
-                onPressed: () => setState(
-                  () => _obscureConfirmPassword = !_obscureConfirmPassword,
-                ),
-              ),
-            ),
-            validator: (v) {
-              if ((v?.trim() ?? '').isEmpty) return 'Confirm your password';
-              if (v != _passwordController.text) {
-                return 'Passwords do not match';
-              }
-              return null;
-            },
-          ),
           const SizedBox(height: 24),
 
           // ── Consent ────────────────────────────────────────────────────

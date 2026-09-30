@@ -19,14 +19,16 @@ class AuthRepository {
   Future<ApiResult<void>> sendRegisterOtp({
     required String email,
     required String password,
-    required String dob,
+    required String name,
+    required String mobile,
     required bool privacyConsent,
     required bool hipaaConsent,
   }) async {
     return _authService.sendRegisterOtp(
       email: email,
       password: password,
-      dob: dob,
+      name: name,
+      mobile: mobile,
       privacyConsent: privacyConsent,
       hipaaConsent: hipaaConsent,
     );
@@ -39,11 +41,6 @@ class AuthRepository {
       email: request.email,
       password: request.password,
       mobile: request.mobile,
-      dob: request.dob,
-      gender: request.gender,
-      country: request.country,
-      state: request.state,
-      city: request.city,
       privacyConsent: request.privacyConsent,
       hipaaConsent: request.hipaaConsent,
       otp: request.otp,

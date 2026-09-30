@@ -6,11 +6,6 @@ class RegisterRequest {
     required this.password,
     required this.mobile,
     required this.countryCode,
-    required this.dob,
-    required this.gender,
-    required this.country,
-    required this.state,
-    required this.city,
     required this.otp,
     this.privacyConsent = false,
     this.hipaaConsent = false,
@@ -21,11 +16,6 @@ class RegisterRequest {
   final String password;
   final String mobile;
   final String countryCode;
-  final String dob;
-  final String gender;
-  final String country;
-  final String state;
-  final String city;
   final String otp;
   final bool privacyConsent;
   final bool hipaaConsent;
@@ -36,11 +26,6 @@ class RegisterRequest {
     'password': password,
     'mobile': mobile,
     'countryCode': countryCode,
-    'dob': dob,
-    'gender': gender,
-    'country': country,
-    'state': state,
-    'city': city,
     'otp': otp,
     'privacyConsent': privacyConsent,
     'hipaaConsent': hipaaConsent,
@@ -62,11 +47,6 @@ class RegisterFormData {
     required this.password,
     required this.mobile,
     required this.countryCode,
-    required this.dob,
-    required this.gender,
-    required this.country,
-    required this.state,
-    required this.city,
     required this.privacyConsent,
     required this.hipaaConsent,
   });
@@ -76,11 +56,6 @@ class RegisterFormData {
   final String password;
   final String mobile;
   final String countryCode;
-  final String dob;
-  final String gender;
-  final String country;
-  final String state;
-  final String city;
   final bool privacyConsent;
   final bool hipaaConsent;
 
@@ -90,11 +65,6 @@ class RegisterFormData {
     password: password,
     mobile: mobile,
     countryCode: countryCode,
-    dob: dob,
-    gender: gender,
-    country: country,
-    state: state,
-    city: city,
     otp: otp,
     privacyConsent: privacyConsent,
     hipaaConsent: hipaaConsent,

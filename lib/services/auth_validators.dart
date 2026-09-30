@@ -84,6 +84,25 @@ class AuthValidators {
     return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value.trim());
   }
 
+  static final RegExp _indiaMobile = RegExp(r'^[6-9]\d{9}$');
+  static final RegExp _genericE164Mobile = RegExp(r'^\+[1-9]\d{7,14}$');
+  static const indiaMobileMessage =
+      'Enter a valid 10-digit Indian mobile number starting with 6, 7, 8 or 9.';
+  static const genericMobileMessage =
+      'Enter a valid mobile number with country code.';
+
+  /// Mirrors the web app's utils/phone.js getMobileError exactly (same rules,
+  /// same messages). [value] must already carry the `+<country code>` prefix
+  /// (e.g. "+919876543210" — dial code + national number concatenated).
+  static String mobileError(String value) {
+    final cleaned = value.replaceAll(RegExp(r'[\s\-().]'), '');
+    if (cleaned.isEmpty) return 'Enter mobile number';
+    if (cleaned.startsWith('+91')) {
+      return _indiaMobile.hasMatch(cleaned.substring(3)) ? '' : indiaMobileMessage;
+    }
+    return _genericE164Mobile.hasMatch(cleaned) ? '' : genericMobileMessage;
+  }
+
   static String countryCodeError(String value) {
     final code = value.trim();
 

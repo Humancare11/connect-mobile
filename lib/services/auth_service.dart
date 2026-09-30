@@ -74,14 +74,20 @@ class AuthService {
   Future<ApiResult<void>> sendRegisterOtp({
     required String email,
     required String password,
-    required String dob,
+    required String name,
+    required String mobile,
     required bool privacyConsent,
     required bool hipaaConsent,
   }) async {
+    // Mirrors the web app's send-register-otp payload — name personalizes the
+    // OTP email server-side, and mobile lets the backend reject an invalid
+    // number before an OTP is sent out at all, rather than only at the final
+    // /auth/register step.
     final result = await _apiClient.post('/auth/send-register-otp', {
       'email': email,
       'password': password.trim(),
-      'dob': dob,
+      'name': name.trim(),
+      if (mobile.trim().isNotEmpty) 'mobile': mobile.trim(),
       'privacyConsent': privacyConsent,
       'hipaaConsent': hipaaConsent,
     });
@@ -98,16 +104,15 @@ class AuthService {
     required String name,
     required String email,
     required String mobile,
-    required String dob,
-    required String gender,
-    required String country,
-    required String state,
-    required String city,
     required String password,
     required bool privacyConsent,
     required bool hipaaConsent,
     required String otp,
   }) async {
+    // dob/gender/country/state/city are deliberately not sent — the backend's
+    // /auth/register ignores them (collected later on the Profile page,
+    // location is IP-detected), mirroring the web app's registration form,
+    // which never collects them either.
     final result = await _apiClient.post('/auth/register', {
       'name': name.trim(),
       'email': email.trim().toLowerCase(),
@@ -115,12 +120,7 @@ class AuthService {
       'otp': otp.trim(),
       'privacyConsent': privacyConsent,
       'hipaaConsent': hipaaConsent,
-      'dob': dob.trim(),
       if (mobile.trim().isNotEmpty) 'mobile': mobile.trim(),
-      if (gender.trim().isNotEmpty) 'gender': gender.trim(),
-      if (country.trim().isNotEmpty) 'country': country.trim(),
-      if (state.trim().isNotEmpty) 'state': state.trim(),
-      if (city.trim().isNotEmpty) 'city': city.trim(),
     });
 
     return _authResult(
