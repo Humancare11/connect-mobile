@@ -3491,30 +3491,20 @@ class VideoCallController extends ChangeNotifier {
   // No React equivalent — a browser tab has no front/back camera facing
   // concept exposed the same way.
   //
-  // Deliberately NOT using flutter_webrtc's Helper.switchCamera(). On
-  // native platforms that calls mediaStreamTrackSwitchCamera, which swaps
-  // the physical camera *in place* on the SAME MediaStreamTrack/capturer —
-  // the plugin's own Android sources resolve "shared" track entries back to
-  // one primary capturer for this call. In practice that in-place swap can
-  // leave the native camera session's frames briefly attached to whichever
-  // texture/renderer the OS compositor hands them to next, which is what
-  // produced the reported bug: right after flipping, the local user's own
-  // face appeared in BOTH the main stage and the pip, even though the main
-  // stage is bound to the *remote* stream and has nothing to do with the
-  // local camera. Requesting a brand-new track via getUserMedia and
-  // swapping it onto the existing sender with replaceTrack() — the same
-  // mechanism _attachLocalMediaStream already uses for reconnects — avoids
-  // that shared-capturer path entirely: the new track has its own id and
-  // its own independent native capture session, so there is no leftover
-  // state for any renderer to pick up.
+  // Primary path: Helper.switchCamera(track) flips the camera IN PLACE on the
+  // existing local video track. No second camera is opened, the sender's
+  // track and the local renderer's binding never change, so the self preview
+  // and the outgoing video simply continue from the other camera.
   //
-  // RTCVideoRenderer.srcObject is still pointing at the same MediaStream
-  // object before and after (only its tracks changed), so Flutter's
-  // renderer would otherwise treat it as an unchanged reference and keep
-  // painting the old camera's last frame — same staleness class
-  // _refreshRemoteStreamBinding works around for the remote stream. Forcing
-  // the local renderer to detach/reattach after a successful switch makes
-  // it treat the new track as a genuine source change.
+  // Fallback (only if the in-place switch throws or reports failure): stop
+  // the old track FIRST so two cameras are never open at once, then acquire
+  // the other camera with getUserMedia, replaceTrack onto the sender and
+  // rebind the local renderer (awaited, track-specific).
+  //
+  // History: an earlier version dropped Helper.switchCamera after the user's
+  // own face showed in BOTH main and pip. The remote renderer is only ever
+  // bound to _remoteStream (see _ensureRemoteRendererNotLocal, which enforces
+  // that after every switch).
   Future<void> switchCamera() async {
     if (kIsWeb) return;
     // Re-entrancy guard: a second tap landing before the first call's
@@ -3543,83 +3533,103 @@ class VideoCallController extends ChangeNotifier {
         }
       } catch (_) {
         // Best-effort — if enumeration fails, fall through and let the
-        // getUserMedia call below be the source of truth.
+        // switch itself be the source of truth.
       }
 
-      final videoConstraints = Map<String, dynamic>.from(kMediaConstraints['video'] as Map);
-      videoConstraints['facingMode'] = isFrontCamera ? 'environment' : 'user';
-
-      MediaStream? newStream;
-      // True once newTrack has been committed to the outgoing sender — from
-      // that point on the peer is actively receiving it, so the failure
-      // cleanup below must never stop it (that would break their already-live
-      // video instead of just failing the switch); it only discards newTrack
-      // for a failure that happens before that commit point.
-      var committedToSender = false;
+      // ── Primary: in-place switch on the existing track ─────────────────
       try {
-        newStream = await navigator.mediaDevices
-            .getUserMedia({'audio': false, 'video': videoConstraints});
-        final newTrack =
-            newStream.getVideoTracks().isNotEmpty ? newStream.getVideoTracks().first : null;
-        if (newTrack == null) throw 'no video track returned';
-        await _camSnapshot('2 new track created (before replaceTrack)', newTrack);
-
-        // The session moved on (disposed / peer connection or local stream
-        // replaced) while getUserMedia was in flight — discard the freshly
-        // captured track rather than attaching it to a stale session.
-        if (_disposed || _pc != pc || _localStream != stream) {
-          for (final t in newStream.getTracks()) {
-            await t.stop();
-          }
+        final switched = await Helper.switchCamera(oldTrack);
+        if (switched == true) {
+          isFrontCamera = !isFrontCamera;
+          await _camSnapshot('2 in-place switch done', oldTrack);
+          _ensureRemoteRendererNotLocal();
+          _camWatchRenderer();
+          notifyListeners();
+          unawaited(_camDelayedChecks(pc, oldTrack));
           return;
         }
-
-        final transceiver = await _getTransceiverForKind(pc, 'video');
-        final sender = transceiver?.sender;
-        if (sender != null) {
-          await sender.replaceTrack(newTrack);
-          committedToSender = true;
-          await _tuneSenderQuality(
-            sender,
-            maxBitrate: kCameraBitrate,
-            maxFramerate: 30,
-            maintainResolution: true,
-          );
-        }
-        await _camSnapshot('3 after replaceTrack (sender=${sender != null})', newTrack);
-
-        newTrack.enabled = !isCamOff;
-        _attachLocalTrackEndedListener(newTrack);
-        await stream.removeTrack(oldTrack);
-        await stream.addTrack(newTrack);
-
-        // Point the self-view at the NEW track before the old one is
-        // stopped. Stopping a local track makes the plugin natively detach
-        // any renderer still bound to it (Android: removeTrackForRendererById
-        // -> setStream(null); iOS: the track is pulled from the stream), so
-        // the previous order — stop, then an un-awaited srcObject=null /
-        // srcObject=stream toggle — left the preview on a dead track until
-        // (or unless) that racy re-bind landed, which is the frozen self
-        // preview after a flip. Awaited and track-specific instead.
-        isFrontCamera = !isFrontCamera;
-        _camWatchRenderer();
-        await _bindLocalPreviewTo(stream, newTrack);
-        await _camSnapshot('4 after preview rebind (old track still running)', newTrack);
-        await oldTrack.stop();
-        await _camSnapshot('5 after old track stopped', newTrack);
-        notifyListeners();
-        unawaited(_camDelayedChecks(pc, newTrack));
+        _camLog('in-place switch returned $switched, using fallback');
       } catch (err) {
-        debugPrint('[video-call] switchCamera failed: $err');
-        if (newStream != null && !committedToSender) {
-          for (final t in newStream.getTracks()) {
-            await t.stop();
-          }
-        }
+        _camLog('in-place switch threw: $err, using fallback');
+      }
+      if (_disposed || _pc != pc || _localStream != stream) return;
+
+      // ── Fallback: release the old camera BEFORE opening the new one ────
+      final wasFront = isFrontCamera;
+      await stream.removeTrack(oldTrack);
+      await oldTrack.stop();
+      await _camSnapshot('fallback: old track stopped', null);
+
+      MediaStreamTrack? newTrack = await _acquireCameraTrack(front: !wasFront);
+      var nowFront = !wasFront;
+      if (newTrack == null) {
+        // Could not open the other camera — reopen the original one so the
+        // user is not left without video.
+        newTrack = await _acquireCameraTrack(front: wasFront);
+        nowFront = wasFront;
         _showInlineMessage('Could not switch camera on this device.');
       }
+      if (newTrack == null) {
+        camError = true;
+        camErrorReason =
+            'Your camera stopped working or its permission was revoked. Tap Retry to reconnect it.';
+        notifyListeners();
+        return;
+      }
+      if (_disposed || _pc != pc || _localStream != stream) {
+        await newTrack.stop();
+        return;
+      }
+
+      final transceiver = await _getTransceiverForKind(pc, 'video');
+      final sender = transceiver?.sender;
+      if (sender != null) {
+        await sender.replaceTrack(newTrack);
+        await _tuneSenderQuality(
+          sender,
+          maxBitrate: kCameraBitrate,
+          maxFramerate: 30,
+          maintainResolution: true,
+        );
+      }
+      newTrack.enabled = !isCamOff;
+      _attachLocalTrackEndedListener(newTrack);
+      await stream.addTrack(newTrack);
+      isFrontCamera = nowFront;
+      _camWatchRenderer();
+      await _bindLocalPreviewTo(stream, newTrack);
+      _ensureRemoteRendererNotLocal();
+      await _camSnapshot('fallback: new track bound', newTrack);
+      notifyListeners();
+      unawaited(_camDelayedChecks(pc, newTrack));
     } finally {
       _switchingCamera = false;
+    }
+  }
+
+  Future<MediaStreamTrack?> _acquireCameraTrack({required bool front}) async {
+    try {
+      final constraints = Map<String, dynamic>.from(kMediaConstraints['video'] as Map);
+      constraints['facingMode'] = front ? 'user' : 'environment';
+      final s = await navigator.mediaDevices.getUserMedia({'audio': false, 'video': constraints});
+      final tracks = s.getVideoTracks();
+      return tracks.isNotEmpty ? tracks.first : null;
+    } catch (err) {
+      debugPrint('[video-call] camera acquire failed: $err');
+      return null;
+    }
+  }
+
+  // Safety net for the old "my face is in both tiles" bug: the tile that
+  // shows the REMOTE stream must never be bound to the local stream.
+  void _ensureRemoteRendererNotLocal() {
+    if (_disposed) return;
+    final local = _localStream;
+    if (local == null) return;
+    final remoteRenderer = isSwapped ? pipRenderer : mainRenderer;
+    if (remoteRenderer.srcObject?.id == local.id) {
+      _camLog('remote renderer was bound to LOCAL stream — rebinding to remote');
+      remoteRenderer.srcObject = _remoteStream;
     }
   }
 
