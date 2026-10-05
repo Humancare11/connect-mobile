@@ -110,19 +110,24 @@ class AuthService {
     required String email,
     required String mobile,
     required String password,
+    required String country,
+    required String state,
+    required String city,
     required bool privacyConsent,
     required bool hipaaConsent,
     required String otp,
   }) async {
-    // dob/gender/country/state/city are deliberately not sent — the backend's
-    // /auth/register ignores them (collected later on the Profile page,
-    // location is IP-detected), mirroring the web app's registration form,
-    // which never collects them either.
+    // Same payload as the web registration form. Country (and State, for a
+    // country that has states) is required by the backend; dob/gender are
+    // collected later on the Profile page, and location is never IP-guessed.
     final result = await _apiClient.post('/auth/register', {
       'name': name.trim(),
       'email': email.trim().toLowerCase(),
       'password': password.trim(),
       'otp': otp.trim(),
+      'country': country.trim(),
+      'state': state.trim(),
+      'city': city.trim(),
       'privacyConsent': privacyConsent,
       'hipaaConsent': hipaaConsent,
       if (mobile.trim().isNotEmpty) 'mobile': mobile.trim(),
@@ -396,6 +401,9 @@ class AuthService {
   Future<GoogleAuthResult> completeGoogleRegistration({
     required String accessToken,
     required String mobile,
+    required String country,
+    required String state,
+    required String city,
     required bool privacyConsent,
     required bool hipaaConsent,
   }) async {
@@ -403,6 +411,9 @@ class AuthService {
       final result = await _apiClient.post('/auth/google', {
         'accessToken': accessToken,
         'mobile': mobile,
+        'country': country.trim(),
+        'state': state.trim(),
+        'city': city.trim(),
         'privacyConsent': privacyConsent,
         'hipaaConsent': hipaaConsent,
       });
@@ -574,6 +585,9 @@ class AuthService {
     required String name,
     required String email,
     required String mobile,
+    required String country,
+    required String state,
+    required String city,
     required bool privacyConsent,
     required bool hipaaConsent,
   }) async {
@@ -585,6 +599,9 @@ class AuthService {
         'name': name.trim(),
         if (email.trim().isNotEmpty) 'email': email.trim(),
         'mobile': mobile,
+        'country': country.trim(),
+        'state': state.trim(),
+        'city': city.trim(),
         'privacyConsent': privacyConsent,
         'hipaaConsent': hipaaConsent,
       });

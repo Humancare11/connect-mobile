@@ -8,13 +8,16 @@ import 'package:firebase_core/firebase_core.dart';
 
 import 'firebase_options.dart';
 import 'config/api_config.dart';
+import 'config/app_info.dart';
 import 'config/app_design_system.dart';
 import 'screens/auth_gate_screen.dart';
 import 'screens/book_appointment_form_screen.dart';
 import 'screens/book_appointment_payment_screen.dart';
 import 'screens/book_appointment_confirmation_screen.dart';
+import 'services/app_update_service.dart';
 import 'services/idle_session_timer.dart';
 import 'services/notification_service.dart';
+import 'widgets/app_update_gate.dart';
 import 'widgets/connectivity_gate.dart';
 import 'widgets/idle_activity_listener.dart';
 import 'widgets/loading_overlay.dart';
@@ -31,6 +34,8 @@ Future<void> main() async {
   await Future.wait([
     dotenv.load(fileName: '.env'),
     Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform),
+    // Platform + version for the X-Client-Platform / X-App-Version headers.
+    AppBuildInfo.init(),
   ]);
 
   debugPrint('[AppConfig] API_BASE_URL=${ApiConfig.baseUrl}');
@@ -60,6 +65,10 @@ Future<void> main() async {
   }
 
   runApp(const MyApp());
+
+  // Fail-open minimum-version check (see AppVersionService): never delays
+  // startup, and offline or a slow server just means no prompt.
+  unawaited(AppVersionService().check());
 
   // Deferred until after the first frame is on screen. initialize() ends in
   // requestPermission(), which blocks on the OS notification-permission
@@ -136,9 +145,11 @@ class MyApp extends StatelessWidget {
         // the two barely overlap, since a 401 response can only arrive
         // once a request has actually reached the server.
         return IdleActivityListener(
-          child: SessionExpiredGate(
-            child: ConnectivityGate(
-              child: LoadingOverlay(child: child ?? const SizedBox.shrink()),
+          child: AppUpdateGate(
+            child: SessionExpiredGate(
+              child: ConnectivityGate(
+                child: LoadingOverlay(child: child ?? const SizedBox.shrink()),
+              ),
             ),
           ),
         );

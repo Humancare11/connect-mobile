@@ -3,12 +3,9 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../widgets/apple_sign_in_button.dart';
 import '../models/api_result.dart';
-import '../models/apple_auth_result.dart';
 import '../models/auth_response.dart';
-import '../models/location_model.dart';
 import '../widgets/google_sign_in_web_stub.dart'
     if (dart.library.js_interop) 'package:google_sign_in_web/web_only.dart'
     as web_only;
@@ -16,174 +13,18 @@ import '../models/register_model.dart';
 import '../services/auth_repository.dart';
 import '../services/auth_validators.dart';
 import '../services/auth_service.dart';
-import '../services/location_service.dart';
-import '../utils/dial_codes.dart';
 import '../widgets/auth_widgets.dart';
-import '../widgets/mobile_phone_field.dart';
+import '../widgets/consent_checkboxes.dart';
+import '../widgets/geo_phone_controller.dart';
+import '../widgets/geo_phone_fields.dart';
 import 'main_screen.dart';
-
-String _normalizeLocationName(String value) {
-  const diacritics = <String, String>{
-    'À': 'A',
-    'Á': 'A',
-    'Â': 'A',
-    'Ã': 'A',
-    'Ä': 'A',
-    'Å': 'A',
-    'Ā': 'A',
-    'Ă': 'A',
-    'Ą': 'A',
-    'Ǎ': 'A',
-    'à': 'a',
-    'á': 'a',
-    'â': 'a',
-    'ã': 'a',
-    'ä': 'a',
-    'å': 'a',
-    'ā': 'a',
-    'ă': 'a',
-    'ą': 'a',
-    'ǎ': 'a',
-    'Ç': 'C',
-    'Ć': 'C',
-    'Č': 'C',
-    'Ĉ': 'C',
-    'Ċ': 'C',
-    'ç': 'c',
-    'ć': 'c',
-    'č': 'c',
-    'ĉ': 'c',
-    'ċ': 'c',
-    'Ð': 'D',
-    'Ď': 'D',
-    'Đ': 'D',
-    'ð': 'd',
-    'ď': 'd',
-    'đ': 'd',
-    'È': 'E',
-    'É': 'E',
-    'Ê': 'E',
-    'Ë': 'E',
-    'Ē': 'E',
-    'Ĕ': 'E',
-    'Ė': 'E',
-    'Ę': 'E',
-    'Ě': 'E',
-    'è': 'e',
-    'é': 'e',
-    'ê': 'e',
-    'ë': 'e',
-    'ē': 'e',
-    'ĕ': 'e',
-    'ė': 'e',
-    'ę': 'e',
-    'ě': 'e',
-    'Ì': 'I',
-    'Í': 'I',
-    'Î': 'I',
-    'Ï': 'I',
-    'Ĩ': 'I',
-    'Ī': 'I',
-    'Ĭ': 'I',
-    'Į': 'I',
-    'İ': 'I',
-    'ì': 'i',
-    'í': 'i',
-    'î': 'i',
-    'ï': 'i',
-    'ĩ': 'i',
-    'ī': 'i',
-    'ĭ': 'i',
-    'į': 'i',
-    'ı': 'i',
-    'Ñ': 'N',
-    'Ń': 'N',
-    'Ň': 'N',
-    'Ņ': 'N',
-    'ñ': 'n',
-    'ń': 'n',
-    'ň': 'n',
-    'ņ': 'n',
-    'Ò': 'O',
-    'Ó': 'O',
-    'Ô': 'O',
-    'Õ': 'O',
-    'Ö': 'O',
-    'Ø': 'O',
-    'Ō': 'O',
-    'Ŏ': 'O',
-    'Ő': 'O',
-    'ò': 'o',
-    'ó': 'o',
-    'ô': 'o',
-    'õ': 'o',
-    'ö': 'o',
-    'ø': 'o',
-    'ō': 'o',
-    'ŏ': 'o',
-    'ő': 'o',
-    'Ś': 'S',
-    'Š': 'S',
-    'Ş': 'S',
-    'Ŝ': 'S',
-    'Ș': 'S',
-    'ś': 's',
-    'š': 's',
-    'ş': 's',
-    'ŝ': 's',
-    'ș': 's',
-    'Ù': 'U',
-    'Ú': 'U',
-    'Û': 'U',
-    'Ü': 'U',
-    'Ũ': 'U',
-    'Ū': 'U',
-    'Ŭ': 'U',
-    'Ů': 'U',
-    'Ű': 'U',
-    'Ų': 'U',
-    'ù': 'u',
-    'ú': 'u',
-    'û': 'u',
-    'ü': 'u',
-    'ũ': 'u',
-    'ū': 'u',
-    'ŭ': 'u',
-    'ů': 'u',
-    'ű': 'u',
-    'ų': 'u',
-    'Ý': 'Y',
-    'Ÿ': 'Y',
-    'ý': 'y',
-    'ÿ': 'y',
-    'Ž': 'Z',
-    'Ź': 'Z',
-    'Ż': 'Z',
-    'ž': 'z',
-    'ź': 'z',
-    'ż': 'z',
-  };
-
-  final buffer = StringBuffer();
-  for (final rune in value.runes) {
-    if (rune >= 0x0300 && rune <= 0x036F) continue;
-    if (rune >= 0x1AB0 && rune <= 0x1AFF) continue;
-    if (rune >= 0x1DC0 && rune <= 0x1DFF) continue;
-    if (rune >= 0x20D0 && rune <= 0x20FF) continue;
-    if (rune >= 0xFE20 && rune <= 0xFE2F) continue;
-
-    final char = String.fromCharCode(rune);
-    buffer.write(diacritics[char] ?? char);
-  }
-
-  return buffer
-      .toString()
-      .replaceAll(RegExp(r"[^A-Za-z0-9\s\-']"), ' ')
-      .replaceAll(RegExp(r"\s+"), ' ')
-      .trim();
-}
+import 'social_signup_completion_screen.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
+/// Email sign-up. Same fields, order and rules as the web registration form:
+/// Full Name, Email, Country, State / Province, City, Phone (country code
+/// synced with Country), Password, then the three consents. A brand-new
+/// Google / Apple user is sent on to [SocialSignupCompletionScreen].
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
 
@@ -198,38 +39,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
   int _currentStep = _stepForm;
   bool _loading = false;
   bool _googleLoading = false;
-  bool _showGoogleComplete = false;
-  String _error = '';
-  String _googleAccessToken = '';
-  String _googleName = '';
-  String _googleEmail = '';
-  // Set instead of _googleAccessToken when a first-time user came in via
-  // Sign in with Apple; the completion screen below then finishes that flow.
-  AppleCredentialData? _appleCredential;
-  final _appleNameController = TextEditingController();
   bool _appleLoading = false;
+  String _error = '';
 
   // Form fields
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _mobileController = TextEditingController();
-  // Mobile field of the Google Sign-In profile-completion screen.
-  final _googlePhone = MobilePhoneController();
-
-  String _selectedDialCode = '';
   bool _obscurePassword = true;
-  bool _termsConsent = false;
-  bool _privacyConsent = false;
-  bool _hipaaConsent = false;
 
-  // Country list, loaded from the location API — also only feeds the Google
-  // completion screen's country dropdown and this form's phone dial-code
-  // picker below now, not a standalone "Country" field.
-  List<String> _countries = [];
-  Map<String, Country> _countryLookup = {};
-  bool _loadingCountries = false;
+  // Country / State / City / Phone (and their sync), and the 3 consents.
+  final _geo = GeoPhoneController();
+  final _consents = ConsentController();
 
   // OTP
   final _otpController = TextEditingController();
@@ -237,7 +59,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   final _authRepository = AuthRepository();
   final _authService = AuthService();
-  final LocationService _locationService = LocationService();
   StreamSubscription<GoogleSignInAuthenticationEvent>? _googleAuthSubscription;
   Timer? _googleWebTimeoutTimer;
   Timer? _otpCountdownTimer;
@@ -245,30 +66,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
   @override
   void initState() {
     super.initState();
-    // Same default as the web app's PhoneInputField (defaultCountry="IN") —
-    // set instantly rather than waiting on the country-list fetch below, so
-    // the field never shows a blank/unresolved dial code.
-    _selectedDialCode = '+91';
-    _fetchCountries();
+    // Country list + India's states, so the pickers are ready by the time the
+    // user reaches them.
+    _geo.init();
     if (kIsWeb) {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
         await GoogleSignIn.instance.initialize();
-        _googleAuthSubscription = GoogleSignIn.instance.authenticationEvents.listen(
-          (event) async {
-            if (event is GoogleSignInAuthenticationEventSignIn) {
-              await _handleGoogleSignedIn(event.user);
-            }
-          },
-          onError: (Object error) {
-            _googleWebTimeoutTimer?.cancel();
-            if (!mounted) return;
-            setState(() {
-              _googleLoading = false;
-              _error = 'Google Sign-In failed. Please try again.';
-            });
-          },
-        );
+        _googleAuthSubscription = GoogleSignIn.instance.authenticationEvents
+            .listen(
+              (event) async {
+                if (event is GoogleSignInAuthenticationEventSignIn) {
+                  await _handleGoogleSignedIn(event.user);
+                }
+              },
+              onError: (Object error) {
+                _googleWebTimeoutTimer?.cancel();
+                if (!mounted) return;
+                setState(() {
+                  _googleLoading = false;
+                  _error = 'Google Sign-In failed. Please try again.';
+                });
+              },
+            );
       });
     }
   }
@@ -281,169 +101,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
-    _mobileController.dispose();
-    _googlePhone.dispose();
-    _appleNameController.dispose();
     _otpController.dispose();
+    _geo.dispose();
+    _consents.dispose();
     super.dispose();
-  }
-
-  // ── Location API ──────────────────────────────────────────────────────────
-  Future<void> _fetchCountries() async {
-    setState(() => _loadingCountries = true);
-    final result = await _locationService.getCountries();
-    if (!mounted) return;
-    if (result.success) {
-      final countries = result.data ?? [];
-      final countryNames = countries
-          .map((c) => _normalizeLocationName(c.name))
-          .where((name) => name.isNotEmpty)
-          .toSet()
-          .toList();
-      setState(() {
-        _countries = countryNames;
-        _countryLookup = {
-          for (final country in countries)
-            _normalizeLocationName(country.name): country,
-        };
-      });
-      _clearLocationError();
-    } else {
-      _setLocationError(result.message);
-    }
-    setState(() => _loadingCountries = false);
-  }
-
-  void _applyDialCodeForCountry(String? iso2) {
-    _selectedDialCode = dialCodeForIso2(iso2);
-  }
-
-  // ── Searchable bottom-sheet picker ────────────────────────────────────────
-  Future<String?> _showSearchSheet(String title, List<String> options) {
-    String filter = '';
-    return showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => StatefulBuilder(
-        builder: (ctx, setModal) {
-          final filtered = filter.isEmpty
-              ? options
-              : options
-                    .where(
-                      (o) => o.toLowerCase().contains(filter.toLowerCase()),
-                    )
-                    .toList();
-          return Container(
-            height: MediaQuery.of(ctx).size.height * 0.75,
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            child: Column(
-              children: [
-                // Handle bar
-                const SizedBox(height: 12),
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 16),
-                // Title
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Text(
-                    title,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xff1a3a5c),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                // Search field
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: TextField(
-                    autofocus: true,
-                    decoration: InputDecoration(
-                      hintText: 'Search...',
-                      hintStyle: TextStyle(
-                        color: Colors.grey[400],
-                        fontSize: 14,
-                      ),
-                      prefixIcon: const Icon(
-                        Icons.search,
-                        color: Color(0xff1a3a5c),
-                        size: 20,
-                      ),
-                      filled: true,
-                      fillColor: const Color(0xfff9fafb),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide.none,
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: BorderSide(
-                          color: Colors.black.withValues(alpha: 0.09),
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                        borderSide: const BorderSide(
-                          color: Color(0xff1a3a5c),
-                          width: 1.5,
-                        ),
-                      ),
-                    ),
-                    onChanged: (v) => setModal(() => filter = v),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Divider(height: 1),
-                // Options list
-                Expanded(
-                  child: filtered.isEmpty
-                      ? Center(
-                          child: Text(
-                            'No results found',
-                            style: TextStyle(
-                              color: Colors.grey[500],
-                              fontSize: 14,
-                            ),
-                          ),
-                        )
-                      : ListView.builder(
-                          itemCount: filtered.length,
-                          itemBuilder: (_, i) => ListTile(
-                            title: Text(
-                              filtered[i],
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: Colors.black87,
-                              ),
-                            ),
-                            onTap: () => Navigator.pop(ctx, filtered[i]),
-                            dense: true,
-                          ),
-                        ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
-    );
   }
 
   // ── Timer ─────────────────────────────────────────────────────────────────
@@ -466,10 +127,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // ── Submit registration → send OTP ────────────────────────────────────────
   Future<void> _handleRegisterSubmit() async {
     if (_loading) return;
+    FocusScope.of(context).unfocus();
     if (!_formKey.currentState!.validate()) return;
 
-    if (!_termsConsent || !_privacyConsent || !_hipaaConsent) {
-      _setError('Accept Terms, Privacy Policy, and HIPAA consent requirements');
+    if (!_consents.allAccepted) {
+      _setError(kConsentError);
       return;
     }
 
@@ -482,11 +144,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       email: _emailController.text.trim().toLowerCase(),
       password: _passwordController.text,
       name: _nameController.text.trim(),
-      mobile: _selectedDialCode.isEmpty || _mobileController.text.trim().isEmpty
-          ? ''
-          : '$_selectedDialCode${_mobileController.text.trim()}',
-      privacyConsent: _privacyConsent,
-      hipaaConsent: _hipaaConsent,
+      mobile: _geo.fullNumber,
+      privacyConsent: _consents.privacy,
+      hipaaConsent: _consents.hipaa,
     );
 
     if (!mounted) return;
@@ -513,15 +173,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return;
     }
 
-    // Mobile is mandatory, and it must carry a resolved dial code — previously
-    // an unresolved code silently sent the raw digits with no country code
-    // prefix at all, while the field still displayed a placeholder that
-    // looked like a real selection.
-    if (_selectedDialCode.isEmpty) {
-      _setError('Could not resolve a dial code for your country. Re-select your country.');
-      return;
-    }
-
     setState(() {
       _loading = true;
       _error = '';
@@ -531,12 +182,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
       name: _nameController.text.trim(),
       email: _emailController.text.trim().toLowerCase(),
       password: _passwordController.text,
-      mobile: _mobileController.text.trim().isEmpty
-          ? ''
-          : '$_selectedDialCode${_mobileController.text.trim()}',
-      countryCode: _selectedDialCode,
-      privacyConsent: _privacyConsent,
-      hipaaConsent: _hipaaConsent,
+      mobile: _geo.fullNumber,
+      country: _geo.countryName,
+      state: _geo.state,
+      city: _geo.city,
+      privacyConsent: _consents.privacy,
+      hipaaConsent: _consents.hipaa,
     );
 
     final request = formData.toRegisterRequest(otp);
@@ -574,9 +225,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _handleResendOtp() async {
     // The 60s cooldown (_otpTimer) throttles repeat resends once _startTimer
     // has run, but there's a window right after a tap, before that timer
-    // starts, where a fast double-tap could still fire this twice — this
-    // handler never set _loading at all despite the button's onTap already
-    // being gated on it, so that gate was a no-op for this specific action.
+    // starts, where a fast double-tap could still fire this twice.
     if (_loading) return;
     setState(() {
       _loading = true;
@@ -586,11 +235,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
       email: _emailController.text.trim().toLowerCase(),
       password: _passwordController.text,
       name: _nameController.text.trim(),
-      mobile: _selectedDialCode.isEmpty || _mobileController.text.trim().isEmpty
-          ? ''
-          : '$_selectedDialCode${_mobileController.text.trim()}',
-      privacyConsent: _privacyConsent,
-      hipaaConsent: _hipaaConsent,
+      mobile: _geo.fullNumber,
+      privacyConsent: _consents.privacy,
+      hipaaConsent: _consents.hipaa,
     );
     if (!mounted) return;
     setState(() => _loading = false);
@@ -604,27 +251,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   void _setError(String msg) => setState(() => _error = msg);
 
-  /// The last message a country/state/city lookup put into [_error].
-  ///
-  /// The three location lookups share the form's single error slot with
-  /// validation messages, and they used to set it on failure without ever
-  /// clearing it on success — so an upstream "state not found" for one country
-  /// stayed on screen even after picking a country and state that loaded fine.
-  /// Remembering what we wrote lets a successful lookup clear its own error
-  /// without wiping an unrelated validation message the user is still reading.
-  String _lastLocationError = '';
-
-  void _setLocationError(String msg) {
-    _lastLocationError = msg;
-    _setError(msg);
-  }
-
-  void _clearLocationError() {
-    if (_error.isEmpty || _error != _lastLocationError) return;
-    _lastLocationError = '';
-    setState(() => _error = '');
-  }
-
+  // ── Google / Apple ────────────────────────────────────────────────────────
   Future<void> _handleGoogleSignUp() async {
     if (_googleLoading) return;
     if (kIsWeb) {
@@ -640,7 +267,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         if (!mounted || !_googleLoading) return;
         setState(() {
           _googleLoading = false;
-          _error = 'Google Sign-In was cancelled or timed out. Please try again.';
+          _error =
+              'Google Sign-In was cancelled or timed out. Please try again.';
         });
       });
       return;
@@ -660,17 +288,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     if (!result.success) return;
     if (result.isNewUser) {
-      setState(() {
-        _showGoogleComplete = true;
-        _googleAccessToken = result.accessToken;
-        _appleCredential = null;
-        _googleName = result.googleName;
-        _googleEmail = result.googleEmail;
-        _googlePhone.number.clear();
-        _termsConsent = false;
-        _privacyConsent = false;
-        _hipaaConsent = false;
-      });
+      await SocialSignupCompletionScreen.open(
+        context,
+        SocialSignupSession(
+          name: result.googleName,
+          email: result.googleEmail,
+          googleAccessToken: result.accessToken,
+        ),
+      );
       return;
     }
 
@@ -711,75 +336,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!result.success) return;
 
     if (result.isNewUser) {
-      setState(() {
-        _showGoogleComplete = true;
-        _appleCredential = result.credential;
-        _googleAccessToken = '';
-        // The completion screen is shared with Google; these two only feed
-        // its greeting.
-        _googleName = result.name;
-        _googleEmail = result.email;
-        _appleNameController.clear();
-        _googlePhone.number.clear();
-        _termsConsent = false;
-        _privacyConsent = false;
-        _hipaaConsent = false;
-      });
+      await SocialSignupCompletionScreen.open(
+        context,
+        SocialSignupSession(
+          name: result.name,
+          email: result.email,
+          appleCredential: result.credential,
+        ),
+      );
       return;
     }
 
     if (result.authResponse == null) return;
-    await _authService.saveSession(result.authResponse!);
-    if (!mounted) return;
-    showAuthSnackBar(context, 'Registration Successful');
-    Navigator.of(
-      context,
-    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
-  }
-
-  Future<void> _completeAppleRegistration() async {
-    final credential = _appleCredential;
-    if (_loading || credential == null) return;
-
-    final name = _googleName.isNotEmpty
-        ? _googleName
-        : _appleNameController.text.trim();
-    if (name.isEmpty) {
-      _setError('Please enter your name.');
-      return;
-    }
-
-    final mobileError = AuthValidators.mobileError(_googlePhone.fullNumber);
-    if (mobileError.isNotEmpty) {
-      _setError(mobileError);
-      return;
-    }
-
-    if (!_termsConsent || !_privacyConsent || !_hipaaConsent) {
-      _setError('Accept Terms, Privacy Policy, and HIPAA consent requirements');
-      return;
-    }
-
-    setState(() {
-      _loading = true;
-      _error = '';
-    });
-
-    final result = await _authService.completeAppleRegistration(
-      credential: credential,
-      name: name,
-      email: _googleEmail,
-      mobile: _googlePhone.fullNumber,
-      privacyConsent: _privacyConsent,
-      hipaaConsent: _hipaaConsent,
-    );
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      _error = result.success ? '' : result.message;
-    });
-
-    if (!result.success || result.authResponse == null) return;
     await _authService.saveSession(result.authResponse!);
     if (!mounted) return;
     showAuthSnackBar(context, 'Registration Successful');
@@ -806,17 +374,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (!result.success) return;
       if (result.isNewUser) {
-        setState(() {
-          _showGoogleComplete = true;
-          _googleAccessToken = result.accessToken;
-          _appleCredential = null;
-          _googleName = result.googleName;
-          _googleEmail = result.googleEmail;
-          _googlePhone.number.clear();
-          _termsConsent = false;
-          _privacyConsent = false;
-          _hipaaConsent = false;
-        });
+        await SocialSignupCompletionScreen.open(
+          context,
+          SocialSignupSession(
+            name: result.googleName,
+            email: result.googleEmail,
+            googleAccessToken: result.accessToken,
+          ),
+        );
         return;
       }
 
@@ -833,73 +398,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _googleLoading = false;
         _error = 'Google Sign-In failed.';
       });
-    }
-  }
-
-  Future<void> _completeGoogleRegistration() async {
-    if (_appleCredential != null) return _completeAppleRegistration();
-    if (_loading) return;
-    final mobileError = AuthValidators.mobileError(_googlePhone.fullNumber);
-    if (mobileError.isNotEmpty) {
-      _setError(mobileError);
-      return;
-    }
-
-    if (!_termsConsent || !_privacyConsent || !_hipaaConsent) {
-      _setError('Accept Terms, Privacy Policy, and HIPAA consent requirements');
-      return;
-    }
-
-    setState(() {
-      _loading = true;
-      _error = '';
-    });
-
-    final result = await _authService.completeGoogleRegistration(
-      accessToken: _googleAccessToken,
-      mobile: _googlePhone.fullNumber,
-      privacyConsent: _privacyConsent,
-      hipaaConsent: _hipaaConsent,
-    );
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      _error = result.success ? '' : result.message;
-    });
-
-    if (!result.success || result.authResponse == null) return;
-    try {
-      await _authService.saveSession(result.authResponse!);
-    } catch (_) {
-      // Profile completion already succeeded server-side — only the local
-      // session save failed, so surface a recoverable error instead of a
-      // silent no-op.
-      if (!mounted) return;
-      setState(() {
-        _error =
-            'Your account was created, but we could not sign you in automatically. Please log in.';
-      });
-      return;
-    }
-    if (!mounted) return;
-    showAuthSnackBar(context, 'Registration Successful');
-    Navigator.of(
-      context,
-    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
-  }
-
-  Future<void> _openTerms() async {
-    var launched = false;
-    try {
-      launched = await launchUrl(
-        Uri.parse('https://humancareconnect.co/terms-of-service'),
-        mode: LaunchMode.externalApplication,
-      );
-    } catch (_) {
-      launched = false;
-    }
-    if (!launched && mounted) {
-      _setError("Couldn't open the Terms of Service. Please try again.");
     }
   }
 
@@ -1035,6 +533,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
           // Full Name
           TextFormField(
             controller: _nameController,
+            textCapitalization: TextCapitalization.words,
+            textInputAction: TextInputAction.next,
             style: const TextStyle(fontSize: 14, color: Colors.black87),
             decoration: _dec(label: 'Full Name', icon: Icons.person_outline),
             onChanged: (v) {
@@ -1062,6 +562,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           TextFormField(
             controller: _emailController,
             keyboardType: TextInputType.emailAddress,
+            textInputAction: TextInputAction.next,
             style: const TextStyle(fontSize: 14, color: Colors.black87),
             decoration: _dec(label: 'Email Address', icon: Icons.mail_outline),
             validator: (v) {
@@ -1074,142 +575,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 24),
 
-          // ── Contact Information ─────────────────────────────────────────
-          _section('Contact Information'),
-
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment:
-                  CrossAxisAlignment.stretch, // forces equal height
-              children: [
-                // Dial code — searchable country picker, same idea as the web
-                // app's PhoneInputField (defaultCountry "IN", searchable list).
-                // Defaults to +91 instantly (see initState) rather than
-                // waiting on the country-list fetch below.
-                SizedBox(
-                  width: 84,
-                  child: GestureDetector(
-                    onTap: _loadingCountries
-                        ? null
-                        : () async {
-                            final picked = await _showSearchSheet(
-                              'Select Country Code',
-                              _countries,
-                            );
-                            if (picked != null && mounted) {
-                              final countryMeta = _countryLookup[picked];
-                              setState(() {
-                                _applyDialCodeForCountry(countryMeta?.iso2);
-                              });
-                            }
-                          },
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xfff9fafb),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: Colors.black.withValues(alpha: 0.09),
-                        ),
-                      ),
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      alignment: Alignment.center,
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              _selectedDialCode.isEmpty
-                                  ? '+--'
-                                  : _selectedDialCode,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: _selectedDialCode.isEmpty
-                                    ? Colors.grey[400]!
-                                    : const Color(0xff1a3a5c),
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                            ),
-                          ),
-                          _loadingCountries
-                              ? const Padding(
-                                  padding: EdgeInsets.only(left: 4),
-                                  child: SizedBox(
-                                    width: 12,
-                                    height: 12,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 1.5,
-                                      color: Color(0xff1a3a5c),
-                                    ),
-                                  ),
-                                )
-                              : const Icon(
-                                  Icons.arrow_drop_down,
-                                  size: 18,
-                                  color: Color(0xff1a3a5c),
-                                ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextFormField(
-                    controller: _mobileController,
-                    keyboardType: TextInputType.phone,
-                    style: const TextStyle(fontSize: 14, color: Colors.black87),
-                    decoration: InputDecoration(
-                      hintText: 'Mobile Number',
-                      hintStyle: TextStyle(
-                        fontSize: 14,
-                        color: Colors.grey[400],
-                      ),
-                      prefixIcon: const Icon(
-                        Icons.phone_outlined,
-                        size: 18,
-                        color: Color(0xff1a3a5c),
-                      ),
-                      filled: true,
-                      fillColor: const Color(0xfff9fafb),
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(
-                          color: Colors.black.withValues(alpha: 0.09),
-                        ),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide(
-                          color: Colors.black.withValues(alpha: 0.09),
-                        ),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: const BorderSide(
-                          color: Color(0xff1a3a5c),
-                          width: 1.2,
-                        ),
-                      ),
-                    ),
-                    validator: (v) {
-                      final val = v?.trim() ?? '';
-                      if (val.isEmpty) return 'Enter mobile number';
-                      final err = AuthValidators.mobileError(
-                        '$_selectedDialCode$val',
-                      );
-                      return err.isEmpty ? null : err;
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
+          // ── Location & Contact: Country, State, City, Phone ─────────────
+          _section('Location & Contact'),
+          GeoPhoneFields(controller: _geo),
           const SizedBox(height: 24),
 
           // ── Security ───────────────────────────────────────────────────
@@ -1245,23 +613,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
           // ── Consent ────────────────────────────────────────────────────
           _section('Consent'),
-
-          _ConsentTile(
-            label: 'I agree to the ',
-            links: const ['Terms', 'Privacy Policy'],
-            checked: _termsConsent && _privacyConsent,
-            onChanged: (v) => setState(() {
-              _termsConsent = v;
-              _privacyConsent = v;
-            }),
-          ),
-          const SizedBox(height: 4),
-          _ConsentTile(
-            label: 'I agree to HIPAA Compliance & Health Data Privacy',
-            links: const [],
-            checked: _hipaaConsent,
-            onChanged: (v) => setState(() => _hipaaConsent = v),
-          ),
+          ConsentCheckboxes(controller: _consents),
 
           if (_error.isNotEmpty) ...[
             const SizedBox(height: 16),
@@ -1370,124 +722,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         style: OutlinedButton.styleFrom(
           foregroundColor: const Color(0xff1a3a5c),
           side: const BorderSide(color: Color(0xffd1d5db)),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildGoogleCompletionScreen() {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xff1a3a5c),
-        elevation: 0,
-        title: const Text('Complete your profile'),
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Welcome ${_googleName.isNotEmpty ? _googleName : 'there'}',
-                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _googleEmail.isNotEmpty
-                    ? 'We need a few more details to finish creating your account for $_googleEmail.'
-                    : 'We need a few more details to finish creating your account.',
-                style: TextStyle(fontSize: 14, color: Colors.grey[600], height: 1.4),
-              ),
-              const SizedBox(height: 24),
-              if (_error.isNotEmpty) ...[
-                _errorBox(_error),
-                const SizedBox(height: 16),
-              ],
-              if (_appleCredential != null) ...[
-                if (_googleName.isEmpty) ...[
-                  // Apple only shares the name on the very first authorization,
-                  // so if we never received it the user must supply it.
-                  TextField(
-                    controller: _appleNameController,
-                    textCapitalization: TextCapitalization.words,
-                    decoration: const InputDecoration(
-                      labelText: 'Full name',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                if (_googleEmail.toLowerCase().endsWith('@privaterelay.appleid.com')) ...[
-                  const Text(
-                    "You chose to hide your email, so account emails will be sent through Apple's private relay address.",
-                    style: TextStyle(fontSize: 13, color: Color(0xFF6B7280), height: 1.4),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-              ],
-              MobilePhoneField(controller: _googlePhone),
-              const SizedBox(height: 14),
-              CheckboxListTile(
-                value: _termsConsent,
-                onChanged: (value) => setState(() => _termsConsent = value ?? false),
-                title: Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    const Text('I agree to the '),
-                    GestureDetector(
-                      onTap: _openTerms,
-                      child: const Text(
-                        'Terms of Service',
-                        style: TextStyle(
-                          color: Color(0xff2563eb),
-                          fontWeight: FontWeight.w600,
-                          decoration: TextDecoration.underline,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
-              CheckboxListTile(
-                value: _privacyConsent,
-                onChanged: (value) => setState(() => _privacyConsent = value ?? false),
-                title: const Text('I agree to the Privacy Policy'),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
-              CheckboxListTile(
-                value: _hipaaConsent,
-                onChanged: (value) => setState(() => _hipaaConsent = value ?? false),
-                title: const Text('I accept the HIPAA consent requirements'),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: _loading ? null : _completeGoogleRegistration,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xff1a3a5c),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  ),
-                  child: _loading
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Text('Create Account'),
-                ),
-              ),
-            ],
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
           ),
         ),
       ),
@@ -1653,90 +889,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // ═══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
-    if (_showGoogleComplete) {
-      return _buildGoogleCompletionScreen();
-    }
-
     return AuthScaffold(
       title: _currentStep == _stepForm ? 'Create Account' : 'Verify Email',
       subtitle: _currentStep == _stepForm
           ? 'Join Humancare Connect and take charge of your health'
           : 'Enter the OTP code',
       child: _currentStep == _stepForm ? _buildForm() : _buildOtpStep(),
-    );
-  }
-}
-
-// ─── Consent tile widget ──────────────────────────────────────────────────────
-class _ConsentTile extends StatelessWidget {
-  final String label;
-  final List<String> links;
-  final bool checked;
-  final ValueChanged<bool> onChanged;
-
-  const _ConsentTile({
-    required this.label,
-    required this.links,
-    required this.checked,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        SizedBox(
-          width: 24,
-          height: 24,
-          child: Checkbox(
-            value: checked,
-            onChanged: (v) => onChanged(v ?? false),
-            activeColor: const Color(0xff1a3a5c),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(4),
-            ),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: links.isEmpty
-              ? Text(
-                  label,
-                  style: const TextStyle(fontSize: 13, color: Colors.black87),
-                )
-              : Wrap(
-                  children: [
-                    Text(
-                      label,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    for (int i = 0; i < links.length; i++) ...[
-                      Text(
-                        links[i],
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: Color(0xff2563eb),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      if (i < links.length - 1)
-                        const Text(
-                          ' & ',
-                          style: TextStyle(fontSize: 13, color: Colors.black87),
-                        ),
-                    ],
-                    const Text(
-                      ' & HIPAA Consent.',
-                      style: TextStyle(fontSize: 13, color: Colors.black87),
-                    ),
-                  ],
-                ),
-        ),
-      ],
     );
   }
 }

@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 import '../config/app_design_system.dart';
 import '../services/auth_service.dart';
 import '../services/auth_validators.dart';
-import '../services/backend_location_service.dart';
 import '../services/token_storage_service.dart';
 import '../widgets/email_verification_dialog.dart';
-import '../widgets/search_picker.dart';
+import '../widgets/geo_field_style.dart';
+import '../widgets/geo_phone_controller.dart';
+import '../widgets/location_selects.dart';
+import '../widgets/phone_field.dart';
 
 class EditProfilePage extends StatefulWidget {
   const EditProfilePage({super.key});
@@ -40,15 +42,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   final nameCtrl = TextEditingController();
   final emailCtrl = TextEditingController();
-  final mobileCtrl = TextEditingController();
-  final countryCtrl = TextEditingController();
 
   String gender = "";
   DateTime? dob;
   String userId = '';
   String role = 'patient';
-  String state = '';
-  String city = '';
   String location = '';
   // "ip" while the saved location is only the backend's IP-based estimate
   // from sign-up (becomes "user" once the user saves their own).
@@ -57,14 +55,15 @@ class _EditProfilePageState extends State<EditProfilePage> {
   // may hold an empty/stale cache, so a save must not blank optional fields.
   bool remoteLoaded = false;
 
-  static const String _unsetOption = 'Not set';
-  final _locations = BackendLocationService();
-  List<BackendCountry> _countryList = [];
-  List<String> _stateList = [];
-  List<String> _cityList = [];
-  bool _loadingCountries = false;
-  bool _loadingStates = false;
-  bool _loadingCities = false;
+  // Country / State / City / Phone — the same controller and widgets as
+  // sign-up. Everything is optional here (a phone, once set, can be replaced
+  // but not removed), so nothing blocks saving the other fields.
+  final _formKey = GlobalKey<FormState>();
+  final _geo = GeoPhoneController(
+    requireLocation: false,
+    requireMobile: false,
+    defaultToIndia: false,
+  );
 
   Map<String, String> originalData = {
     'userId': '',
@@ -83,6 +82,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
   @override
   void initState() {
     super.initState();
+    _geo.loadCountries();
     _loadUserProfile();
   }
 
@@ -90,8 +90,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
   void dispose() {
     nameCtrl.dispose();
     emailCtrl.dispose();
-    mobileCtrl.dispose();
-    countryCtrl.dispose();
+    _geo.dispose();
     super.dispose();
   }
 
@@ -147,8 +146,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
           const SizedBox(width: 8),
           Text(
             'Syncing your latest details…',
-            style: AppType.body(size: 12)
-                .copyWith(color: AppColors.textSecondary),
+            style: AppType.body(
+              size: 12,
+            ).copyWith(color: AppColors.textSecondary),
           ),
         ],
       ),
@@ -166,14 +166,15 @@ class _EditProfilePageState extends State<EditProfilePage> {
       ),
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded,
-              color: _errorText, size: 18),
+          const Icon(Icons.warning_amber_rounded, color: _errorText, size: 18),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               profileSyncError,
-              style: AppType.body(size: 13, weight: FontWeight.w600)
-                  .copyWith(color: _errorText),
+              style: AppType.body(
+                size: 13,
+                weight: FontWeight.w600,
+              ).copyWith(color: _errorText),
             ),
           ),
           TextButton(
@@ -203,7 +204,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
               color: AppColors.primary.withValues(alpha: 0.10),
               borderRadius: BorderRadius.circular(AppRadius.md),
               border: Border.all(
-                  color: AppColors.primary.withValues(alpha: 0.25)),
+                color: AppColors.primary.withValues(alpha: 0.25),
+              ),
             ),
             child: Center(
               child: Text(
@@ -218,8 +220,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
           Text(
             emailCtrl.text,
             textAlign: TextAlign.center,
-            style: AppType.body(size: 13)
-                .copyWith(color: AppColors.textSecondary),
+            style: AppType.body(
+              size: 13,
+            ).copyWith(color: AppColors.textSecondary),
           ),
           const SizedBox(height: 10),
           Container(
@@ -230,18 +233,20 @@ class _EditProfilePageState extends State<EditProfilePage> {
             ),
             child: Text(
               role.trim().isNotEmpty ? role.toUpperCase() : 'PATIENT',
-              style: AppType.body(size: 11, weight: FontWeight.w900)
-                  .copyWith(color: AppColors.primary),
+              style: AppType.body(
+                size: 11,
+                weight: FontWeight.w900,
+              ).copyWith(color: AppColors.primary),
             ),
           ),
           const SizedBox(height: 18),
           if (userId.isNotEmpty) _metaRow("🆔", "Patient ID", userId),
           if (gender.isNotEmpty) _metaRow("👤", "Gender", gender),
           if (age != null) _metaRow("🎂", "Age", "$age years old"),
-          if (mobileCtrl.text.isNotEmpty)
-            _metaRow("📞", "Mobile", mobileCtrl.text),
-          if (countryCtrl.text.isNotEmpty)
-            _metaRow("🌍", "Country", countryCtrl.text),
+          if ((originalData['mobile'] ?? '').isNotEmpty)
+            _metaRow("📞", "Mobile", originalData['mobile']!),
+          if ((originalData['country'] ?? '').isNotEmpty)
+            _metaRow("🌍", "Country", originalData['country']!),
         ],
       ),
     );
@@ -266,14 +271,18 @@ class _EditProfilePageState extends State<EditProfilePage> {
               children: [
                 Text(
                   label.toUpperCase(),
-                  style: AppType.body(size: 10, weight: FontWeight.w900)
-                      .copyWith(color: AppColors.textSecondary),
+                  style: AppType.body(
+                    size: 10,
+                    weight: FontWeight.w900,
+                  ).copyWith(color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   value,
-                  style: AppType.body(size: 13.5, weight: FontWeight.w700)
-                      .copyWith(color: AppColors.textPrimary),
+                  style: AppType.body(
+                    size: 13.5,
+                    weight: FontWeight.w700,
+                  ).copyWith(color: AppColors.textPrimary),
                 ),
               ],
             ),
@@ -286,91 +295,93 @@ class _EditProfilePageState extends State<EditProfilePage> {
   Widget _formCard() {
     return Container(
       decoration: _cardDecoration(),
-      child: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(18),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  backgroundColor: AppColors.primary.withValues(alpha: 0.10),
-                  child: const Icon(Icons.person_outline,
-                      color: AppColors.primary),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "Personal Information",
-                        style: AppType.display(size: 18),
-                      ),
-                      Text(
-                        "Update your details below and save",
-                        style: AppType.body(size: 13)
-                            .copyWith(color: AppColors.textSecondary),
-                      ),
-                    ],
+      child: Form(
+        key: _formKey,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(18),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    backgroundColor: AppColors.primary.withValues(alpha: 0.10),
+                    child: const Icon(
+                      Icons.person_outline,
+                      color: AppColors.primary,
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-
-          if (saved)
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 18),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(AppRadius.sm),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Personal Information",
+                          style: AppType.display(size: 18),
+                        ),
+                        Text(
+                          "Update your details below and save",
+                          style: AppType.body(
+                            size: 13,
+                          ).copyWith(color: AppColors.textSecondary),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
-              child: Text(
-                "✅ Profile updated successfully!",
-                style: AppType.body(size: 14, weight: FontWeight.w800)
-                    .copyWith(color: AppColors.primary),
-              ),
             ),
 
-          Padding(
-            padding: const EdgeInsets.all(18),
-            child: Column(
-              children: [
-                _field(
-                  label: "Full Name *",
-                  icon: "👤",
-                  controller: nameCtrl,
-                  hint: "Your full name",
+            if (saved)
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 18),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
                 ),
-                const SizedBox(height: 14),
-                _field(
-                  label: "Email Address *",
-                  icon: "✉️",
-                  controller: emailCtrl,
-                  hint: "you@email.com",
-                  keyboardType: TextInputType.emailAddress,
+                child: Text(
+                  "✅ Profile updated successfully!",
+                  style: AppType.body(
+                    size: 14,
+                    weight: FontWeight.w800,
+                  ).copyWith(color: AppColors.primary),
                 ),
-                const SizedBox(height: 14),
-                _field(
-                  label: "Mobile Number",
-                  icon: "📞",
-                  controller: mobileCtrl,
-                  hint: "+91 98765 43210",
-                  keyboardType: TextInputType.phone,
-                ),
-                const SizedBox(height: 14),
-                _genderField(),
-                const SizedBox(height: 14),
-                _dobField(),
-                const SizedBox(height: 14),
-                _locationFields(),
-                const SizedBox(height: 22),
-                _actions(),
-              ],
+              ),
+
+            Padding(
+              padding: const EdgeInsets.all(18),
+              child: Column(
+                children: [
+                  _field(
+                    label: "Full Name *",
+                    icon: "👤",
+                    controller: nameCtrl,
+                    hint: "Your full name",
+                  ),
+                  const SizedBox(height: 14),
+                  _field(
+                    label: "Email Address *",
+                    icon: "✉️",
+                    controller: emailCtrl,
+                    hint: "you@email.com",
+                    keyboardType: TextInputType.emailAddress,
+                  ),
+                  const SizedBox(height: 14),
+                  PhoneField(controller: _geo, style: GeoFieldStyle.profile),
+                  const SizedBox(height: 14),
+                  _genderField(),
+                  const SizedBox(height: 14),
+                  _dobField(),
+                  const SizedBox(height: 14),
+                  _locationFields(),
+                  const SizedBox(height: 22),
+                  _actions(),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -390,8 +401,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
         TextField(
           controller: controller,
           keyboardType: keyboardType,
-          style: AppType.body(size: 14)
-              .copyWith(color: AppColors.textPrimary),
+          style: AppType.body(size: 14).copyWith(color: AppColors.textPrimary),
           onChanged: (_) => setState(() => saved = false),
           decoration: _inputDecoration(icon: icon, hint: hint),
         ),
@@ -407,8 +417,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
           initialValue: gender,
-          style: AppType.body(size: 14)
-              .copyWith(color: AppColors.textPrimary),
+          style: AppType.body(size: 14).copyWith(color: AppColors.textPrimary),
           items: const [
             DropdownMenuItem(value: "", child: Text("Select gender")),
             DropdownMenuItem(value: "Male", child: Text("Male")),
@@ -453,10 +462,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
                         : "${dob!.day}-${dob!.month}-${dob!.year}",
                     style: AppType.body(size: 14, weight: FontWeight.w600)
                         .copyWith(
-                      color: dob == null
-                          ? AppColors.textSecondary
-                          : AppColors.textPrimary,
-                    ),
+                          color: dob == null
+                              ? AppColors.textSecondary
+                              : AppColors.textPrimary,
+                        ),
                   ),
                 ),
                 if (dob != null)
@@ -476,265 +485,64 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   // ── Country → State / Province → City (same lists as the web profile) ──
-  BackendCountry? _resolveCountry() {
-    final value = countryCtrl.text.trim().toLowerCase();
-    if (value.isEmpty) return null;
-    for (final c in _countryList) {
-      if (c.name.toLowerCase() == value || c.isoCode.toLowerCase() == value) {
-        return c;
-      }
-    }
-    return null;
-  }
-
-  String? _matchedState() {
-    final value = state.trim().toLowerCase();
-    if (value.isEmpty) return null;
-    for (final name in _stateList) {
-      if (name.toLowerCase() == value) return name;
-    }
-    return null;
-  }
-
-  Future<void> _loadLocationLists() async {
-    if (_countryList.isEmpty && !_loadingCountries) {
-      setState(() => _loadingCountries = true);
-      final result = await _locations.countries();
-      if (!mounted) return;
-      setState(() {
-        _loadingCountries = false;
-        if (result.success) _countryList = result.data ?? [];
-      });
-    }
-    await _refreshStates();
-  }
-
-  Future<void> _refreshStates() async {
-    final country = _resolveCountry();
-    if (country == null) {
-      if (!mounted) return;
-      setState(() {
-        _stateList = [];
-        _cityList = [];
-      });
-      return;
-    }
-    setState(() => _loadingStates = true);
-    final result = await _locations.states(country.name);
-    if (!mounted) return;
-    // The user may have picked another country while this was loading.
-    if (_resolveCountry()?.name != country.name) return;
-    setState(() {
-      _loadingStates = false;
-      _stateList = result.success ? (result.data ?? []) : [];
-    });
-    await _refreshCities();
-  }
-
-  Future<void> _refreshCities() async {
-    final country = _resolveCountry();
-    final matchedState = _matchedState();
-    if (country == null || matchedState == null) {
-      if (!mounted) return;
-      setState(() => _cityList = []);
-      return;
-    }
-    setState(() => _loadingCities = true);
-    final result = await _locations.cities(country.name, matchedState);
-    if (!mounted) return;
-    if (_resolveCountry()?.name != country.name ||
-        _matchedState() != matchedState) {
-      return;
-    }
-    setState(() {
-      _loadingCities = false;
-      _cityList = result.success ? (result.data ?? []) : [];
-    });
-  }
-
-  Future<void> _pickCountry() async {
-    final picked = await showSearchPicker(
-      context,
-      title: 'Select country',
-      options: [_unsetOption, ..._countryList.map((c) => c.name)],
-    );
-    if (picked == null || !mounted) return;
-    setState(() {
-      countryCtrl.text = picked == _unsetOption ? '' : picked;
-      state = '';
-      city = '';
-      _stateList = [];
-      _cityList = [];
-      saved = false;
-    });
-    await _refreshStates();
-  }
-
-  Future<void> _pickState() async {
-    final picked = await showSearchPicker(
-      context,
-      title: 'Select state / province',
-      options: [_unsetOption, ..._stateList],
-    );
-    if (picked == null || !mounted) return;
-    setState(() {
-      state = picked == _unsetOption ? '' : picked;
-      city = '';
-      _cityList = [];
-      saved = false;
-    });
-    await _refreshCities();
-  }
-
-  Future<void> _pickCity() async {
-    final picked = await showSearchPicker(
-      context,
-      title: 'Select city',
-      options: [_unsetOption, ..._cityList],
-    );
-    if (picked == null || !mounted) return;
-    setState(() {
-      city = picked == _unsetOption ? '' : picked;
-      saved = false;
-    });
-  }
-
-  Widget _pickerField({
-    required String label,
-    required String value,
-    required String placeholder,
-    required VoidCallback? onTap,
-  }) {
+  Widget _locationFields() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label(label),
-        const SizedBox(height: 8),
-        InkWell(
-          borderRadius: BorderRadius.circular(AppRadius.sm),
-          onTap: onTap,
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(15),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              border: Border.all(color: AppColors.border),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    value.isEmpty ? placeholder : value,
-                    style: AppType.body(size: 14, weight: FontWeight.w600)
-                        .copyWith(
-                      color: value.isEmpty
-                          ? AppColors.textSecondary
-                          : AppColors.textPrimary,
+        // Shown while no country is saved (a sign-up through an old app
+        // build, or someone who cleared it).
+        ListenableBuilder(
+          listenable: _geo,
+          builder: (context, _) {
+            if (_geo.hasCountry) return const SizedBox.shrink();
+            return Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 14),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.amberTint,
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('📍', style: TextStyle(fontSize: 16)),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Please add your location',
+                          style: AppType.body(
+                            size: 13,
+                            weight: FontWeight.w800,
+                          ).copyWith(color: AppColors.amberInk),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Choose your country, state and city, then tap Save Changes.',
+                          style: AppType.body(
+                            size: 12,
+                          ).copyWith(color: AppColors.textSecondary),
+                        ),
+                      ],
                     ),
                   ),
-                ),
-                const Icon(Icons.arrow_drop_down, size: 20),
-              ],
-            ),
-          ),
+                ],
+              ),
+            );
+          },
         ),
-      ],
-    );
-  }
-
-  Widget _freeTextField({
-    required String label,
-    required String hint,
-    required String value,
-    required ValueChanged<String> onChanged,
-    required Key key,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _label(label),
-        const SizedBox(height: 8),
-        TextFormField(
-          key: key,
-          initialValue: value,
-          maxLength: 100,
-          style: AppType.body(size: 14).copyWith(color: AppColors.textPrimary),
-          onChanged: (v) => setState(() {
-            onChanged(v);
-            saved = false;
-          }),
-          decoration:
-              _inputDecoration(icon: "📍", hint: hint).copyWith(counterText: ''),
-        ),
-      ],
-    );
-  }
-
-  Widget _locationFields() {
-    final countryResolved = _resolveCountry() != null;
-    final matchedState = _matchedState();
-    // Same rules as the web LocationSelects: a country with no subdivisions,
-    // or a state with no city list, falls back to free text so a stored
-    // value is never blanked on save.
-    final stateIsFreeText =
-        countryResolved && !_loadingStates && _stateList.isEmpty;
-    final cityIsFreeText =
-        !_loadingStates && !_loadingCities && _cityList.isEmpty;
-    final countryText = _resolveCountry()?.name ?? countryCtrl.text.trim();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _pickerField(
-          label: "Country (optional)",
-          value: countryText,
-          placeholder: _loadingCountries ? "Loading…" : "Select country",
-          onTap: _loadingCountries || _countryList.isEmpty ? null : _pickCountry,
-        ),
-        const SizedBox(height: 14),
-        if (stateIsFreeText)
-          _freeTextField(
-            label: "State / Province (optional)",
-            hint: "State / Province",
-            value: state,
-            onChanged: (v) => state = v,
-            key: ValueKey('state-text-$countryText'),
-          )
-        else
-          _pickerField(
-            label: "State / Province (optional)",
-            value: matchedState ?? state.trim(),
-            placeholder: !countryResolved
-                ? "Select country first"
-                : _loadingStates
-                    ? "Loading…"
-                    : "Select state / province",
-            onTap: countryResolved && !_loadingStates ? _pickState : null,
-          ),
-        const SizedBox(height: 14),
-        if (cityIsFreeText)
-          _freeTextField(
-            label: "City (optional)",
-            hint: "City",
-            value: city,
-            onChanged: (v) => city = v,
-            key: ValueKey('city-text-$countryText-${state.trim()}'),
-          )
-        else
-          _pickerField(
-            label: "City (optional)",
-            value: city.trim(),
-            placeholder: _loadingCities ? "Loading…" : "Select city",
-            onTap: _loadingCities ? null : _pickCity,
-          ),
+        LocationSelects(controller: _geo, style: GeoFieldStyle.profile),
         if (locationSource == 'ip') ...[
           const SizedBox(height: 8),
           Text(
             "📍 We estimated your location from your internet connection. "
             "Please confirm or correct it.",
-            style: AppType.body(size: 12)
-                .copyWith(color: AppColors.textSecondary),
+            style: AppType.body(
+              size: 12,
+            ).copyWith(color: AppColors.textSecondary),
           ),
         ],
       ],
@@ -798,8 +606,10 @@ class _EditProfilePageState extends State<EditProfilePage> {
   Widget _label(String text) {
     return Text(
       text.toUpperCase(),
-      style: AppType.body(size: 11, weight: FontWeight.w900)
-          .copyWith(color: AppColors.textSecondary),
+      style: AppType.body(
+        size: 11,
+        weight: FontWeight.w900,
+      ).copyWith(color: AppColors.textSecondary),
     );
   }
 
@@ -816,8 +626,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
         ),
       ),
       hintText: hint,
-      hintStyle: AppType.body(size: 14)
-          .copyWith(color: AppColors.textSecondary),
+      hintStyle: AppType.body(
+        size: 14,
+      ).copyWith(color: AppColors.textSecondary),
       filled: true,
       fillColor: AppColors.surface,
       border: OutlineInputBorder(
@@ -844,9 +655,9 @@ class _EditProfilePageState extends State<EditProfilePage> {
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
-            colorScheme: Theme.of(context)
-                .colorScheme
-                .copyWith(primary: AppColors.primary),
+            colorScheme: Theme.of(
+              context,
+            ).colorScheme.copyWith(primary: AppColors.primary),
           ),
           child: child!,
         );
@@ -867,16 +678,17 @@ class _EditProfilePageState extends State<EditProfilePage> {
       nameCtrl.text = originalData['name'] ?? '';
       emailCtrl.text = originalData['email'] ?? '';
       role = originalData['role'] ?? 'patient';
-      mobileCtrl.text = originalData['mobile'] ?? '';
       gender = originalData['gender'] ?? '';
-      countryCtrl.text = originalData['country'] ?? '';
-      state = originalData['state'] ?? '';
-      city = originalData['city'] ?? '';
       location = originalData['location'] ?? '';
       dob = _parseDob(originalData['dob'] ?? '');
       saved = false;
     });
-    unawaited(_loadLocationLists());
+    _geo.loadFromProfile(
+      country: originalData['country'] ?? '',
+      stateValue: originalData['state'] ?? '',
+      cityValue: originalData['city'] ?? '',
+      mobile: originalData['mobile'] ?? '',
+    );
   }
 
   void _save() async {
@@ -927,6 +739,18 @@ class _EditProfilePageState extends State<EditProfilePage> {
       if (!mounted || !verified) return;
     }
 
+    // Phone: once set it can't be blanked, and a changed number must be valid.
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _geo.firstError ?? 'Please check the highlighted fields.',
+          ),
+        ),
+      );
+      return;
+    }
+
     setState(() => saving = true);
 
     final updateResult = await _authService.updateProfile(
@@ -934,12 +758,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
       name: trimmedName,
       email: trimmedEmail,
       role: role,
-      mobile: mobileCtrl.text.trim(),
+      mobile: _geo.mobileForSubmit,
       dob: _formatDob(dob),
       gender: gender,
-      country: countryCtrl.text.trim(),
-      state: state.trim(),
-      city: city.trim(),
+      country: _geo.countryName.trim(),
+      state: _geo.state.trim(),
+      city: _geo.city,
       location: location,
       sendEmptyOptionals: remoteLoaded,
     );
@@ -970,12 +794,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
       name: profile['name'] ?? trimmedName,
       email: profile['email'] ?? trimmedEmail,
       role: profile['role'] ?? role,
-      mobile: profile['mobile'] ?? mobileCtrl.text.trim(),
+      mobile: profile['mobile'] ?? _geo.mobileForSubmit,
       dob: profile['dob'] ?? _formatDob(dob),
       gender: profile['gender'] ?? gender,
-      country: profile['country'] ?? countryCtrl.text.trim(),
-      state: profile['state'] ?? state,
-      city: profile['city'] ?? city,
+      country: profile['country'] ?? _geo.countryName.trim(),
+      state: profile['state'] ?? _geo.state.trim(),
+      city: profile['city'] ?? _geo.city,
       location: profile['location'] ?? location,
     );
 
@@ -1004,7 +828,6 @@ class _EditProfilePageState extends State<EditProfilePage> {
       syncingProfile = true;
       profileSyncError = '';
     });
-    unawaited(_loadLocationLists());
 
     final remoteResult = await _authService.fetchCurrentProfile(silent: true);
 
@@ -1029,12 +852,12 @@ class _EditProfilePageState extends State<EditProfilePage> {
       name: remoteProfile['name'] ?? nameCtrl.text,
       email: remoteProfile['email'] ?? emailCtrl.text,
       role: remoteProfile['role'] ?? role,
-      mobile: remoteProfile['mobile'] ?? mobileCtrl.text,
+      mobile: remoteProfile['mobile'] ?? _geo.mobileForSubmit,
       dob: remoteProfile['dob'] ?? _formatDob(dob),
       gender: remoteProfile['gender'] ?? gender,
-      country: remoteProfile['country'] ?? countryCtrl.text,
-      state: remoteProfile['state'] ?? state,
-      city: remoteProfile['city'] ?? city,
+      country: remoteProfile['country'] ?? _geo.countryName,
+      state: remoteProfile['state'] ?? _geo.state,
+      city: remoteProfile['city'] ?? _geo.city,
       location: remoteProfile['location'] ?? location,
     );
 
@@ -1044,7 +867,6 @@ class _EditProfilePageState extends State<EditProfilePage> {
       syncingProfile = false;
       profileSyncError = '';
     });
-    unawaited(_loadLocationLists());
   }
 
   void _applyProfile(Map<String, String> profile) {
@@ -1054,11 +876,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
     role = (profile['role']?.trim().isNotEmpty ?? false)
         ? profile['role']!
         : 'patient';
-    mobileCtrl.text = profile['mobile'] ?? '';
     gender = profile['gender'] ?? '';
-    countryCtrl.text = profile['country'] ?? '';
-    state = profile['state'] ?? '';
-    city = profile['city'] ?? '';
     location = profile['location'] ?? '';
     if (profile.containsKey('locationSource')) {
       locationSource = profile['locationSource'] ?? '';
@@ -1070,14 +888,20 @@ class _EditProfilePageState extends State<EditProfilePage> {
       'name': nameCtrl.text,
       'email': emailCtrl.text,
       'role': role,
-      'mobile': mobileCtrl.text,
+      'mobile': profile['mobile'] ?? '',
       'dob': _formatDob(dob),
       'gender': gender,
-      'country': countryCtrl.text,
-      'state': state,
-      'city': city,
+      'country': profile['country'] ?? '',
+      'state': profile['state'] ?? '',
+      'city': profile['city'] ?? '',
       'location': location,
     };
+    _geo.loadFromProfile(
+      country: originalData['country']!,
+      stateValue: originalData['state']!,
+      cityValue: originalData['city']!,
+      mobile: originalData['mobile']!,
+    );
   }
 
   DateTime? _parseDob(String value) {

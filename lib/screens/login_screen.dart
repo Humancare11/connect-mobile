@@ -3,18 +3,16 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:url_launcher/url_launcher.dart';
-import '../models/apple_auth_result.dart';
 import '../widgets/apple_sign_in_button.dart';
 import '../widgets/google_sign_in_web_stub.dart'
     if (dart.library.js_interop) 'package:google_sign_in_web/web_only.dart'
     as web_only;
 import 'main_screen.dart';
 import 'register_screen.dart';
+import 'social_signup_completion_screen.dart';
 import '../services/auth_service.dart';
 import '../services/auth_validators.dart';
 import '../widgets/auth_widgets.dart';
-import '../widgets/mobile_phone_field.dart';
 import 'forgot_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -29,25 +27,13 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _authService = AuthService();
-  final _googlePhone = MobilePhoneController();
 
   bool _loading = false;
   bool _googleLoading = false;
   StreamSubscription<GoogleSignInAuthenticationEvent>? _googleAuthSubscription;
   Timer? _googleWebTimeoutTimer;
   bool _obscurePassword = true;
-  bool _showGoogleComplete = false;
-  bool _termsConsent = false;
-  bool _privacyConsent = false;
-  bool _hipaaConsent = false;
   String _error = '';
-  String _googleAccessToken = '';
-  String _googleName = '';
-  String _googleEmail = '';
-  // Set instead of _googleAccessToken when a first-time user came in via
-  // Sign in with Apple; the completion screen below then finishes that flow.
-  AppleCredentialData? _appleCredential;
-  final _appleNameController = TextEditingController();
   bool _appleLoading = false;
 
   // Brand tokens
@@ -104,7 +90,8 @@ class _LoginScreenState extends State<LoginScreen> {
         if (!mounted || !_googleLoading) return;
         setState(() {
           _googleLoading = false;
-          _error = 'Google Sign-In was cancelled or timed out. Please try again.';
+          _error =
+              'Google Sign-In was cancelled or timed out. Please try again.';
         });
       });
       return;
@@ -124,17 +111,14 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!result.success) return;
 
     if (result.isNewUser) {
-      setState(() {
-        _showGoogleComplete = true;
-        _googleAccessToken = result.accessToken;
-        _appleCredential = null;
-        _googleName = result.googleName;
-        _googleEmail = result.googleEmail;
-        _googlePhone.number.clear();
-        _termsConsent = false;
-        _privacyConsent = false;
-        _hipaaConsent = false;
-      });
+      await SocialSignupCompletionScreen.open(
+        context,
+        SocialSignupSession(
+          name: result.googleName,
+          email: result.googleEmail,
+          googleAccessToken: result.accessToken,
+        ),
+      );
       return;
     }
 
@@ -163,20 +147,14 @@ class _LoginScreenState extends State<LoginScreen> {
     if (!result.success) return;
 
     if (result.isNewUser) {
-      setState(() {
-        _showGoogleComplete = true;
-        _appleCredential = result.credential;
-        _googleAccessToken = '';
-        // The completion screen is shared with Google; these two only feed
-        // its greeting.
-        _googleName = result.name;
-        _googleEmail = result.email;
-        _appleNameController.clear();
-        _googlePhone.number.clear();
-        _termsConsent = false;
-        _privacyConsent = false;
-        _hipaaConsent = false;
-      });
+      await SocialSignupCompletionScreen.open(
+        context,
+        SocialSignupSession(
+          name: result.name,
+          email: result.email,
+          appleCredential: result.credential,
+        ),
+      );
       return;
     }
 
@@ -184,57 +162,6 @@ class _LoginScreenState extends State<LoginScreen> {
     await _authService.saveSession(result.authResponse!);
     if (!mounted) return;
     showAuthSnackBar(context, 'Login Successful');
-    Navigator.of(
-      context,
-    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
-  }
-
-  Future<void> _completeAppleRegistration() async {
-    final credential = _appleCredential;
-    if (_loading || credential == null) return;
-
-    final name = _googleName.isNotEmpty
-        ? _googleName
-        : _appleNameController.text.trim();
-    if (name.isEmpty) {
-      setState(() => _error = 'Please enter your name.');
-      return;
-    }
-
-    final mobileError = AuthValidators.mobileError(_googlePhone.fullNumber);
-    if (mobileError.isNotEmpty) {
-      setState(() => _error = mobileError);
-      return;
-    }
-
-    if (!_termsConsent || !_privacyConsent || !_hipaaConsent) {
-      setState(() => _error = 'Accept Terms, Privacy Policy, and HIPAA consent requirements');
-      return;
-    }
-
-    setState(() {
-      _loading = true;
-      _error = '';
-    });
-
-    final result = await _authService.completeAppleRegistration(
-      credential: credential,
-      name: name,
-      email: _googleEmail,
-      mobile: _googlePhone.fullNumber,
-      privacyConsent: _privacyConsent,
-      hipaaConsent: _hipaaConsent,
-    );
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      _error = result.success ? '' : result.message;
-    });
-
-    if (!result.success || result.authResponse == null) return;
-    await _authService.saveSession(result.authResponse!);
-    if (!mounted) return;
-    showAuthSnackBar(context, 'Registration Successful');
     Navigator.of(
       context,
     ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
@@ -259,17 +186,14 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!result.success) return;
 
       if (result.isNewUser) {
-        setState(() {
-          _showGoogleComplete = true;
-          _googleAccessToken = result.accessToken;
-          _appleCredential = null;
-          _googleName = result.googleName;
-          _googleEmail = result.googleEmail;
-          _googlePhone.number.clear();
-          _termsConsent = false;
-          _privacyConsent = false;
-          _hipaaConsent = false;
-        });
+        await SocialSignupCompletionScreen.open(
+          context,
+          SocialSignupSession(
+            name: result.googleName,
+            email: result.googleEmail,
+            googleAccessToken: result.accessToken,
+          ),
+        );
         return;
       }
 
@@ -289,46 +213,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _completeGoogleRegistration() async {
-    if (_appleCredential != null) return _completeAppleRegistration();
-    if (_loading) return;
-    final mobileError = AuthValidators.mobileError(_googlePhone.fullNumber);
-    if (mobileError.isNotEmpty) {
-      setState(() => _error = mobileError);
-      return;
-    }
-
-    if (!_termsConsent || !_privacyConsent || !_hipaaConsent) {
-      setState(() => _error = 'Accept Terms, Privacy Policy, and HIPAA consent requirements');
-      return;
-    }
-
-    setState(() {
-      _loading = true;
-      _error = '';
-    });
-
-    final result = await _authService.completeGoogleRegistration(
-      accessToken: _googleAccessToken,
-      mobile: _googlePhone.fullNumber,
-      privacyConsent: _privacyConsent,
-      hipaaConsent: _hipaaConsent,
-    );
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      _error = result.success ? '' : result.message;
-    });
-
-    if (!result.success || result.authResponse == null) return;
-    await _authService.saveSession(result.authResponse!);
-    if (!mounted) return;
-    showAuthSnackBar(context, 'Registration Successful');
-    Navigator.of(
-      context,
-    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
-  }
-
   @override
   void initState() {
     super.initState();
@@ -336,21 +220,22 @@ class _LoginScreenState extends State<LoginScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         if (!mounted) return;
         await GoogleSignIn.instance.initialize();
-        _googleAuthSubscription = GoogleSignIn.instance.authenticationEvents.listen(
-          (event) async {
-            if (event is GoogleSignInAuthenticationEventSignIn) {
-              await _handleGoogleSignedIn(event.user);
-            }
-          },
-          onError: (Object error) {
-            _googleWebTimeoutTimer?.cancel();
-            if (!mounted) return;
-            setState(() {
-              _googleLoading = false;
-              _error = 'Google Sign-In failed. Please try again.';
-            });
-          },
-        );
+        _googleAuthSubscription = GoogleSignIn.instance.authenticationEvents
+            .listen(
+              (event) async {
+                if (event is GoogleSignInAuthenticationEventSignIn) {
+                  await _handleGoogleSignedIn(event.user);
+                }
+              },
+              onError: (Object error) {
+                _googleWebTimeoutTimer?.cancel();
+                if (!mounted) return;
+                setState(() {
+                  _googleLoading = false;
+                  _error = 'Google Sign-In failed. Please try again.';
+                });
+              },
+            );
       });
     }
   }
@@ -361,17 +246,11 @@ class _LoginScreenState extends State<LoginScreen> {
     _googleWebTimeoutTimer?.cancel();
     _emailController.dispose();
     _passwordController.dispose();
-    _googlePhone.dispose();
-    _appleNameController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_showGoogleComplete) {
-      return _buildGoogleCompletionScreen();
-    }
-
     return Scaffold(
       backgroundColor: Colors.white,
       body: SafeArea(
@@ -485,131 +364,6 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // ─── CARD ──────────────────────────────────────────────────────
-  Widget _buildGoogleCompletionScreen() {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        foregroundColor: _primary,
-        elevation: 0,
-        title: const Text('Complete your profile', style: TextStyle(fontWeight: FontWeight.w800)),
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Welcome ${_googleName.isNotEmpty ? _googleName : 'there'}',
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w800,
-                  color: _textDark,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _googleEmail.isNotEmpty
-                    ? 'We need a few more details to finish creating your account for $_googleEmail.'
-                    : 'We need a few more details to finish creating your account.',
-                style: const TextStyle(fontSize: 14, color: _textMuted, height: 1.4),
-              ),
-              const SizedBox(height: 24),
-              if (_error.isNotEmpty) ...[
-                _messageBox(_error, isError: true),
-                const SizedBox(height: 16),
-              ],
-              if (_appleCredential != null) ...[
-                if (_googleName.isEmpty) ...[
-                  // Apple only shares the name on the very first authorization,
-                  // so if we never received it the user must supply it.
-                  TextField(
-                    controller: _appleNameController,
-                    textCapitalization: TextCapitalization.words,
-                    decoration: const InputDecoration(
-                      labelText: 'Full name',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                if (_googleEmail.toLowerCase().endsWith('@privaterelay.appleid.com')) ...[
-                  const Text(
-                    "You chose to hide your email, so account emails will be sent through Apple's private relay address.",
-                    style: TextStyle(fontSize: 13, color: Color(0xFF6B7280), height: 1.4),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-              ],
-              _label('Mobile Number'),
-              const SizedBox(height: 8),
-              MobilePhoneField(controller: _googlePhone),
-              const SizedBox(height: 16),
-              CheckboxListTile(
-                value: _termsConsent,
-                onChanged: (value) => setState(() => _termsConsent = value ?? false),
-                title: Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    const Text('I agree to the '),
-                    GestureDetector(
-                      onTap: _openTerms,
-                      child: const Text(
-                        'Terms of Service',
-                        style: TextStyle(
-                          color: Color(0xff2563eb),
-                          fontWeight: FontWeight.w600,
-                          decoration: TextDecoration.underline,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
-              CheckboxListTile(
-                value: _privacyConsent,
-                onChanged: (value) => setState(() => _privacyConsent = value ?? false),
-                title: const Text('I agree to the Privacy Policy'),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
-              CheckboxListTile(
-                value: _hipaaConsent,
-                onChanged: (value) => setState(() => _hipaaConsent = value ?? false),
-                title: const Text('I accept the HIPAA consent requirements'),
-                controlAffinity: ListTileControlAffinity.leading,
-                contentPadding: EdgeInsets.zero,
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: _loading ? null : _completeGoogleRegistration,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _primary,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                  ),
-                  child: _loading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                        )
-                      : const Text('Create Account'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   Widget _buildLoginCard() {
     return Container(
       padding: const EdgeInsets.all(24),
@@ -805,21 +559,6 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
-  Future<void> _openTerms() async {
-    var launched = false;
-    try {
-      launched = await launchUrl(
-        Uri.parse('https://humancareconnect.co/terms-of-service'),
-        mode: LaunchMode.externalApplication,
-      );
-    } catch (_) {
-      launched = false;
-    }
-    if (!launched && mounted) {
-      setState(() => _error = "Couldn't open the Terms of Service. Please try again.");
-    }
-  }
-
   Widget _errorBox() {
     return Container(
       width: double.infinity,
@@ -927,7 +666,10 @@ class _LoginScreenState extends State<LoginScreen> {
     return Row(
       children: [
         Expanded(
-          child: Container(height: 1, color: Colors.black.withValues(alpha: 0.08)),
+          child: Container(
+            height: 1,
+            color: Colors.black.withValues(alpha: 0.08),
+          ),
         ),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -943,7 +685,10 @@ class _LoginScreenState extends State<LoginScreen> {
           ),
         ),
         Expanded(
-          child: Container(height: 1, color: Colors.black.withValues(alpha: 0.08)),
+          child: Container(
+            height: 1,
+            color: Colors.black.withValues(alpha: 0.08),
+          ),
         ),
       ],
     );
@@ -996,26 +741,6 @@ class _LoginScreenState extends State<LoginScreen> {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _messageBox(String message, {required bool isError}) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: isError ? const Color(0xFFFEF2F2) : const Color(0xFFECFDF3),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: isError ? const Color(0xFFFECACA) : const Color(0xFFA7F3D0)),
-      ),
-      child: Text(
-        message,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: isError ? const Color(0xFFDC2626) : const Color(0xFF047857),
         ),
       ),
     );

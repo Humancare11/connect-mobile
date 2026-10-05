@@ -6,7 +6,9 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
+import '../config/app_info.dart';
 import '../models/api_result.dart';
+import 'app_update_service.dart';
 import 'idle_session_timer.dart';
 import 'loading_service.dart';
 import 'session_expired_service.dart';
@@ -55,6 +57,7 @@ class ApiClient {
       final headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        ...AppBuildInfo.headers,
         if (token.isNotEmpty) 'Authorization': 'Bearer $token',
       };
 
@@ -102,6 +105,7 @@ class ApiClient {
 
       final headers = <String, String>{
         'Accept': 'application/json',
+        ...AppBuildInfo.headers,
         if (token.isNotEmpty) 'Authorization': 'Bearer $token',
       };
 
@@ -169,6 +173,7 @@ class ApiClient {
       final headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        ...AppBuildInfo.headers,
         if (token.isNotEmpty) 'Authorization': 'Bearer $token',
       };
 
@@ -214,6 +219,7 @@ class ApiClient {
       final headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
+        ...AppBuildInfo.headers,
         if (token.isNotEmpty) 'Authorization': 'Bearer $token',
       };
 
@@ -273,6 +279,7 @@ class ApiClient {
             headers: {
               'Content-Type': 'application/json',
               'Accept': 'application/json',
+        ...AppBuildInfo.headers,
               'Authorization': 'Bearer $refreshToken',
               'X-Auth-Role': role,
             },
@@ -418,6 +425,13 @@ class ApiClient {
           ? jsonDecode(response.body)
           : <String, dynamic>{};
       final data = _asMap(decoded);
+      // The backend refuses sign-up from a build below its minimum with 426;
+      // the app turns that into its blocking "Please update" screen.
+      if (response.statusCode == 426 && data['code'] == 'APP_UPDATE_REQUIRED') {
+        AppUpdateService.instance.requireUpdate(
+          storeUrl: data['storeUrl']?.toString() ?? '',
+        );
+      }
       final message = _messageFrom(data, 'Request failed.');
       final success = _isSuccessfulResponse(response.statusCode, data);
 
