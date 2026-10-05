@@ -4,7 +4,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../widgets/apple_sign_in_button.dart';
 import '../models/api_result.dart';
+import '../models/apple_auth_result.dart';
 import '../models/auth_response.dart';
 import '../models/location_model.dart';
 import '../widgets/google_sign_in_web_stub.dart'
@@ -201,6 +203,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String _googleAccessToken = '';
   String _googleName = '';
   String _googleEmail = '';
+  // Set instead of _googleAccessToken when a first-time user came in via
+  // Sign in with Apple; the completion screen below then finishes that flow.
+  AppleCredentialData? _appleCredential;
+  final _appleNameController = TextEditingController();
+  bool _appleLoading = false;
 
   // Form fields
   final _formKey = GlobalKey<FormState>();
@@ -276,6 +283,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     _passwordController.dispose();
     _mobileController.dispose();
     _googlePhone.dispose();
+    _appleNameController.dispose();
     _otpController.dispose();
     super.dispose();
   }
@@ -655,6 +663,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() {
         _showGoogleComplete = true;
         _googleAccessToken = result.accessToken;
+        _appleCredential = null;
         _googleName = result.googleName;
         _googleEmail = result.googleEmail;
         _googlePhone.number.clear();
@@ -686,6 +695,99 @@ class _RegisterScreenState extends State<RegisterScreen> {
     ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
   }
 
+  Future<void> _handleAppleSignUp() async {
+    if (_appleLoading || _loading || _googleLoading) return;
+    setState(() {
+      _appleLoading = true;
+      _error = '';
+    });
+    final result = await _authService.appleLogin();
+    if (!mounted) return;
+    setState(() {
+      _appleLoading = false;
+      _error = result.success || result.cancelled ? '' : result.message;
+    });
+
+    if (!result.success) return;
+
+    if (result.isNewUser) {
+      setState(() {
+        _showGoogleComplete = true;
+        _appleCredential = result.credential;
+        _googleAccessToken = '';
+        // The completion screen is shared with Google; these two only feed
+        // its greeting.
+        _googleName = result.name;
+        _googleEmail = result.email;
+        _appleNameController.clear();
+        _googlePhone.number.clear();
+        _termsConsent = false;
+        _privacyConsent = false;
+        _hipaaConsent = false;
+      });
+      return;
+    }
+
+    if (result.authResponse == null) return;
+    await _authService.saveSession(result.authResponse!);
+    if (!mounted) return;
+    showAuthSnackBar(context, 'Registration Successful');
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
+  }
+
+  Future<void> _completeAppleRegistration() async {
+    final credential = _appleCredential;
+    if (_loading || credential == null) return;
+
+    final name = _googleName.isNotEmpty
+        ? _googleName
+        : _appleNameController.text.trim();
+    if (name.isEmpty) {
+      _setError('Please enter your name.');
+      return;
+    }
+
+    final mobileError = AuthValidators.mobileError(_googlePhone.fullNumber);
+    if (mobileError.isNotEmpty) {
+      _setError(mobileError);
+      return;
+    }
+
+    if (!_termsConsent || !_privacyConsent || !_hipaaConsent) {
+      _setError('Accept Terms, Privacy Policy, and HIPAA consent requirements');
+      return;
+    }
+
+    setState(() {
+      _loading = true;
+      _error = '';
+    });
+
+    final result = await _authService.completeAppleRegistration(
+      credential: credential,
+      name: name,
+      email: _googleEmail,
+      mobile: _googlePhone.fullNumber,
+      privacyConsent: _privacyConsent,
+      hipaaConsent: _hipaaConsent,
+    );
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _error = result.success ? '' : result.message;
+    });
+
+    if (!result.success || result.authResponse == null) return;
+    await _authService.saveSession(result.authResponse!);
+    if (!mounted) return;
+    showAuthSnackBar(context, 'Registration Successful');
+    Navigator.of(
+      context,
+    ).pushReplacement(MaterialPageRoute(builder: (_) => const MainScreen()));
+  }
+
   Future<void> _handleGoogleSignedIn(GoogleSignInAccount account) async {
     _googleWebTimeoutTimer?.cancel();
     try {
@@ -707,6 +809,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         setState(() {
           _showGoogleComplete = true;
           _googleAccessToken = result.accessToken;
+          _appleCredential = null;
           _googleName = result.googleName;
           _googleEmail = result.googleEmail;
           _googlePhone.number.clear();
@@ -734,6 +837,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _completeGoogleRegistration() async {
+    if (_appleCredential != null) return _completeAppleRegistration();
     if (_loading) return;
     final mobileError = AuthValidators.mobileError(_googlePhone.fullNumber);
     if (mobileError.isNotEmpty) {
@@ -1201,6 +1305,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
           ),
           const SizedBox(height: 16),
           _googleSignupButton(),
+          if (AuthService.isAppleSignInSupported) ...[
+            const SizedBox(height: 12),
+            AppleSignInButton(
+              onPressed: _handleAppleSignUp,
+              loading: _appleLoading,
+              disabled: _loading || _googleLoading,
+            ),
+          ],
           const SizedBox(height: 20),
           Wrap(
             alignment: WrapAlignment.center,
@@ -1238,7 +1350,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
     }
 
-    final disabled = _loading || _googleLoading;
+    final disabled = _loading || _googleLoading || _appleLoading;
     return SizedBox(
       width: double.infinity,
       height: 52,
@@ -1294,6 +1406,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
               if (_error.isNotEmpty) ...[
                 _errorBox(_error),
                 const SizedBox(height: 16),
+              ],
+              if (_appleCredential != null) ...[
+                if (_googleName.isEmpty) ...[
+                  // Apple only shares the name on the very first authorization,
+                  // so if we never received it the user must supply it.
+                  TextField(
+                    controller: _appleNameController,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: const InputDecoration(
+                      labelText: 'Full name',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                if (_googleEmail.toLowerCase().endsWith('@privaterelay.appleid.com')) ...[
+                  const Text(
+                    "You chose to hide your email, so account emails will be sent through Apple's private relay address.",
+                    style: TextStyle(fontSize: 13, color: Color(0xFF6B7280), height: 1.4),
+                  ),
+                  const SizedBox(height: 16),
+                ],
               ],
               MobilePhoneField(controller: _googlePhone),
               const SizedBox(height: 14),

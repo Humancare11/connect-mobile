@@ -6,6 +6,7 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 import '../config/api_config.dart';
 import '../services/appointment_tree_service.dart';
 import '../services/payment_service.dart';
+import '../services/token_storage_service.dart';
 
 class AppointmentPaymentPage extends StatefulWidget {
   const AppointmentPaymentPage({super.key});
@@ -417,6 +418,9 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
         intent.clientSecret,
         phase: 'before initPaymentSheet',
       );
+      const tokenStorage = TokenStorageService();
+      final billingName = (await tokenStorage.getUserName())?.trim() ?? '';
+      final billingEmail = (await tokenStorage.getUserEmail())?.trim() ?? '';
       await Stripe.instance.initPaymentSheet(
         paymentSheetParameters: SetupPaymentSheetParameters(
           customFlow: false,
@@ -425,24 +429,24 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
           primaryButtonLabel: 'Pay \$${_displayAmount(amount)}',
           style: ThemeMode.system,
           allowsDelayedPaymentMethods: false,
-          billingDetails: const BillingDetails(
-            name: 'Humancare Connect Patient',
-            email: 'patient@example.com',
-            address: Address(
-              city: null,
-              country: 'US',
-              line1: null,
-              line2: null,
-              postalCode: '10001',
-              state: null,
-            ),
+          // The signed-in patient's real name/email are attached to the
+          // payment method (collection mode `never` below, so the sheet
+          // doesn't re-ask). The address is left to the sheet to collect —
+          // no placeholder address is ever sent to Stripe.
+          billingDetails: BillingDetails(
+            name: billingName.isEmpty ? null : billingName,
+            email: billingEmail.isEmpty ? null : billingEmail,
           ),
           billingDetailsCollectionConfiguration:
-              const BillingDetailsCollectionConfiguration(
-                name: CollectionMode.never,
+              BillingDetailsCollectionConfiguration(
+                name: billingName.isEmpty
+                    ? CollectionMode.automatic
+                    : CollectionMode.never,
+                email: billingEmail.isEmpty
+                    ? CollectionMode.automatic
+                    : CollectionMode.never,
                 phone: CollectionMode.never,
-                email: CollectionMode.never,
-                address: AddressCollectionMode.never,
+                address: AddressCollectionMode.automatic,
                 attachDefaultsToPaymentMethod: true,
               ),
           linkDisplayParams: const LinkDisplayParams(

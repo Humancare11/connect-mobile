@@ -1,3 +1,6 @@
+import 'dart:io' show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -153,7 +156,9 @@ class _MainScreenState extends State<MainScreen> {
       ),
     );
 
-    if (confirmed == true) {
+    // iOS has no back-button exit and Apple discourages programmatic quit —
+    // only Android honours SystemNavigator.pop().
+    if (confirmed == true && !kIsWeb && Platform.isAndroid) {
       SystemNavigator.pop();
     }
   }

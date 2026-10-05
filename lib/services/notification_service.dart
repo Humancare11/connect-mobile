@@ -84,6 +84,8 @@ class NotificationService {
 
   Future<void> syncTokenAfterLogin() async {
     try {
+      if (!await _waitForApnsToken()) return;
+
       final token = await _messaging.getToken();
       if (token == null || token.trim().isEmpty) return;
 
@@ -93,6 +95,30 @@ class NotificationService {
       debugPrint('[Notifications] token sync failed: $error');
       debugPrint('$stackTrace');
     }
+  }
+
+  // On iOS, FirebaseMessaging.getToken() throws `apns-token-not-set` (or
+  // returns null) until APNs has handed the device token to the SDK, which
+  // can lag the first launch. Poll getAPNSToken() with a few retries first.
+  // Returns true when it's safe to call getToken() (always true off iOS).
+  // On a simulator or a build without the Push capability the APNs token
+  // never arrives, so this gives up quietly and the caller skips the sync;
+  // onTokenRefresh will deliver the FCM token once APNs is ready.
+  static const List<int> _apnsRetryDelaysMs = [500, 1000, 2000, 3000];
+
+  Future<bool> _waitForApnsToken() async {
+    if (kIsWeb || !Platform.isIOS) return true;
+
+    for (var attempt = 0; attempt <= _apnsRetryDelaysMs.length; attempt++) {
+      final apnsToken = await _messaging.getAPNSToken();
+      if (apnsToken != null && apnsToken.isNotEmpty) return true;
+      if (attempt < _apnsRetryDelaysMs.length) {
+        await Future.delayed(Duration(milliseconds: _apnsRetryDelaysMs[attempt]));
+      }
+    }
+
+    debugPrint('[Notifications] APNs token not available yet; skipping FCM token sync.');
+    return false;
   }
 
   void flushPendingNavigation() {

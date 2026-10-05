@@ -1,10 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../models/api_result.dart';
+import '../models/apple_auth_result.dart';
 import '../models/auth_response.dart';
 import '../models/google_auth_result.dart';
 import '../utils/json_helpers.dart';
@@ -422,6 +427,188 @@ class AuthService {
       );
     } catch (error) {
       return const GoogleAuthResult(
+        success: false,
+        message: 'Registration failed.',
+      );
+    }
+  }
+
+  // ─── Sign in with Apple (iOS only) ───────────────────────────────────
+  // Backend contract: see BACKEND_APPLE_LOGIN.md at the project root.
+
+  static bool get isAppleSignInSupported =>
+      !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS;
+
+  static String _randomNonce([int length = 32]) {
+    const charset =
+        '0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._';
+    final random = Random.secure();
+    return List.generate(
+      length,
+      (_) => charset[random.nextInt(charset.length)],
+    ).join();
+  }
+
+  Future<AppleAuthResult> appleLogin() async {
+    if (!isAppleSignInSupported) {
+      return const AppleAuthResult(
+        success: false,
+        message: 'Sign in with Apple is only available on iOS.',
+      );
+    }
+
+    try {
+      if (!await SignInWithApple.isAvailable()) {
+        return const AppleAuthResult(
+          success: false,
+          message: 'Sign in with Apple is not available on this device.',
+        );
+      }
+
+      // Apple embeds the SHA-256 of this nonce in the identity token; the
+      // backend recomputes it from the raw value to reject replayed tokens.
+      final rawNonce = _randomNonce();
+      final hashedNonce = sha256.convert(utf8.encode(rawNonce)).toString();
+
+      final apple = await SignInWithApple.getAppleIDCredential(
+        scopes: const [
+          AppleIDAuthorizationScopes.email,
+          AppleIDAuthorizationScopes.fullName,
+        ],
+        nonce: hashedNonce,
+      );
+
+      final identityToken = apple.identityToken?.trim() ?? '';
+      if (identityToken.isEmpty) {
+        return const AppleAuthResult(
+          success: false,
+          message: 'Sign in with Apple did not return an identity token.',
+        );
+      }
+
+      // Apple supplies the name and (real or relay) email only on the FIRST
+      // authorization for this app on this Apple ID — every later sign-in
+      // returns nulls for both — so capture them now and carry them along.
+      final givenName = apple.givenName?.trim() ?? '';
+      final familyName = apple.familyName?.trim() ?? '';
+      final appleName = [
+        givenName,
+        familyName,
+      ].where((part) => part.isNotEmpty).join(' ');
+      final appleEmail = apple.email?.trim() ?? '';
+
+      final credential = AppleCredentialData(
+        identityToken: identityToken,
+        authorizationCode: apple.authorizationCode,
+        nonce: rawNonce,
+      );
+
+      final result = await _apiClient.post('/auth/apple', {
+        'identityToken': credential.identityToken,
+        'authorizationCode': credential.authorizationCode,
+        'nonce': credential.nonce,
+        if (givenName.isNotEmpty) 'firstName': givenName,
+        if (familyName.isNotEmpty) 'lastName': familyName,
+        if (appleEmail.isNotEmpty) 'email': appleEmail,
+      });
+
+      if (!result.success) {
+        return AppleAuthResult(
+          success: false,
+          message: result.message.isNotEmpty
+              ? result.message
+              : 'Sign in with Apple failed.',
+        );
+      }
+
+      final data = result.data ?? <String, dynamic>{};
+      if (data['isNewUser'] == true) {
+        final serverName = data['appleName']?.toString().trim() ?? '';
+        final serverEmail = data['appleEmail']?.toString().trim() ?? '';
+        return AppleAuthResult(
+          success: true,
+          message: 'Complete your profile to continue.',
+          isNewUser: true,
+          name: appleName.isNotEmpty ? appleName : serverName,
+          email: appleEmail.isNotEmpty ? appleEmail : serverEmail,
+          credential: credential,
+        );
+      }
+
+      final authResult = _authResult(
+        result,
+        'Sign in with Apple response was invalid.',
+      );
+      return AppleAuthResult(
+        success: authResult.success,
+        message: authResult.message,
+        authResponse: authResult.data,
+      );
+    } on SignInWithAppleAuthorizationException catch (error) {
+      if (error.code == AuthorizationErrorCode.canceled) {
+        return const AppleAuthResult(
+          success: false,
+          cancelled: true,
+          message: '',
+        );
+      }
+      debugPrint('Sign in with Apple failed: ${error.code} ${error.message}');
+      return const AppleAuthResult(
+        success: false,
+        message: 'Sign in with Apple failed. Please try again.',
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Sign in with Apple failed: $error');
+      debugPrint('$stackTrace');
+      return const AppleAuthResult(
+        success: false,
+        message: 'Sign in with Apple failed. Please try again.',
+      );
+    }
+  }
+
+  /// Second step for a first-time Apple user: re-sends the same Apple proof
+  /// plus the details the backend needs to actually create the account.
+  Future<AppleAuthResult> completeAppleRegistration({
+    required AppleCredentialData credential,
+    required String name,
+    required String email,
+    required String mobile,
+    required bool privacyConsent,
+    required bool hipaaConsent,
+  }) async {
+    try {
+      final result = await _apiClient.post('/auth/apple', {
+        'identityToken': credential.identityToken,
+        'authorizationCode': credential.authorizationCode,
+        'nonce': credential.nonce,
+        'name': name.trim(),
+        if (email.trim().isNotEmpty) 'email': email.trim(),
+        'mobile': mobile,
+        'privacyConsent': privacyConsent,
+        'hipaaConsent': hipaaConsent,
+      });
+
+      if (!result.success) {
+        return AppleAuthResult(
+          success: false,
+          message: result.message.isNotEmpty
+              ? result.message
+              : 'Registration failed.',
+        );
+      }
+
+      final authResult = _authResult(
+        result,
+        'Apple registration response was invalid.',
+      );
+      return AppleAuthResult(
+        success: authResult.success,
+        message: authResult.message,
+        authResponse: authResult.data,
+      );
+    } catch (error) {
+      return const AppleAuthResult(
         success: false,
         message: 'Registration failed.',
       );
