@@ -226,4 +226,19 @@ void main() {
       expect(result, isFalse);
     });
   });
+
+  group('call resilience constants', () {
+    test('local media recovery backs off and is bounded', () {
+      expect(kLocalMediaRecoveryDelaysMs, [500, 3000, 8000]);
+    });
+
+    test('fallback ICE config is STUN-only and well-formed', () {
+      final servers = kFallbackIceConfig['iceServers'] as List;
+      expect(servers, isNotEmpty);
+      for (final s in servers) {
+        expect((s as Map)['urls'].toString().startsWith('stun:'), isTrue);
+        expect(s.containsKey('credential'), isFalse);
+      }
+    });
+  });
 }

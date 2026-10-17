@@ -108,6 +108,23 @@ const Set<String> kTerminalDenyReasons = {
 /// 1s + 2s + 4s + 8s + 15s = 30s before the Retry button is shown.
 const List<int> kJoinRetryDelaysMs = [1000, 2000, 4000, 8000, 15000];
 
+/// Delays before each automatic re-acquire attempt after a local camera/mic
+/// track ends mid-call (unplugged device, revoked permission, OS reclaim).
+const List<int> kLocalMediaRecoveryDelaysMs = [500, 3000, 8000];
+
+/// STUN-only config used when the backend's /api/rtc/ice-servers cannot be
+/// reached or returns something unusable: a call that may fail on strict NATs
+/// is better than a dead "not configured" screen.
+const Map<String, dynamic> kFallbackIceConfig = {
+  'iceServers': [
+    {'urls': 'stun:stun.l.google.com:19302'},
+    {'urls': 'stun:stun1.l.google.com:19302'},
+  ],
+  'iceCandidatePoolSize': 10,
+  'bundlePolicy': 'max-bundle',
+  'rtcpMuxPolicy': 'require',
+};
+
 /// How long a resume-time signaling probe waits for the server's ack.
 const int kSocketProbeTimeoutMs = 3000;
 
@@ -1071,17 +1088,29 @@ class VideoCallController extends ChangeNotifier {
 
     if (_fetchingIceConfig) return;
     _fetchingIceConfig = true;
-    final iceSetup = await fetchIceServerConfig();
+    var iceSetup = await fetchIceServerConfig();
     _fetchingIceConfig = false;
     if (_disposed || _completedFlag) return;
 
     if (!iceSetup.isUsable) {
+      // Don't strand the user on a dead screen: fall back to STUN-only and say so.
+      _logEvent('ice_config_fallback', {'error': iceSetup.error});
       iceConfigError = iceSetup.error;
-      apptError = 'Video consultation is not configured: ${iceSetup.error}';
-      notifyListeners();
-      return;
+      iceSetup = IceServerSetup(config: kFallbackIceConfig, error: '', hasTurn: false);
+      _showInlineMessage(
+        'Relay server unavailable \u2013 the call may not connect on some networks.',
+        const Duration(seconds: 8),
+      );
+    } else {
+      iceConfigError = '';
+      if (!iceSetup.hasTurn) {
+        _logEvent('ice_no_turn_warning', {});
+        _showInlineMessage(
+          'Relay server unavailable \u2013 the call may not connect on some networks.',
+          const Duration(seconds: 8),
+        );
+      }
     }
-    iceConfigError = '';
 
     _completedFlag = false;
     _pendingRemoteCandidates.clear();
@@ -1526,12 +1555,40 @@ class VideoCallController extends ChangeNotifier {
     // button (already wired to retryMediaPermissions()) rather than adding
     // new UI/recovery machinery — the same real fix path already used for
     // an initial getUserMedia failure applies equally well to losing a
-    // track mid-call.
+    // track mid-call. The same path is also tried automatically (below), so
+    // the banner only stays up if that fails.
     camError = true;
     camErrorReason = kind == 'video'
         ? 'Your camera stopped working or its permission was revoked. Tap Retry to reconnect it.'
         : 'Your microphone stopped working or its permission was revoked. Tap Retry to reconnect it.';
     notifyListeners();
+    unawaited(_autoRecoverLocalMedia(kind));
+  }
+
+  bool _localMediaRecovering = false;
+
+  /// Re-acquires a camera/mic that died mid-call without the user doing
+  /// anything: retryMediaPermissions() re-runs getUserMedia, replaces the
+  /// tracks on the existing senders and renegotiates. Gives up after the last
+  /// delay, leaving the camError banner (with its Retry button) in place.
+  Future<void> _autoRecoverLocalMedia(String kind) async {
+    if (_localMediaRecovering) return;
+    _localMediaRecovering = true;
+    try {
+      for (var i = 0; i < kLocalMediaRecoveryDelaysMs.length; i++) {
+        await Future.delayed(Duration(milliseconds: kLocalMediaRecoveryDelaysMs[i]));
+        if (_disposed || _completedFlag) return;
+        await retryMediaPermissions();
+        if (_disposed) return;
+        if (!camError) {
+          _logEvent('local_media_recovered', {'kind': kind, 'attempt': i + 1});
+          return;
+        }
+      }
+      _logEvent('local_media_recovery_gave_up', {'kind': kind});
+    } finally {
+      _localMediaRecovering = false;
+    }
   }
 
   Future<RTCRtpTransceiver?> _getTransceiverForKind(RTCPeerConnection pc, String kind) async {
