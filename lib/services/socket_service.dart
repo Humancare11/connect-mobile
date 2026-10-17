@@ -83,6 +83,11 @@ class SocketService {
     _socket.onDisconnect((reason) {
       debugPrint('[socket] disconnected reason=$reason');
     });
+    // Server refused or failed to process one of our signaling events (not in
+    // the room, malformed payload, rate limited, handler error). Never silent.
+    _socket.on('signaling-error', (info) {
+      debugPrint('[socket] signaling-error $info');
+    });
     _socket.onConnectError((err) {
       debugPrint('[socket] connect_error $err');
     });

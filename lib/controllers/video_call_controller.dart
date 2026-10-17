@@ -417,7 +417,10 @@ class VideoCallController extends ChangeNotifier {
     Map<String, dynamic>? initialPatient,
     String initialRole = '',
     this.onCompletedByPeer,
-  })  : appt = initialAppointment,
+    // Injectable so tests can drive the controller with a fake signaling socket.
+    SocketService? socket,
+  })  : _socket = socket ?? SocketService.instance,
+        appt = initialAppointment,
         // Field is intentionally private; the parameter is intentionally
         // public (`initialDoctor`). A private named parameter (`this._initialDoctor`)
         // is a compile error, so an initializing formal isn't possible here.
@@ -433,7 +436,7 @@ class VideoCallController extends ChangeNotifier {
   final Map<String, dynamic>? _initialDoctor;
   final Map<String, dynamic>? _initialPatient;
   final String _initialRole;
-  final SocketService _socket = SocketService.instance;
+  final SocketService _socket;
 
   /// Called ~4s after the peer marks the appointment complete (patient side
   /// only) so the widget can navigate away. Kept as a callback instead of a
@@ -3528,6 +3531,31 @@ class VideoCallController extends ChangeNotifier {
   }
 
   // ── Socket connection lifecycle ──────────────────────────────────────
+
+  // ── Test hooks (no production caller) ─────────────────────────────────
+  @visibleForTesting
+  void debugRegisterSocketListeners() => _registerSocketListeners();
+
+  @visibleForTesting
+  void debugSetPeerConnection(RTCPeerConnection? pc) => _pc = pc;
+
+  @visibleForTesting
+  void debugScheduleIceRestart() => _scheduleIceRestart();
+
+  @visibleForTesting
+  bool get debugIceRestartPending => _iceRestartTimer != null;
+
+  @visibleForTesting
+  bool get debugCompleted => _completedFlag;
+
+  @visibleForTesting
+  Future<void> debugProbeSignalingOnResume() => _probeSignalingOnResume();
+
+  @visibleForTesting
+  void debugConnectivityRestored() {
+    isOffline = false;
+    _releaseOnlineWaiters();
+  }
 
   void _registerSocketListeners() {
     // Idempotent: listeners now survive a rebuild, so startCallSession must
