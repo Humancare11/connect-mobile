@@ -107,6 +107,13 @@ const Set<String> kTerminalDenyReasons = {
 /// 1s + 2s + 4s + 8s + 15s = 30s before the Retry button is shown.
 const List<int> kJoinRetryDelaysMs = [1000, 2000, 4000, 8000, 15000];
 
+/// ICE restarts only make sense while the other participant is in the room: a
+/// peer that left comes back with a brand-new connection and DTLS identity, so
+/// restarting against the old one just spams an empty room. Mirrors the web's
+/// peerPresentRef gate in VideoCall.jsx.
+bool iceRecoveryAllowed({required bool disposed, required bool hasPeerConnection, required bool peerJoined}) =>
+    !disposed && hasPeerConnection && peerJoined;
+
 /// Whether the ICE-recovery attempt budget has refilled. [lastAttemptAt] must
 /// be the time of the last REAL recovery attempt, not of the last scheduler
 /// tick: the retry loop ticks every few seconds while a call is unhealthy, so
@@ -2100,10 +2107,14 @@ class VideoCallController extends ChangeNotifier {
 
   void _scheduleIceRestart() {
     if (_disposed || _iceRestartTimer != null) return;
+    // Nothing to restart to once the peer has left - _handlePeerJoined
+    // re-drives recovery (or rebuilds the connection) when they return.
+    if (!peerJoined) return;
     _iceRestartTimer = Timer(const Duration(milliseconds: kIceRestartDelayMs), () async {
       _iceRestartTimer = null;
       final pc = _pc;
-      if (_disposed || pc == null) return;
+      if (!iceRecoveryAllowed(disposed: _disposed, hasPeerConnection: pc != null, peerJoined: peerJoined)) return;
+      if (pc == null) return;
       if (_isConnectedState(pc)) return;
 
       final now = DateTime.now();
@@ -3041,6 +3052,43 @@ class VideoCallController extends ChangeNotifier {
     // "peer left" UI (peerLeft) takes over from here, not the "waiting"
     // banner this was standing in for.
     _clearWaitingForPeerSocket();
+
+    // Stand the recovery machinery fully down and DROP the peer connection - a
+    // reloaded/reconnected peer comes back with a brand-new RTCPeerConnection
+    // and DTLS identity, so keeping the old one and ICE-restarting onto it is
+    // what wedges negotiation. _handlePeerJoined rebuilds a fresh connection
+    // (pc == null) when they return. Local camera/mic are left running so
+    // nothing has to be re-permissioned. Mirrors VideoCall.jsx's
+    // handleParticipantLeft.
+    _iceRestartTimer?.cancel();
+    _iceRestartTimer = null;
+    _connectionFailTimer?.cancel();
+    _connectionFailTimer = null;
+    _clearOfferAnswerTimeout();
+    _ignoreOfferResetTimer?.cancel();
+    _ignoreOfferResetTimer = null;
+    _stopStatsCollection();
+    _stopMediaWatchdog();
+    _restartRequestInFlight = false;
+    _iceRecoveryAttempts = 0;
+    _pendingOfferId = null;
+    _lastReceivedOfferId = null;
+    _makingOffer = false;
+    _ignoreOffer = false;
+    _pendingRemoteCandidates.clear();
+    _pendingRemoteOffer = null;
+    _pendingRemoteOfferAt = null;
+
+    final deadPc = _pc;
+    if (deadPc != null) {
+      _pc = null;
+      deadPc.onTrack = null;
+      deadPc.onIceCandidate = null;
+      deadPc.onConnectionState = null;
+      deadPc.onIceConnectionState = null;
+      deadPc.onSignalingState = null;
+      unawaited(deadPc.close().catchError((_) {}));
+    }
   }
 
   void _clearWaitingForPeerSocket() {

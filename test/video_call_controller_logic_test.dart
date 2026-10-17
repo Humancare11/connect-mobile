@@ -154,4 +154,19 @@ void main() {
       expect(iceRecoveryBudgetRefilled(last.add(const Duration(milliseconds: kIceRecoveryCooldownMs + 1)), last), isTrue);
     });
   });
+
+  group('iceRecoveryAllowed', () {
+    test('requires a live controller, a peer connection and a present peer', () {
+      expect(iceRecoveryAllowed(disposed: false, hasPeerConnection: true, peerJoined: true), isTrue);
+    });
+
+    test('is off once the peer has left (participant-left)', () {
+      expect(iceRecoveryAllowed(disposed: false, hasPeerConnection: true, peerJoined: false), isFalse);
+    });
+
+    test('is off when the connection was dropped or the controller disposed', () {
+      expect(iceRecoveryAllowed(disposed: false, hasPeerConnection: false, peerJoined: true), isFalse);
+      expect(iceRecoveryAllowed(disposed: true, hasPeerConnection: true, peerJoined: true), isFalse);
+    });
+  });
 }
