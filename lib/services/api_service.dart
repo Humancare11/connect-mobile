@@ -36,6 +36,9 @@ class ApiService {
   Future<bool> refreshAccessToken(String role) =>
       _client.refreshAccessToken(role);
 
+  /// Status of the last [refreshAccessToken] call; null if it got no response.
+  int? get lastRefreshStatusCode => ApiClient.lastRefreshStatusCode;
+
   String _normalizePath(String path) {
     final normalized = path.trim();
     if (normalized.startsWith('/api/')) {

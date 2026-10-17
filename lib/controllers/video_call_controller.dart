@@ -13,6 +13,7 @@
 // from the same source the web app uses — not doctor-only UI.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show Platform;
 import 'dart:math';
 
@@ -106,6 +107,55 @@ const Set<String> kTerminalDenyReasons = {
 
 /// 1s + 2s + 4s + 8s + 15s = 30s before the Retry button is shown.
 const List<int> kJoinRetryDelaysMs = [1000, 2000, 4000, 8000, 15000];
+
+/// How long a resume-time signaling probe waits for the server's ack.
+const int kSocketProbeTimeoutMs = 3000;
+
+/// A stored access token with at least this much life left is reused for a
+/// room rejoin instead of being refreshed again (one HTTP call + DB write per
+/// socket flap otherwise).
+const int kTokenReuseMinSecondsLeft = 300;
+
+/// Pure: may the recovery loop actually send an offer/request right now? While
+/// the device is offline or signaling is down an attempt would go nowhere, so
+/// the loop keeps ticking but does not spend budget.
+bool iceRecoveryCanAct({required bool offline, required bool socketConnected}) =>
+    !offline && socketConnected;
+
+/// Pure: seconds until a JWT's `exp`, or null if it can't be read.
+int? jwtSecondsUntilExpiry(String? token, DateTime now) {
+  if (token == null || token.isEmpty) return null;
+  final parts = token.split('.');
+  if (parts.length != 3) return null;
+  try {
+    final payload = utf8.decode(base64Url.decode(base64Url.normalize(parts[1])));
+    final exp = (jsonDecode(payload) as Map)['exp'];
+    if (exp is! num) return null;
+    return exp.toInt() - now.millisecondsSinceEpoch ~/ 1000;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Pure-ish: asks the server to ack a ping and reports whether it did within
+/// [timeout]. [emitWithAck] is injected so it can be faked in tests.
+Future<bool> probeSocketAlive(
+  void Function(void Function(dynamic)) emitWithAck, {
+  Duration timeout = const Duration(milliseconds: kSocketProbeTimeoutMs),
+}) {
+  final done = Completer<bool>();
+  final timer = Timer(timeout, () {
+    if (!done.isCompleted) done.complete(false);
+  });
+  try {
+    emitWithAck((_) {
+      if (!done.isCompleted) done.complete(true);
+    });
+  } catch (_) {
+    if (!done.isCompleted) done.complete(false);
+  }
+  return done.future.whenComplete(timer.cancel);
+}
 
 /// ICE restarts only make sense while the other participant is in the room: a
 /// peer that left comes back with a brand-new connection and DTLS identity, so
@@ -544,6 +594,12 @@ class VideoCallController extends ChangeNotifier {
   // null | 'retrying' | 'failed' - a refused room join being retried with
   // backoff while camera/mic stay live. See _handleRoomDenied.
   String? joinRetryPhase;
+  // False while the signaling socket is down. Deliberately separate from
+  // connectionState/isRemoteConnected, which describe the MEDIA path: a
+  // signaling-only outage must not paint the full "Reconnecting" overlay over
+  // a call whose media is still flowing.
+  bool signalingConnected = true;
+  DateTime? _pausedAt;
   int _joinDenyAttempt = 0;
   Timer? _joinRetryTimer;
   // Completed when the device regains connectivity - see _waitUntilOnline.
@@ -1838,7 +1894,12 @@ class VideoCallController extends ChangeNotifier {
         return;
       }
       _authRefreshFailureCount += 1;
-      if (_authRefreshFailureCount < kAuthRefreshFailureThreshold) {
+      // Same rule as VideoCall.jsx: a definitive 401/403 means the session is
+      // dead (act now); anything else (offline, 5xx) is transient and only
+      // escalates after repeating.
+      final status = ApiService.instance.lastRefreshStatusCode;
+      final definitive = status == 401 || status == 403;
+      if (!definitive && _authRefreshFailureCount < kAuthRefreshFailureThreshold) {
         return; // transient — the next scheduled attempt will try again
       }
       // Repeated failure: the session can no longer be kept alive by
@@ -2117,6 +2178,16 @@ class VideoCallController extends ChangeNotifier {
       if (pc == null) return;
       if (_isConnectedState(pc)) return;
 
+      // Offline / signaling down: an attempt would go nowhere (and its offer
+      // would sit in the send buffer to be replayed stale). Keep the loop
+      // alive without spending budget so recovery resumes the moment
+      // connectivity is back.
+      if (!iceRecoveryCanAct(offline: isOffline, socketConnected: _socket.connected)) {
+        _logEvent('ice_recovery_deferred_offline', {'offline': isOffline, 'socketConnected': _socket.connected});
+        _rearmIceRecoveryLoop();
+        return;
+      }
+
       final now = DateTime.now();
       // Compared against the last REAL attempt (stamped where an attempt is
       // actually spent below), not this tick - stamping every tick kept the
@@ -2252,8 +2323,42 @@ class VideoCallController extends ChangeNotifier {
   /// backgrounded.
   bool _resumeReconnectInProgress = false;
 
+  /// App moved to the background (paused/inactive). Timers and sockets may be
+  /// frozen by the OS from here on, so remember when - the resume path uses it
+  /// to decide how suspicious the signaling socket should be.
+  void handleAppPaused() {
+    if (_disposed) return;
+    _pausedAt ??= DateTime.now();
+    _logEvent('app_paused', {'inCall': inCall, 'socketConnected': _socket.connected});
+  }
+
+  /// The OS may have killed the websocket while backgrounded without the
+  /// client noticing (it still reports connected for up to a full ping
+  /// timeout). Round-trip an ack; if it doesn't come back, force a
+  /// reconnect with a fresh token so the room is rejoined.
+  Future<void> _probeSignalingOnResume() async {
+    if (_socket.connected) {
+      final alive = await probeSocketAlive((ack) => _socket.emitWithAck('hc-ping', <String, dynamic>{}, ack));
+      if (_disposed || alive) return;
+      _logEvent('resume_socket_probe_failed', {});
+      _joinedSocketId = '';
+      _socket.disconnect();
+    }
+    try {
+      await ApiService.instance.refreshAccessToken(isDoctor ? 'doctor' : 'user');
+    } catch (_) {
+      // Non-fatal - the join step retries the refresh itself.
+    }
+    if (_disposed) return;
+    _socket.connect();
+  }
+
   void handleAppResumed() {
     if (_disposed) return;
+    final pausedFor = _pausedAt == null ? null : DateTime.now().difference(_pausedAt!);
+    _pausedAt = null;
+    _logEvent('app_resumed', {'pausedMs': pausedFor?.inMilliseconds, 'inCall': inCall});
+    if (inCall || _pc != null) unawaited(_probeSignalingOnResume());
     // The local self-view can be suspended by the OS/Flutter's own
     // rendering pipeline while the app is backgrounded, even though the
     // underlying camera track and its WebRTC transmission to the peer keep
@@ -3459,10 +3564,21 @@ class VideoCallController extends ChangeNotifier {
     // same pattern used everywhere else this refresh is called.
     final socketIdAtStart = _socket.id;
     var refreshed = false;
+    // Reuse a still-fresh token: every socket flap used to cost an HTTP
+    // refresh (and a DB write) even when the token had minutes left.
     try {
-      refreshed = await ApiService.instance.refreshAccessToken(isDoctor ? 'doctor' : 'user');
+      final stored = await const TokenStorageService().getToken();
+      final secondsLeft = jwtSecondsUntilExpiry(stored, DateTime.now());
+      if (secondsLeft != null && secondsLeft > kTokenReuseMinSecondsLeft) refreshed = true;
     } catch (_) {
-      // Treated like any other failed refresh below.
+      // Fall through to a real refresh.
+    }
+    if (!refreshed) {
+      try {
+        refreshed = await ApiService.instance.refreshAccessToken(isDoctor ? 'doctor' : 'user');
+      } catch (_) {
+        // Treated like any other failed refresh below.
+      }
     }
     // A refresh that failed while the device is offline would otherwise go
     // ahead and join with an expired token (and be refused as
@@ -3521,6 +3637,10 @@ class VideoCallController extends ChangeNotifier {
   }
 
   void _handleSocketConnect(dynamic _) {
+    if (!signalingConnected) {
+      signalingConnected = true;
+      notifyListeners();
+    }
     _emitOnlineAndJoinRoom();
     _resyncConnectionStateFromPeerConnection();
   }
@@ -3529,19 +3649,21 @@ class VideoCallController extends ChangeNotifier {
     _joinedSocketId = '';
     _roomJoinConfirmed = false;
     if (_disposed) return;
-    _logEvent('socket_disconnected_during_call', {'inCall': inCall});
-    connectionState = 'disconnected';
-    isRemoteConnected = false;
+    _logEvent('socket_disconnected_during_call', {'inCall': inCall, 'reason': reason?.toString()});
+    signalingConnected = false;
+    // The media path is independent of signaling. Only claim the call dropped
+    // if the peer connection itself is not healthy; otherwise just surface the
+    // small "signaling lost" indicator and keep showing the live video.
+    final pc = _pc;
+    final mediaUp = pc != null && _isConnectedState(pc);
+    if (!mediaUp) {
+      connectionState = 'disconnected';
+      isRemoteConnected = false;
+      // Safety net for a signaling outage that outlasts the media path:
+      // _handleConnectionStateChange arms this for pc drops it sees itself.
+      if (inCall) _startReconnectStallWatch(kMidCallReconnectStallMs);
+    }
     notifyListeners();
-    // Safety net for the case the signaling socket itself stays down for a
-    // while during an active call: the peer connection's own state-change
-    // handlers already arm this when THEY see a real drop, but a signaling-
-    // only outage (server restart, prolonged reconnect backoff) might never
-    // trip those at all if the underlying media path happens to survive it.
-    // Harmless if it turns out to be a brief blip — _resyncConnectionState-
-    // FromPeerConnection clears it again the moment the socket reconnects
-    // and finds the peer connection still healthy.
-    if (inCall) _startReconnectStallWatch(kMidCallReconnectStallMs);
   }
 
   // A Socket.IO (signaling) drop is a different transport than the already-

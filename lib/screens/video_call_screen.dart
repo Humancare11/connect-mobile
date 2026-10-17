@@ -276,6 +276,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
       // disconnect + the server's grace period handle a quick relaunch as
       // a resume instead of an abrupt "peer left".
       unawaited(_controller.performCleanup(emitLeave: false));
+    } else if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive || state == AppLifecycleState.hidden) {
+      _controller.handleAppPaused();
     } else if (state == AppLifecycleState.resumed) {
       _controller.handleAppResumed();
     }
@@ -920,6 +922,16 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
             Positioned.fill(child: _waitingOverlay()),
           if (_controller.isRemoteConnected && !_controller.isSwapped && _controller.peerCameraOff)
             Positioned.fill(child: _remoteCameraOffOverlay()),
+          if (!_controller.signalingConnected && _controller.inCall)
+            Positioned(
+              top: 12,
+              left: 16,
+              right: 16,
+              child: Center(child: _pillNotice(
+                icon: Icons.wifi_off_rounded,
+                text: 'Signaling lost \u2013 reconnecting. Your call continues.',
+              )),
+            ),
           if (_controller.joinRetryPhase != null)
             Positioned(
               bottom: 118,

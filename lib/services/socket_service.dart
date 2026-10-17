@@ -106,6 +106,10 @@ class SocketService {
 
   void emit(String event, dynamic data) => _socket.emit(event, data);
 
+  /// Emit with a server acknowledgement callback (used for liveness probes).
+  void emitWithAck(String event, dynamic data, void Function(dynamic) ack) =>
+      _socket.emitWithAck(event, data, ack: ack);
+
   void on(String event, void Function(dynamic) handler) {
     _socket.on(event, handler);
   }

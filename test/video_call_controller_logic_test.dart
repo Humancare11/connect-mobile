@@ -8,6 +8,8 @@
 // See the mobile video-call review report for a manual-trace-based
 // assessment of that logic instead, and CLAUDE.md-adjacent test notes for a
 // suggested follow-up once flutter_webrtc mocks exist.
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:humancare_connect/controllers/video_call_controller.dart';
 
@@ -167,6 +169,61 @@ void main() {
     test('is off when the connection was dropped or the controller disposed', () {
       expect(iceRecoveryAllowed(disposed: false, hasPeerConnection: false, peerJoined: true), isFalse);
       expect(iceRecoveryAllowed(disposed: true, hasPeerConnection: true, peerJoined: true), isFalse);
+    });
+  });
+
+  group('iceRecoveryCanAct', () {
+    test('acts only when online with a live signaling socket', () {
+      expect(iceRecoveryCanAct(offline: false, socketConnected: true), isTrue);
+      expect(iceRecoveryCanAct(offline: true, socketConnected: true), isFalse);
+      expect(iceRecoveryCanAct(offline: false, socketConnected: false), isFalse);
+      expect(iceRecoveryCanAct(offline: true, socketConnected: false), isFalse);
+    });
+  });
+
+  group('jwtSecondsUntilExpiry', () {
+    String jwtWith(Map<String, dynamic> claims) {
+      String b64(String v) => base64Url.encode(utf8.encode(v)).replaceAll('=', '');
+      return '${b64('{"alg":"HS256"}')}.${b64(jsonEncode(claims))}.sig';
+    }
+
+    final now = DateTime.fromMillisecondsSinceEpoch(1000000 * 1000);
+
+    test('reads the remaining lifetime', () {
+      expect(jwtSecondsUntilExpiry(jwtWith({'exp': 1000600}), now), 600);
+    });
+
+    test('negative when already expired', () {
+      expect(jwtSecondsUntilExpiry(jwtWith({'exp': 999000}), now), -1000);
+    });
+
+    test('null for garbage, missing exp or empty input', () {
+      expect(jwtSecondsUntilExpiry(null, now), isNull);
+      expect(jwtSecondsUntilExpiry('', now), isNull);
+      expect(jwtSecondsUntilExpiry('not-a-jwt', now), isNull);
+      expect(jwtSecondsUntilExpiry(jwtWith({'sub': 'x'}), now), isNull);
+      expect(jwtSecondsUntilExpiry('a.!!!.c', now), isNull);
+    });
+  });
+
+  group('probeSocketAlive', () {
+    test('true when the server acks', () async {
+      expect(await probeSocketAlive((ack) => ack({'ok': true}), timeout: const Duration(milliseconds: 200)), isTrue);
+    });
+
+    test('false when no ack arrives before the timeout', () async {
+      expect(await probeSocketAlive((ack) {}, timeout: const Duration(milliseconds: 50)), isFalse);
+    });
+
+    test('false when emitting throws', () async {
+      expect(await probeSocketAlive((ack) => throw StateError('closed'), timeout: const Duration(milliseconds: 200)), isFalse);
+    });
+
+    test('a late ack after the timeout is ignored', () async {
+      late void Function(dynamic) saved;
+      final result = await probeSocketAlive((ack) => saved = ack, timeout: const Duration(milliseconds: 30));
+      saved({'ok': true});
+      expect(result, isFalse);
     });
   });
 }

@@ -33,6 +33,11 @@ class ApiClient {
   // waits on the one in-flight refresh instead.
   static Future<bool>? _refreshInFlight;
 
+  /// HTTP status of the most recent [refreshAccessToken] call (null when it
+  /// never got a response, e.g. offline). Lets callers tell a definitive
+  /// 401/403 (the session is dead) from a transient network failure.
+  static int? lastRefreshStatusCode;
+
   // debugPrint() (unlike assert) still runs in release builds, and request/
   // response bodies here carry patient PII/medical data beyond what
   // _redactSecrets covers (only token/secret/authorization keys are
@@ -259,6 +264,7 @@ class ApiClient {
   /// Non-fatal on any failure (missing/expired refresh token, network
   /// error): callers proceed with whatever's already in storage.
   Future<bool> refreshAccessToken(String role) async {
+    lastRefreshStatusCode = null;
     final refreshToken = await _tokenStorage.getRefreshToken();
     if (refreshToken == null || refreshToken.isEmpty) return false;
 
@@ -287,6 +293,7 @@ class ApiClient {
           )
           .timeout(const Duration(seconds: 15));
 
+      lastRefreshStatusCode = response.statusCode;
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return false;
       }
