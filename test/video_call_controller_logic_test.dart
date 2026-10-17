@@ -101,4 +101,23 @@ void main() {
       expect(a.localKey, isNot(equals(b.localKey)));
     });
   });
+
+  group('room-access-denied retry policy', () {
+    test('only final reasons end the call', () {
+      for (final r in ['appointment_ended', 'not_participant', 'appointment_not_found']) {
+        expect(isTerminalDenyReason(r), isTrue, reason: r);
+      }
+      for (final r in ['unauthenticated', 'invalid_appointment', 'room_full', 'server_error', 'weird', null]) {
+        expect(isTerminalDenyReason(r), isFalse, reason: '$r');
+      }
+    });
+
+    test('backoff is 1s, 2s, 4s, 8s then capped at 30s total', () {
+      expect(kJoinRetryDelaysMs.take(4).toList(), [1000, 2000, 4000, 8000]);
+      expect(kJoinRetryDelaysMs.reduce((a, b) => a + b), 30000);
+      expect(nextJoinRetryDelayMs(0), 1000);
+      expect(nextJoinRetryDelayMs(kJoinRetryDelaysMs.length), isNull);
+      expect(nextJoinRetryDelayMs(-1), isNull);
+    });
+  });
 }

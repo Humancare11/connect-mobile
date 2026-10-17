@@ -920,6 +920,22 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
             Positioned.fill(child: _waitingOverlay()),
           if (_controller.isRemoteConnected && !_controller.isSwapped && _controller.peerCameraOff)
             Positioned.fill(child: _remoteCameraOffOverlay()),
+          if (_controller.joinRetryPhase != null)
+            Positioned(
+              bottom: 118,
+              left: 16,
+              right: 16,
+              child: Center(child: _pillNotice(
+                icon: _controller.joinRetryPhase == 'failed' ? Icons.warning_amber_rounded : Icons.autorenew,
+                text: _controller.joinRetryPhase == 'failed' ? "Couldn't rejoin the call." : 'Reconnecting…',
+                trailing: _controller.joinRetryPhase == 'failed'
+                    ? GestureDetector(
+                        onTap: _controller.retryJoinManually,
+                        child: Text('  Retry', style: _sora(size: 12, weight: FontWeight.w700, color: _C.teal)),
+                      )
+                    : null,
+              )),
+            ),
           if (_controller.reconnectStalled)
             Positioned(
               bottom: 118,

@@ -93,6 +93,25 @@ const int kMidCallReconnectStallMs = 12000;
 // end the call instead of retrying silently forever. Mirrors
 // VideoCall.jsx's identical MAX_RECONNECT_STALL_RETRIES.
 const int kMaxReconnectStallRetries = 3;
+
+/// `room-access-denied` reasons that can never be fixed by waiting - only
+/// these end the call. Anything else (unauthenticated, room_full,
+/// server_error, invalid_appointment, or a reason an older server never sent)
+/// is retried with backoff. Mirrors utils/roomDenyRetry.js on the web.
+const Set<String> kTerminalDenyReasons = {
+  'appointment_ended',
+  'not_participant',
+  'appointment_not_found',
+};
+
+/// 1s + 2s + 4s + 8s + 15s = 30s before the Retry button is shown.
+const List<int> kJoinRetryDelaysMs = [1000, 2000, 4000, 8000, 15000];
+
+bool isTerminalDenyReason(String? reason) => kTerminalDenyReasons.contains(reason);
+
+/// Delay before retry number [attempt] (0-based), or null once exhausted.
+int? nextJoinRetryDelayMs(int attempt) =>
+    attempt >= 0 && attempt < kJoinRetryDelaysMs.length ? kJoinRetryDelaysMs[attempt] : null;
 // How many consecutive failed token-refresh heartbeat attempts (one every 4
 // minutes — see _markInCall's _heartbeatTimer) are tolerated silently before
 // treating the session as no longer authenticatable.
@@ -503,6 +522,13 @@ class VideoCallController extends ChangeNotifier {
   String _joinedSocketId = '';
   Timer? _joinTimeoutTimer;
   bool reconnectStalled = false;
+  // null | 'retrying' | 'failed' - a refused room join being retried with
+  // backoff while camera/mic stay live. See _handleRoomDenied.
+  String? joinRetryPhase;
+  int _joinDenyAttempt = 0;
+  Timer? _joinRetryTimer;
+  // Completed when the device regains connectivity - see _waitUntilOnline.
+  final List<Completer<void>> _onlineWaiters = [];
   // How many times the stall banner has fired since the last successful
   // (re)connect — see kMaxReconnectStallRetries.
   int reconnectStallCount = 0;
@@ -698,6 +724,7 @@ class VideoCallController extends ChangeNotifier {
       );
       _lastConnectivityResults = results;
       final wasOffline = isOffline;
+      if (!offline) _releaseOnlineWaiters();
 
       if (offline != isOffline) {
         isOffline = offline;
@@ -828,6 +855,8 @@ class VideoCallController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _joinRetryTimer?.cancel();
+    _releaseOnlineWaiters();
     unawaited(_connectivitySub?.cancel());
     unawaited(performCleanup());
     if (_rendererReady) {
@@ -2887,6 +2916,7 @@ class VideoCallController extends ChangeNotifier {
 
   void _handlePeerJoined(dynamic raw) {
     if (_disposed) return;
+    _clearJoinRetry();
     _clearJoinTimeout();
     _clearWaitingForPeerSocket();
     final data = _toMap(raw);
@@ -3063,6 +3093,7 @@ class VideoCallController extends ChangeNotifier {
 
   void _handleChatHistory(dynamic raw) {
     if (_disposed) return;
+    _clearJoinRetry();
     final data = _toMap(raw);
     if (data == null) {
       debugPrint('[video-call] chat_history received with non-Map data: $raw');
@@ -3147,17 +3178,88 @@ class VideoCallController extends ChangeNotifier {
 
   Future<void> _handleRoomDenied(dynamic data) async {
     if (_disposed) return;
+    final map = _toMap(data);
+    final reason = map?['reason']?.toString();
+    // Only a refusal that waiting cannot fix ends the call. Everything else
+    // is retried with backoff while camera/mic and the peer connection stay
+    // alive. Mirrors VideoCall.jsx's handleRoomDenied.
+    if (!isTerminalDenyReason(reason)) {
+      _logEvent('room_join_denied_retrying', {'reason': reason ?? 'unknown', 'attempt': _joinDenyAttempt});
+      final delay = nextJoinRetryDelayMs(_joinDenyAttempt);
+      if (delay == null) {
+        joinRetryPhase = 'failed';
+        notifyListeners();
+        return;
+      }
+      _joinDenyAttempt += 1;
+      joinRetryPhase = 'retrying';
+      notifyListeners();
+      _joinRetryTimer?.cancel();
+      _joinRetryTimer = Timer(Duration(milliseconds: delay), () {
+        if (_disposed || _completedFlag) return;
+        _retryJoin();
+      });
+      return;
+    }
     // Previously left the camera/mic and RTCPeerConnection running
-    // indefinitely behind the "Access Denied" screen — local media was
+    // indefinitely behind the "Access Denied" screen - local media was
     // already acquired by startCallSession() independently of whether the
     // room join itself succeeded. Tear the session down the same way a
     // duplicate session does, instead of only changing what's shown.
     // Mirrors VideoCall.jsx's handleRoomDenied.
     await performCleanup();
     if (_disposed) return;
-    final msg = (data is Map) ? data['msg']?.toString() : null;
+    final msg = map?['msg']?.toString();
     apptError = msg ?? 'Access to this call room was denied.';
     notifyListeners();
+  }
+
+  /// Re-emits the room join on the live socket. The payload step refreshes
+  /// the access token first, which is what fixes an `unauthenticated` refusal.
+  void _retryJoin() {
+    _joinedSocketId = '';
+    if (!_socket.connected) {
+      _socket.connect();
+      return;
+    }
+    _emitOnlineAndJoinRoom();
+  }
+
+  /// "Retry" button after all automatic join retries failed.
+  void retryJoinManually() {
+    if (_disposed || _completedFlag) return;
+    _joinRetryTimer?.cancel();
+    _joinDenyAttempt = 0;
+    joinRetryPhase = 'retrying';
+    notifyListeners();
+    _retryJoin();
+  }
+
+  /// The server accepted the join (it only sends history / echoes peer-joined
+  /// to a socket it let into the room) - reset the retry state.
+  void _clearJoinRetry() {
+    _joinRetryTimer?.cancel();
+    _joinRetryTimer = null;
+    _joinDenyAttempt = 0;
+    if (joinRetryPhase != null) {
+      joinRetryPhase = null;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _waitUntilOnline() {
+    if (!isOffline) return Future.value();
+    final waiter = Completer<void>();
+    _onlineWaiters.add(waiter);
+    return waiter.future;
+  }
+
+  void _releaseOnlineWaiters() {
+    final waiters = List<Completer<void>>.of(_onlineWaiters);
+    _onlineWaiters.clear();
+    for (final w in waiters) {
+      if (!w.isCompleted) w.complete();
+    }
   }
 
   Future<void> _handleDuplicateSession(dynamic data) async {
@@ -3291,10 +3393,29 @@ class VideoCallController extends ChangeNotifier {
     // unauthenticated (room-access-denied) if it had expired in the
     // meantime. Non-fatal: proceed with whatever's in storage on failure,
     // same pattern used everywhere else this refresh is called.
+    final socketIdAtStart = _socket.id;
+    var refreshed = false;
     try {
-      await ApiService.instance.refreshAccessToken(isDoctor ? 'doctor' : 'user');
+      refreshed = await ApiService.instance.refreshAccessToken(isDoctor ? 'doctor' : 'user');
     } catch (_) {
-      // Ignore — fall through with the existing stored token.
+      // Treated like any other failed refresh below.
+    }
+    // A refresh that failed while the device is offline would otherwise go
+    // ahead and join with an expired token (and be refused as
+    // unauthenticated). Wait for connectivity and retry the refresh instead.
+    // A failure while online (e.g. no stored refresh token) keeps the old
+    // behaviour: fall through with whatever token is in storage.
+    while (!refreshed && isOffline && !_disposed) {
+      await _waitUntilOnline();
+      if (_disposed) return;
+      // The socket may have dropped and reconnected while we waited; the new
+      // connection runs its own join (with its own refresh).
+      if (!_socket.connected || _socket.id != socketIdAtStart) return;
+      try {
+        refreshed = await ApiService.instance.refreshAccessToken(isDoctor ? 'doctor' : 'user');
+      } catch (_) {
+        refreshed = false;
+      }
     }
     if (_disposed) return;
 
