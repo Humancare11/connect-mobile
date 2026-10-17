@@ -107,6 +107,18 @@ const Set<String> kTerminalDenyReasons = {
 /// 1s + 2s + 4s + 8s + 15s = 30s before the Retry button is shown.
 const List<int> kJoinRetryDelaysMs = [1000, 2000, 4000, 8000, 15000];
 
+/// Whether the ICE-recovery attempt budget has refilled. [lastAttemptAt] must
+/// be the time of the last REAL recovery attempt, not of the last scheduler
+/// tick: the retry loop ticks every few seconds while a call is unhealthy, so
+/// a timestamp refreshed on every tick never ages past the cooldown and a used
+/// up budget would never refill. Mirrors utils/iceRecoveryBudget.js on the web.
+bool iceRecoveryBudgetRefilled(
+  DateTime now,
+  DateTime lastAttemptAt, {
+  int cooldownMs = kIceRecoveryCooldownMs,
+}) =>
+    now.difference(lastAttemptAt).inMilliseconds > cooldownMs;
+
 bool isTerminalDenyReason(String? reason) => kTerminalDenyReasons.contains(reason);
 
 /// Delay before retry number [attempt] (0-based), or null once exhausted.
@@ -2095,10 +2107,12 @@ class VideoCallController extends ChangeNotifier {
       if (_isConnectedState(pc)) return;
 
       final now = DateTime.now();
-      if (now.difference(_lastIceRecoveryAt).inMilliseconds > kIceRecoveryCooldownMs) {
+      // Compared against the last REAL attempt (stamped where an attempt is
+      // actually spent below), not this tick - stamping every tick kept the
+      // cooldown from ever elapsing while the loop ran.
+      if (iceRecoveryBudgetRefilled(now, _lastIceRecoveryAt)) {
         _iceRecoveryAttempts = 0;
       }
-      _lastIceRecoveryAt = now;
 
       if (_iceRecoveryAttempts >= kIceMaxRecoveryAttempts) {
         _logEvent('ice_recovery_exhausted', {'attempts': _iceRecoveryAttempts});
@@ -2109,6 +2123,7 @@ class VideoCallController extends ChangeNotifier {
 
       if (_isPolitePeer) {
         _iceRecoveryAttempts += 1;
+        _lastIceRecoveryAt = now;
         _logEvent('ice_recovery_attempt', {'attempts': _iceRecoveryAttempts});
         _requestPeerIceRestart();
         _rearmIceRecoveryLoop();
@@ -2136,6 +2151,7 @@ class VideoCallController extends ChangeNotifier {
       }
 
       _iceRecoveryAttempts += 1;
+      _lastIceRecoveryAt = now;
       _logEvent('ice_recovery_attempt', {'attempts': _iceRecoveryAttempts});
       await _createAndSendOffer(iceRestart: true);
       _rearmIceRecoveryLoop();

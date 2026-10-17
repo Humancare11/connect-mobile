@@ -120,4 +120,38 @@ void main() {
       expect(nextJoinRetryDelayMs(-1), isNull);
     });
   });
+
+  group('iceRecoveryBudgetRefilled', () {
+    // Mirrors the _scheduleIceRestart loop: a tick every 2.5s while unhealthy.
+    int simulate({required bool stampEveryTick, required int totalMs}) {
+      var attempts = 0;
+      var last = DateTime.fromMillisecondsSinceEpoch(0);
+      var real = 0;
+      final start = DateTime.fromMillisecondsSinceEpoch(1000);
+      for (var t = 0; t <= totalMs; t += 2500) {
+        final now = start.add(Duration(milliseconds: t));
+        if (iceRecoveryBudgetRefilled(now, last)) attempts = 0;
+        if (stampEveryTick) last = now;
+        if (attempts >= kIceMaxRecoveryAttempts) continue;
+        attempts += 1;
+        real += 1;
+        if (!stampEveryTick) last = now;
+      }
+      return real;
+    }
+
+    test('old behaviour: budget never refills while the loop keeps ticking', () {
+      expect(simulate(stampEveryTick: true, totalMs: 120000), kIceMaxRecoveryAttempts);
+    });
+
+    test('budget refills after the cooldown when only real attempts are stamped', () {
+      expect(simulate(stampEveryTick: false, totalMs: 120000), greaterThan(kIceMaxRecoveryAttempts));
+    });
+
+    test('cooldown boundary is exclusive', () {
+      final last = DateTime.fromMillisecondsSinceEpoch(0);
+      expect(iceRecoveryBudgetRefilled(last.add(const Duration(milliseconds: kIceRecoveryCooldownMs)), last), isFalse);
+      expect(iceRecoveryBudgetRefilled(last.add(const Duration(milliseconds: kIceRecoveryCooldownMs + 1)), last), isTrue);
+    });
+  });
 }
