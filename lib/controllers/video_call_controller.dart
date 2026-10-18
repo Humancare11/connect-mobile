@@ -27,6 +27,7 @@ import '../services/call_foreground_service.dart';
 import '../services/ice_server_config.dart';
 import '../services/socket_service.dart';
 import '../services/token_storage_service.dart';
+import '../utils/call_client_info.dart';
 import '../utils/direct_upload.dart';
 
 const Map<String, dynamic> kMediaConstraints = {
@@ -419,7 +420,10 @@ class VideoCallController extends ChangeNotifier {
     this.onCompletedByPeer,
     // Injectable so tests can drive the controller with a fake signaling socket.
     SocketService? socket,
+    // Injectable for tests; the default asks the device (see call_client_info.dart).
+    Future<Map<String, dynamic>> Function()? clientInfoProvider,
   })  : _socket = socket ?? SocketService.instance,
+        _clientInfoProvider = clientInfoProvider ?? buildCallClientInfo,
         appt = initialAppointment,
         // Field is intentionally private; the parameter is intentionally
         // public (`initialDoctor`). A private named parameter (`this._initialDoctor`)
@@ -437,6 +441,9 @@ class VideoCallController extends ChangeNotifier {
   final Map<String, dynamic>? _initialPatient;
   final String _initialRole;
   final SocketService _socket;
+  final Future<Map<String, dynamic>> Function() _clientInfoProvider;
+  // The admin call report only needs the FIRST "my peer connection connected".
+  bool _callConnectedReported = false;
 
   /// Called ~4s after the peer marks the appointment complete (patient side
   /// only) so the widget can navigate away. Kept as a callback instead of a
@@ -1856,6 +1863,12 @@ class VideoCallController extends ChangeNotifier {
     hasConnectedOnce = true;
     notifyListeners();
     _markInCall();
+    if (!_callConnectedReported && _socket.connected) {
+      // Tells the server our peer connection really connected (admin call
+      // report: "connected" vs "both joined but no media").
+      _callConnectedReported = true;
+      _socket.emit('call-connected', {'appointmentId': appointmentId});
+    }
     final pc = _pc;
     if (pc != null) _startStatsCollection(pc);
     if (_remoteRebindPending) {
@@ -3537,6 +3550,9 @@ class VideoCallController extends ChangeNotifier {
   void debugRegisterSocketListeners() => _registerSocketListeners();
 
   @visibleForTesting
+  void debugHandleConnected() => _handleConnectedState();
+
+  @visibleForTesting
   void debugSetPeerConnection(RTCPeerConnection? pc) => _pc = pc;
 
   @visibleForTesting
@@ -3701,6 +3717,19 @@ class VideoCallController extends ChangeNotifier {
       debugPrint('[video-call] token fetch for room join failed, joining without it: $err');
     }
 
+    // For the admin call report (informational; the server validates it and
+    // never trusts it for anything). A failure here must never block the join.
+    Map<String, dynamic> clientInfo = const {};
+    try {
+      clientInfo = await Future.any<Map<String, dynamic>>([
+        _clientInfoProvider(),
+        Future<Map<String, dynamic>>.delayed(const Duration(seconds: 2), () => const <String, dynamic>{}),
+      ]);
+    } catch (_) {
+      // Join without it.
+    }
+    if (_disposed) return;
+
     if (activeUserId.isNotEmpty) {
       _socket.emit('user-online', {
         'userId': activeUserId,
@@ -3709,6 +3738,7 @@ class VideoCallController extends ChangeNotifier {
       });
     }
     _socket.emit('join-appointment-room', {
+      if (clientInfo.isNotEmpty) 'clientInfo': clientInfo,
       'appointmentId': appointmentId,
       'userId': activeUserId,
       'role': role,
