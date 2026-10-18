@@ -463,5 +463,72 @@ void main() {
         async.flushMicrotasks();
       });
     });
+
+    group('call-stats (admin call report)', () {
+      test('reporting starts when the call connects and stops with the controller', () {
+        fakeAsync((async) {
+          final socket = FakeSocket();
+          final c = makeController(socket);
+          c.debugSetPeerConnection(FakePc());
+          expect(c.debugCallStatsRunning, isFalse);
+          c.debugHandleConnected();
+          expect(c.debugCallStatsRunning, isTrue);
+          c.dispose();
+          async.flushMicrotasks();
+          elapse(async, const Duration(seconds: 40));
+          expect(socket.count('call-stats'), 0);
+        });
+      });
+
+      test('a sample is sent with the reconnect count; the final one is flagged', () {
+        fakeAsync((async) {
+          final socket = FakeSocket();
+          final c = makeController(socket);
+          c.debugSetLastCallSample({'rtt': 80, 'iceType': 'relay', 'quality': 'good'});
+          socket.trigger('disconnect', 'transport close');
+          socket.trigger('disconnect', 'ping timeout');
+          c.debugSendCallStats(final_: true);
+          final e = socket.emitted.firstWhere((e) => e.key == 'call-stats').value as Map;
+          expect(e['appointmentId'], 'appt-1');
+          expect(e['rtt'], 80);
+          expect(e['iceType'], 'relay');
+          expect(e['reconnects'], 2);
+          expect(e['final'], true);
+          c.dispose();
+          async.flushMicrotasks();
+        });
+      });
+
+      test('nothing is sent without a sample, or while the socket is down', () {
+        fakeAsync((async) {
+          final socket = FakeSocket();
+          final c = makeController(socket);
+          c.debugSendCallStats();
+          expect(socket.count('call-stats'), 0);
+          c.debugSetLastCallSample({'quality': 'good'});
+          socket.disconnect();
+          c.debugSendCallStats();
+          expect(socket.count('call-stats'), 0);
+          c.dispose();
+          async.flushMicrotasks();
+        });
+      });
+
+      test('call-monitoring-active only changes how often samples are taken', () {
+        fakeAsync((async) {
+          final socket = FakeSocket();
+          final c = makeController(socket);
+          expect(c.debugCallMonitored, isFalse);
+          socket.trigger('call-monitoring-active', true);
+          expect(c.debugCallMonitored, isTrue);
+          socket.trigger('call-monitoring-active', false);
+          expect(c.debugCallMonitored, isFalse);
+          socket.trigger('call-monitoring-active', 'garbage');
+          expect(c.debugCallMonitored, isFalse);
+          c.dispose();
+          async.flushMicrotasks();
+        });
+      });
+    });
   });
 }
