@@ -432,7 +432,7 @@ void main() {
         });
       });
 
-      test('not while alone in the call, and not while another retry notice is up', () {
+      test('not while alone in the call, and not while a join retry is in progress', () {
         fakeAsync((async) {
           final pc = FakePc();
           final c = waitingController(FakeSocket(), pc);
@@ -440,7 +440,7 @@ void main() {
           async.elapse(const Duration(seconds: 60));
           expect(c.slowConnectNotice, isFalse);
           c.peerJoined = true;
-          c.reconnectStalled = true;
+          c.joinRetryPhase = 'retrying';
           async.elapse(const Duration(seconds: 60));
           expect(c.slowConnectNotice, isFalse);
           c.dispose();

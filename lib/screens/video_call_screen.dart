@@ -989,7 +989,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
             ),
           if (_controller.slowConnectNotice)
             Positioned(
-              bottom: 118,
+              bottom: 172,
               left: 16,
               right: 16,
               child: Center(child: _pillNotice(
