@@ -948,7 +948,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
                     : null,
               )),
             ),
-          if (_controller.reconnectStalled)
+          if (_controller.reconnectStalled && !_controller.slowConnectNotice)
             Positioned(
               bottom: 118,
               left: 16,
@@ -989,7 +989,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
             ),
           if (_controller.slowConnectNotice)
             Positioned(
-              bottom: 172,
+              bottom: 118,
               left: 16,
               right: 16,
               child: Center(child: _pillNotice(
@@ -1017,7 +1017,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
           // itself (mutually exclusive in the controller already, but kept
           // explicit here) since a real problem on this side should always
           // win the banner.
-          if (_controller.waitingForPeerSocket && !_controller.reconnectStalled)
+          if (_controller.waitingForPeerSocket && !_controller.reconnectStalled && !_controller.slowConnectNotice)
             Positioned(
               bottom: 118,
               left: 16,

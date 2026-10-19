@@ -3567,7 +3567,7 @@ class VideoCallController extends ChangeNotifier {
       peerPresent: peerJoined,
       connected: pc != null && _isConnectedState(pc),
       // A join retry / manual Retry is in progress (they have their own
-      // notices); the notice stacks above the stall banner.
+      // notices). While shown it replaces the stall banner (screen).
       suppressed: joinRetryPhase != null || reconnectInProgress,
     );
     if (show != slowConnectNotice) {
