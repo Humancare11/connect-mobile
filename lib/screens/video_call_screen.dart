@@ -987,6 +987,29 @@ class _VideoCallScreenState extends State<VideoCallScreen> with WidgetsBindingOb
                 ),
               )),
             ),
+          if (_controller.slowConnectNotice)
+            Positioned(
+              bottom: 118,
+              left: 16,
+              right: 16,
+              child: Center(child: _pillNotice(
+                icon: Icons.warning_amber_rounded,
+                text: 'Connection is taking longer than usual. Still trying…',
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    GestureDetector(
+                      onTap: () => unawaited(_controller.forceReconnect()),
+                      child: Text('  Retry', style: _sora(size: 12, weight: FontWeight.w700, color: _C.teal)),
+                    ),
+                    GestureDetector(
+                      onTap: () => setState(() => _leaveConfirm = true),
+                      child: Text('  Leave', style: _sora(size: 12, weight: FontWeight.w700, color: _C.btnDangerText)),
+                    ),
+                  ],
+                ),
+              )),
+            ),
           // The peer's socket dropped but they haven't been declared gone
           // (participant-left) yet — this side's own connection is fine, so
           // don't show the "Retry" banner, which would misleadingly suggest

@@ -28,6 +28,7 @@ import '../services/ice_server_config.dart';
 import '../services/socket_service.dart';
 import '../services/token_storage_service.dart';
 import '../utils/direct_upload.dart';
+import '../utils/slow_connect_tracker.dart';
 
 const Map<String, dynamic> kMediaConstraints = {
   'audio': {
@@ -611,6 +612,11 @@ class VideoCallController extends ChangeNotifier {
   String _joinedSocketId = '';
   Timer? _joinTimeoutTimer;
   bool reconnectStalled = false;
+  // "Connection is taking longer than usual. Still trying..." - see
+  // SlowConnectTracker. Observational only: never touches recovery.
+  bool slowConnectNotice = false;
+  Timer? _slowConnectTimer;
+  final SlowConnectTracker _slowConnect = SlowConnectTracker();
   // null | 'retrying' | 'failed' - a refused room join being retried with
   // backoff while camera/mic stay live. See _handleRoomDenied.
   String? joinRetryPhase;
@@ -950,6 +956,7 @@ class VideoCallController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _stopSlowConnectWatch();
     _joinRetryTimer?.cancel();
     _releaseOnlineWaiters();
     unawaited(_connectivitySub?.cancel());
@@ -1195,6 +1202,7 @@ class VideoCallController extends ChangeNotifier {
     pc.onSignalingState = _handleSignalingStateChange;
 
     _registerSocketListeners();
+    _startSlowConnectWatch();
 
     unawaited(_acquireLocalMedia(pc, localReadyCompleter));
 
@@ -3533,6 +3541,49 @@ class VideoCallController extends ChangeNotifier {
   // ── Socket connection lifecycle ──────────────────────────────────────
 
   // ── Test hooks (no production caller) ─────────────────────────────────
+  // ── "Still trying" notice ───────────────────────────────────────────
+  // One 1s timer per call session; cleared on leave / dispose.
+  void _startSlowConnectWatch() {
+    if (_slowConnectTimer != null || _disposed) return;
+    _slowConnectTimer = Timer.periodic(const Duration(seconds: 1), (_) => _evaluateSlowConnect());
+  }
+
+  void _stopSlowConnectWatch() {
+    _slowConnectTimer?.cancel();
+    _slowConnectTimer = null;
+    _resetSlowConnect();
+  }
+
+  void _resetSlowConnect() {
+    _slowConnect.reset();
+    slowConnectNotice = false;
+  }
+
+  void _evaluateSlowConnect() {
+    if (_disposed) return;
+    final pc = _pc;
+    final show = _slowConnect.tick(
+      joined: _joinedSocketId.isNotEmpty || hasConnectedOnce,
+      peerPresent: peerJoined,
+      connected: pc != null && _isConnectedState(pc),
+      // Another retry notice is already up (and has its own Retry).
+      suppressed: reconnectStalled || joinRetryPhase != null || reconnectInProgress,
+    );
+    if (show != slowConnectNotice) {
+      slowConnectNotice = show;
+      notifyListeners();
+    }
+  }
+
+  @visibleForTesting
+  void debugEvaluateSlowConnect() => _evaluateSlowConnect();
+
+  @visibleForTesting
+  bool get debugSlowConnectTimerRunning => _slowConnectTimer != null;
+
+  @visibleForTesting
+  void debugStartSlowConnectWatch() => _startSlowConnectWatch();
+
   @visibleForTesting
   void debugRegisterSocketListeners() => _registerSocketListeners();
 
@@ -4311,6 +4362,7 @@ class VideoCallController extends ChangeNotifier {
   Future<void> performCleanup({bool emitLeave = true}) async {
     if (_completedFlag) return;
     _completedFlag = true;
+    _stopSlowConnectWatch();
 
     await _teardownSession(leaveRoom: emitLeave);
     _pendingRemoteOffer = null;

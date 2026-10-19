@@ -395,5 +395,78 @@ void main() {
         expect(socket.count('join-appointment-room'), before);
       });
     });
+
+    group('"still trying" notice', () {
+      VideoCallController waitingController(FakeSocket socket, FakePc pc) {
+        final c = makeController(socket);
+        pc.state = RTCPeerConnectionState.RTCPeerConnectionStateConnecting;
+        pc.iceState = RTCIceConnectionState.RTCIceConnectionStateChecking;
+        c.debugSetPeerConnection(pc);
+        c.hasConnectedOnce = true; // counts as "joined"
+        c.peerJoined = true;
+        c.debugStartSlowConnectWatch();
+        return c;
+      }
+
+      test('shows at 30s, hides the moment media connects, and a later drop starts a new window', () {
+        fakeAsync((async) {
+          final pc = FakePc();
+          final c = waitingController(FakeSocket(), pc);
+          async.elapse(const Duration(seconds: 29));
+          expect(c.slowConnectNotice, isFalse);
+          async.elapse(const Duration(seconds: 1));
+          expect(c.slowConnectNotice, isTrue);
+
+          pc.state = RTCPeerConnectionState.RTCPeerConnectionStateConnected;
+          async.elapse(const Duration(seconds: 1));
+          expect(c.slowConnectNotice, isFalse);
+
+          pc.state = RTCPeerConnectionState.RTCPeerConnectionStateConnecting;
+          pc.iceState = RTCIceConnectionState.RTCIceConnectionStateChecking;
+          async.elapse(const Duration(seconds: 29));
+          expect(c.slowConnectNotice, isFalse);
+          async.elapse(const Duration(seconds: 1));
+          expect(c.slowConnectNotice, isTrue);
+          c.dispose();
+          async.flushMicrotasks();
+        });
+      });
+
+      test('not while alone in the call, and not while another retry notice is up', () {
+        fakeAsync((async) {
+          final pc = FakePc();
+          final c = waitingController(FakeSocket(), pc);
+          c.peerJoined = false;
+          async.elapse(const Duration(seconds: 60));
+          expect(c.slowConnectNotice, isFalse);
+          c.peerJoined = true;
+          c.reconnectStalled = true;
+          async.elapse(const Duration(seconds: 60));
+          expect(c.slowConnectNotice, isFalse);
+          c.dispose();
+          async.flushMicrotasks();
+        });
+      });
+
+      test('the timer is cleared on leave and on dispose', () {
+        fakeAsync((async) {
+          final c = waitingController(FakeSocket(), FakePc());
+          expect(c.debugSlowConnectTimerRunning, isTrue);
+          async.elapse(const Duration(seconds: 31));
+          expect(c.slowConnectNotice, isTrue);
+          unawaited(c.leaveCall());
+          async.flushMicrotasks();
+          expect(c.debugSlowConnectTimerRunning, isFalse);
+          expect(c.slowConnectNotice, isFalse);
+          c.dispose();
+          async.flushMicrotasks();
+
+          final d = waitingController(FakeSocket(), FakePc());
+          d.dispose();
+          async.flushMicrotasks();
+          expect(d.debugSlowConnectTimerRunning, isFalse);
+        });
+      });
+    });
   });
 }
