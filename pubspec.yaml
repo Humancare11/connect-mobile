@@ -3,7 +3,7 @@ name: humancare_connect
 description: "GlobaL Health Passport"
 publish_to: 'none'
 
-version: 1.0.0+17
+version: 1.0.0+19
 
 environment:
   sdk: ^3.12.0
