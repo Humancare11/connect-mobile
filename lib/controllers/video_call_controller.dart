@@ -27,6 +27,8 @@ import '../services/call_foreground_service.dart';
 import '../services/ice_server_config.dart';
 import '../services/socket_service.dart';
 import '../services/token_storage_service.dart';
+import '../utils/call_client_info.dart';
+import '../utils/call_stats_sample.dart';
 import '../utils/direct_upload.dart';
 import '../utils/slow_connect_tracker.dart';
 
@@ -420,7 +422,10 @@ class VideoCallController extends ChangeNotifier {
     this.onCompletedByPeer,
     // Injectable so tests can drive the controller with a fake signaling socket.
     SocketService? socket,
+    // Injectable for tests; the default asks the device (see call_client_info.dart).
+    Future<Map<String, dynamic>> Function()? clientInfoProvider,
   })  : _socket = socket ?? SocketService.instance,
+        _clientInfoProvider = clientInfoProvider ?? buildCallClientInfo,
         appt = initialAppointment,
         // Field is intentionally private; the parameter is intentionally
         // public (`initialDoctor`). A private named parameter (`this._initialDoctor`)
@@ -438,6 +443,9 @@ class VideoCallController extends ChangeNotifier {
   final Map<String, dynamic>? _initialPatient;
   final String _initialRole;
   final SocketService _socket;
+  final Future<Map<String, dynamic>> Function() _clientInfoProvider;
+  // The admin call report only needs the FIRST "my peer connection connected".
+  bool _callConnectedReported = false;
 
   /// Called ~4s after the peer marks the appointment complete (patient side
   /// only) so the widget can navigate away. Kept as a callback instead of a
@@ -672,6 +680,12 @@ class VideoCallController extends ChangeNotifier {
   // kAuthRefreshFailureThreshold and _markInCall.
   int _authRefreshFailureCount = 0;
   Timer? _statsTimer;
+  // Admin call report quality samples (see _startCallStatsReporting).
+  Timer? _callStatsTimer;
+  CallStatsSnapshot? _callStatsSnapshot;
+  Map<String, dynamic>? _lastCallSample;
+  bool _callMonitored = false;
+  int _socketDrops = 0;
   // Inbound-media watchdog (kMediaWatchdogIntervalMs et al.) — see
   // _startMediaWatchdog. Runs from pc creation, independent of _statsTimer
   // (which only starts once connected).
@@ -1864,8 +1878,15 @@ class VideoCallController extends ChangeNotifier {
     hasConnectedOnce = true;
     notifyListeners();
     _markInCall();
+    if (!_callConnectedReported && _socket.connected) {
+      // Tells the server our peer connection really connected (admin call
+      // report: "connected" vs "both joined but no media").
+      _callConnectedReported = true;
+      _socket.emit('call-connected', {'appointmentId': appointmentId});
+    }
     final pc = _pc;
     if (pc != null) _startStatsCollection(pc);
+    _startCallStatsReporting();
     if (_remoteRebindPending) {
       _remoteRebindPending = false;
       _refreshRemoteStreamBinding();
@@ -3589,6 +3610,9 @@ class VideoCallController extends ChangeNotifier {
   void debugRegisterSocketListeners() => _registerSocketListeners();
 
   @visibleForTesting
+  void debugHandleConnected() => _handleConnectedState();
+
+  @visibleForTesting
   void debugSetPeerConnection(RTCPeerConnection? pc) => _pc = pc;
 
   @visibleForTesting
@@ -3630,6 +3654,7 @@ class VideoCallController extends ChangeNotifier {
     _socket.on('room-access-denied', _handleRoomDenied);
     _socket.on('duplicate-session', _handleDuplicateSession);
     _socket.on('appointment-access-revoked', _handleAccessRevoked);
+    _socket.on('call-monitoring-active', _handleCallMonitoringActive);
     _socket.on('connect', _handleSocketConnect);
     _socket.on('disconnect', _handleSocketDisconnect);
     _socket.on('connect_error', _handleSocketConnectError);
@@ -3654,6 +3679,7 @@ class VideoCallController extends ChangeNotifier {
     _socket.off('room-access-denied', _handleRoomDenied);
     _socket.off('duplicate-session', _handleDuplicateSession);
     _socket.off('appointment-access-revoked', _handleAccessRevoked);
+    _socket.off('call-monitoring-active', _handleCallMonitoringActive);
     _socket.off('connect', _handleSocketConnect);
     _socket.off('disconnect', _handleSocketDisconnect);
     _socket.off('connect_error', _handleSocketConnectError);
@@ -3753,6 +3779,19 @@ class VideoCallController extends ChangeNotifier {
       debugPrint('[video-call] token fetch for room join failed, joining without it: $err');
     }
 
+    // For the admin call report (informational; the server validates it and
+    // never trusts it for anything). A failure here must never block the join.
+    Map<String, dynamic> clientInfo = const {};
+    try {
+      clientInfo = await Future.any<Map<String, dynamic>>([
+        _clientInfoProvider(),
+        Future<Map<String, dynamic>>.delayed(const Duration(seconds: 2), () => const <String, dynamic>{}),
+      ]);
+    } catch (_) {
+      // Join without it.
+    }
+    if (_disposed) return;
+
     if (activeUserId.isNotEmpty) {
       _socket.emit('user-online', {
         'userId': activeUserId,
@@ -3761,6 +3800,7 @@ class VideoCallController extends ChangeNotifier {
       });
     }
     _socket.emit('join-appointment-room', {
+      if (clientInfo.isNotEmpty) 'clientInfo': clientInfo,
       'appointmentId': appointmentId,
       'userId': activeUserId,
       'role': role,
@@ -3783,6 +3823,7 @@ class VideoCallController extends ChangeNotifier {
   }
 
   void _handleSocketDisconnect(dynamic reason) {
+    _socketDrops += 1;
     _joinedSocketId = '';
     _roomJoinConfirmed = false;
     if (_disposed) return;
@@ -4288,12 +4329,14 @@ class VideoCallController extends ChangeNotifier {
     _reconnectStallTimer = null;
     _clearJoinTimeout();
     _stopStatsCollection();
+    _stopCallStatsReporting();
     _stopMediaWatchdog();
     _waitingForPeerSocketTimer?.cancel();
     _waitingForPeerSocketTimer = null;
     waitingForPeerSocket = false;
 
     if (leaveRoom && _joinedSocketId.isNotEmpty && _socket.connected) {
+      _sendCallStats(final_: true);
       _socket.emit('leave-appointment-room', {'appointmentId': appointmentId});
     }
 
@@ -4414,6 +4457,90 @@ class VideoCallController extends ChangeNotifier {
   // Ported from VideoCall.jsx's startStatsCollection/stopStatsCollection —
   // same STATS_INTERVAL_MS cadence and the same `webrtc_stats` telemetry
   // event/shape, so mobile calls surface in the same monitoring data as web.
+
+  // ── Admin call report: quality samples ──────────────────────────────
+  // Every 30s, every ~3s while an admin has the report open (told via
+  // call-monitoring-active), and once more on leave. Technical numbers only;
+  // the server validates everything. Mirrors VideoCall.jsx.
+
+  void _startCallStatsReporting() {
+    if (_callStatsTimer != null || _disposed) return;
+    _callStatsSnapshot = null; // counters restart with a new peer connection
+    _callStatsTimer = Timer(const Duration(seconds: 5), _callStatsTick);
+  }
+
+  void _stopCallStatsReporting() {
+    // Keeps _lastCallSample: the final sample is sent right after this, on leave.
+    _callStatsTimer?.cancel();
+    _callStatsTimer = null;
+  }
+
+  Future<void> _callStatsTick() async {
+    _callStatsTimer = null;
+    if (_disposed) return;
+    try {
+      final pc = _pc;
+      if (pc != null &&
+          pc.signalingState != RTCSignalingState.RTCSignalingStateClosed &&
+          _isConnectedState(pc) &&
+          _socket.connected &&
+          _joinedSocketId.isNotEmpty) {
+        final reports = await pc.getStats();
+        if (_disposed) return;
+        final result = buildCallStatsSample(
+          reports.map((r) => CallStatsEntry(r.id, r.type, r.values)),
+          _callStatsSnapshot,
+          DateTime.now().millisecondsSinceEpoch,
+          extra: {'connectionState': connectionState},
+        );
+        _callStatsSnapshot = result.snapshot;
+        _lastCallSample = result.sample;
+        _sendCallStats(final_: false);
+      }
+    } catch (_) {
+      // A failed sample is simply skipped.
+    }
+    if (!_disposed) {
+      _callStatsTimer = Timer(
+        _callMonitored ? const Duration(seconds: 3) : const Duration(milliseconds: kStatsIntervalMs),
+        _callStatsTick,
+      );
+    }
+  }
+
+  void _sendCallStats({required bool final_}) {
+    final sample = _lastCallSample;
+    if (sample == null || !_socket.connected) return;
+    _socket.emit('call-stats', {
+      'appointmentId': appointmentId,
+      ...sample,
+      'reconnects': _socketDrops,
+      if (final_) 'final': true,
+    });
+  }
+
+  void _handleCallMonitoringActive(dynamic active) {
+    _callMonitored = active == true;
+    if (_callMonitored && _callStatsTimer != null && !_disposed) {
+      _callStatsTimer!.cancel();
+      _callStatsTimer = Timer(const Duration(milliseconds: 500), _callStatsTick);
+    }
+  }
+
+  @visibleForTesting
+  void debugSetLastCallSample(Map<String, dynamic>? sample) => _lastCallSample = sample;
+
+  @visibleForTesting
+  void debugSendCallStats({bool final_ = false}) => _sendCallStats(final_: final_);
+
+  @visibleForTesting
+  void debugHandleCallMonitoringActive(dynamic active) => _handleCallMonitoringActive(active);
+
+  @visibleForTesting
+  bool get debugCallMonitored => _callMonitored;
+
+  @visibleForTesting
+  bool get debugCallStatsRunning => _callStatsTimer != null;
 
   void _stopStatsCollection() {
     _statsTimer?.cancel();
