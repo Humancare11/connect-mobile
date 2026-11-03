@@ -1,26 +1,67 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_design_system.dart';
 import '../services/app_update_service.dart';
+import '../services/store_update_service.dart';
 
 /// Wraps the whole app (see `main.dart`'s `MaterialApp.builder`) so the
 /// "Please update" screen can sit above every screen, driven by
 /// [AppUpdateService]. Screens never need to know it exists.
-class AppUpdateGate extends StatelessWidget {
-  const AppUpdateGate({super.key, required this.child});
+///
+/// It also drives the store force-update ([StoreUpdateService]): it asks the
+/// store once the first frame is up and again whenever the app returns from
+/// background, and shows the Update / Cancel popup (or, on iOS after Cancel,
+/// the full-screen "Update required" screen).
+class AppUpdateGate extends StatefulWidget {
+  const AppUpdateGate({super.key, required this.child, this.storeUpdate});
 
   final Widget child;
 
+  /// Overridable for tests; defaults to [StoreUpdateService.instance].
+  final StoreUpdateService? storeUpdate;
+
+  @override
+  State<AppUpdateGate> createState() => _AppUpdateGateState();
+}
+
+class _AppUpdateGateState extends State<AppUpdateGate>
+    with WidgetsBindingObserver {
+  StoreUpdateService get _store =>
+      widget.storeUpdate ?? StoreUpdateService.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_store.check());
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_store.check());
+  }
+
   @override
   Widget build(BuildContext context) {
+    final store = _store;
     return ListenableBuilder(
-      listenable: AppUpdateService.instance,
+      listenable: Listenable.merge([AppUpdateService.instance, store]),
       builder: (context, _) {
         final service = AppUpdateService.instance;
         return Stack(
           children: [
-            child,
+            widget.child,
             if (service.optional)
               Positioned(
                 left: 12,
@@ -30,6 +71,19 @@ class AppUpdateGate extends StatelessWidget {
                   child: _OptionalUpdateCard(storeUrl: service.storeUrl),
                 ),
               ),
+            // The backend-driven blocking screen wins over the store popup.
+            if (!service.forced && store.prompt)
+              Positioned.fill(child: _StoreUpdatePrompt(store: store)),
+            if (!service.forced && store.blocked)
+              Positioned.fill(
+                child: UpdateRequiredScreen(
+                  storeUrl: store.storeUrl,
+                  title: 'Update required',
+                  message:
+                      'A new version is available. Please update to continue.',
+                  onUpdate: store.update,
+                ),
+              ),
             if (service.forced)
               Positioned.fill(
                 child: UpdateRequiredScreen(storeUrl: service.storeUrl),
@@ -37,6 +91,74 @@ class AppUpdateGate extends StatelessWidget {
           ],
         );
       },
+    );
+  }
+}
+
+/// "A new version is available. Please update to continue." — modal, with
+/// Update and Cancel. Drawn in the gate's own Stack (the gate sits above the
+/// Navigator, so `showDialog` isn't available here).
+class _StoreUpdatePrompt extends StatelessWidget {
+  const _StoreUpdatePrompt({required this.store});
+
+  final StoreUpdateService store;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      child: Stack(
+        children: [
+          const ModalBarrier(dismissible: false, color: Colors.black54),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Material(
+                borderRadius: BorderRadius.circular(18),
+                color: Colors.white,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 12),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Update available',
+                        style: AppType.display(size: 18),
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        'A new version is available. Please update to continue.',
+                        style: AppType.body(size: 14, height: 1.5),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: store.cancel,
+                            child: const Text('Cancel'),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: store.update,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                            ),
+                            child: const Text('Update'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -56,9 +178,23 @@ Future<bool> _openStore(String url) async {
 /// Blocking "Please update" screen. Not dismissible: the user either updates
 /// or leaves the app.
 class UpdateRequiredScreen extends StatelessWidget {
-  const UpdateRequiredScreen({super.key, required this.storeUrl});
+  const UpdateRequiredScreen({
+    super.key,
+    required this.storeUrl,
+    this.title = 'Please update the app',
+    this.message =
+        'This version of Humancare Connect is no longer supported. '
+        'Update to the latest version to continue.',
+    this.onUpdate,
+  });
 
   final String storeUrl;
+  final String title;
+  final String message;
+
+  /// Custom Update action (the store force-update runs the Play / App Store
+  /// flow); when null the button just opens [storeUrl].
+  final Future<void> Function()? onUpdate;
 
   @override
   Widget build(BuildContext context) {
@@ -88,24 +224,24 @@ class UpdateRequiredScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    'Please update the app',
+                    title,
                     textAlign: TextAlign.center,
                     style: AppType.display(size: 22),
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'This version of Humancare Connect is no longer supported. '
-                    'Update to the latest version to continue.',
+                    message,
                     textAlign: TextAlign.center,
                     style: AppType.body(size: 14, height: 1.5),
                   ),
                   const SizedBox(height: 28),
-                  if (storeUrl.isNotEmpty)
+                  if (storeUrl.isNotEmpty || onUpdate != null)
                     SizedBox(
                       width: double.infinity,
                       height: 52,
                       child: ElevatedButton(
                         onPressed: () async {
+                          if (onUpdate != null) return onUpdate!();
                           final ok = await _openStore(storeUrl);
                           if (!ok && context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
