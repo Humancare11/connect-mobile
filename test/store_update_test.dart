@@ -16,7 +16,8 @@ class _Rig {
     this.platform = 'android',
     this.info,
     this.storeThrows = false,
-    this.remote,
+    this.remote = true,
+    this.remoteThrows = false,
     this.callActive = false,
     this.inAppRuns = true,
     bool enabled = true,
@@ -42,7 +43,10 @@ class _Rig {
         return true;
       },
       closeApp: () async => closed++,
-      remoteFlag: () async => remote,
+      remoteFlag: () async {
+        if (remoteThrows) throw Exception('version endpoint unreachable');
+        return remote;
+      },
       isCallActive: () => callActive,
     );
   }
@@ -51,6 +55,7 @@ class _Rig {
   final StoreUpdateInfo? info;
   final bool storeThrows;
   final bool? remote;
+  final bool remoteThrows;
   bool callActive;
   final bool inAppRuns;
 
@@ -185,31 +190,68 @@ void main() {
       platform: 'android',
     );
 
-    test('top-level false switches forcing off', () async {
+    test('top-level true / false are read as they are', () async {
+      expect(await flag({'forceStoreUpdate': true}), isTrue);
       expect(await flag({'forceStoreUpdate': false}), isFalse);
     });
 
-    test('per-platform false switches forcing off', () async {
-      expect(
-        await flag({
-          'android': {'forceStoreUpdate': false},
-        }),
-        isFalse,
-      );
-    });
+    test(
+      'per-platform true / false are read, and win over the top level',
+      () async {
+        expect(
+          await flag({
+            'android': {'forceStoreUpdate': true},
+          }),
+          isTrue,
+        );
+        expect(
+          await flag({
+            'android': {'forceStoreUpdate': false},
+            'forceStoreUpdate': true,
+          }),
+          isFalse,
+        );
+        // the other platform's value is not ours
+        expect(
+          await flag({
+            'ios': {'forceStoreUpdate': true},
+          }),
+          isNull,
+        );
+      },
+    );
 
-    test('missing flag or failure: null (forcing stays on)', () async {
+    test('missing field, wrong type or bad status: null', () async {
       expect(
         await flag({
           'android': {'minBuild': 1},
         }),
         isNull,
       );
+      expect(await flag({'forceStoreUpdate': 'true'}), isNull);
       expect(await flag({}, status: 500), isNull);
+      expect(await flag(['not', 'a', 'map']), isNull);
+    });
+
+    test('network error: null', () async {
       expect(
         await fetchRemoteForceFlag(
           client: MockClient((_) async => throw Exception('offline')),
           platform: 'android',
+        ),
+        isNull,
+      );
+    });
+
+    test('timeout: null', () async {
+      expect(
+        await fetchRemoteForceFlag(
+          client: MockClient((_) async {
+            await Future<void>.delayed(const Duration(milliseconds: 300));
+            return http.Response(jsonEncode({'forceStoreUpdate': true}), 200);
+          }),
+          platform: 'android',
+          timeout: const Duration(milliseconds: 20),
         ),
         isNull,
       );
@@ -254,13 +296,29 @@ void main() {
       expect(rig.service.prompt, isFalse);
     });
 
-    test('remote true / unreachable -> still forces', () async {
-      for (final remote in <bool?>[true, null]) {
-        final rig = _Rig(info: _newer, remote: remote);
-        await rig.service.check();
-        expect(rig.service.prompt, isTrue);
-      }
+    test('only an explicit remote true forces', () async {
+      final rig = _Rig(info: _newer, remote: true);
+      await rig.service.check();
+      expect(rig.service.prompt, isTrue);
     });
+
+    test('remote missing / unreadable (null) -> does NOT force', () async {
+      final rig = _Rig(info: _newer, remote: null);
+      await rig.service.check();
+      expect(rig.storeChecks, 0);
+      expect(rig.service.prompt, isFalse);
+      expect(rig.service.blocked, isFalse);
+    });
+
+    test(
+      'remote check throws (error / timeout surfaced) -> does NOT force',
+      () async {
+        final rig = _Rig(info: _newer, remoteThrows: true);
+        await rig.service.check();
+        expect(rig.storeChecks, 0);
+        expect(rig.service.prompt, isFalse);
+      },
+    );
 
     test('debug builds skip the check by default', () async {
       final rig = _Rig(info: _newer, enabledInDebug: false);

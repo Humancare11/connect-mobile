@@ -16,9 +16,11 @@ import 'active_call_tracker.dart';
 ///
 /// * [enabled] is the compile-time switch: set it to `false` and ship a
 ///   build to turn forcing off for good.
-/// * Without a release, the backend can send `forceStoreUpdate: false`
-///   (top-level or inside the platform's object) in `GET /api/app/version`;
-///   see [fetchRemoteForceFlag]. A missing flag means "force".
+/// * Forcing is opt-in from the backend: it happens only when
+///   `GET /api/app/version` explicitly says `forceStoreUpdate: true`
+///   (top-level or inside the platform's object); see [fetchRemoteForceFlag].
+///   A missing field, `false`, an error, a timeout or an unreadable answer
+///   all mean "do not force".
 class StoreUpdateConfig {
   const StoreUpdateConfig._();
 
@@ -101,8 +103,9 @@ Future<StoreUpdateInfo?> lookupAppStore({
   }
 }
 
-/// Reads the optional remote kill switch. `false` = forcing is off; `true` or
-/// anything unreadable = leave forcing on.
+/// Reads the remote force switch. `true` = force; `false` = don't; `null` =
+/// couldn't tell (error, timeout, bad answer, field missing), which the caller
+/// treats as "don't force".
 Future<bool?> fetchRemoteForceFlag({
   required http.Client client,
   required String platform,
@@ -201,7 +204,8 @@ class StoreUpdateService extends ChangeNotifier {
     _lastCheck = _now();
     try {
       final flag = await (_remoteFlag ?? _defaultRemoteFlag)();
-      if (flag == false) return;
+      // Only an explicit `true` forces; false, missing or unreadable never do.
+      if (flag != true) return;
       final info = await (_checkStore ?? _defaultCheckStore)();
       if (info == null || !info.updateAvailable) return;
       // A call may have started while we were waiting on the network.
