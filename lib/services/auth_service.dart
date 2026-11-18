@@ -11,6 +11,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import '../models/api_result.dart';
 import '../models/apple_auth_result.dart';
 import '../models/auth_response.dart';
+import '../models/deletion_request_status.dart';
 import '../models/google_auth_result.dart';
 import '../utils/json_helpers.dart';
 import 'api_client.dart';
@@ -278,6 +279,44 @@ class AuthService {
     return ApiResult<void>(
       success: result.success,
       message: result.message,
+      raw: result.raw,
+      statusCode: result.statusCode,
+    );
+  }
+
+  /// `GET /auth/me` → the user's account-deletion request state.
+  Future<ApiResult<DeletionRequestStatus>> fetchDeletionStatus({
+    bool silent = true,
+  }) async {
+    final result = await _apiClient.get('/auth/me', null, silent);
+
+    return ApiResult<DeletionRequestStatus>(
+      success: result.success,
+      message: result.message,
+      data: result.success
+          ? DeletionRequestStatus.fromResponse(result.data ?? const {})
+          : null,
+      raw: result.raw,
+      statusCode: result.statusCode,
+    );
+  }
+
+  /// `POST /auth/account-delete-request/cancel` — withdraws the user's own
+  /// pending request. A 400 means nothing is pending any more (an admin
+  /// already decided); callers should refresh the state via
+  /// [fetchDeletionStatus].
+  Future<ApiResult<DeletionRequestStatus>> cancelAccountDeletion() async {
+    final result = await _apiClient.post(
+      '/auth/account-delete-request/cancel',
+      const <String, dynamic>{},
+    );
+
+    return ApiResult<DeletionRequestStatus>(
+      success: result.success,
+      message: result.message,
+      data: result.success
+          ? DeletionRequestStatus.fromResponse(result.data ?? const {})
+          : null,
       raw: result.raw,
       statusCode: result.statusCode,
     );

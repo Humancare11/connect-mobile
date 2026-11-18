@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_design_system.dart';
+import '../models/deletion_request_status.dart';
 import '../services/auth_service.dart';
 
 /// Lets a signed-in patient submit an account-deletion request.
@@ -36,6 +38,90 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
   bool _submitting = false;
   bool _submitted = false;
 
+  // Where the user's deletion request currently stands (see
+  // DeletionRequestStatus). While it is loading a spinner is shown so the
+  // form never flashes before a "pending" card.
+  DeletionRequestStatus _status = DeletionRequestStatus.none;
+  bool _loadingStatus = true;
+  bool _cancelling = false;
+  String _cancelError = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshStatus();
+  }
+
+  Future<void> _refreshStatus() async {
+    DeletionRequestStatus status = _status;
+    try {
+      final result = await _authService.fetchDeletionStatus();
+      if (result.success && result.data != null) status = result.data!;
+    } catch (_) {
+      // Offline / failed: fall back to the plain request form.
+    }
+    if (!mounted) return;
+    setState(() {
+      _status = status;
+      _loadingStatus = false;
+    });
+  }
+
+  Future<void> _cancelRequest() async {
+    if (_cancelling) return;
+    setState(() {
+      _cancelling = true;
+      _cancelError = '';
+    });
+
+    String message = '';
+    try {
+      final result = await _authService.cancelAccountDeletion();
+      if (!mounted) return;
+
+      if (result.success) {
+        setState(() {
+          _status = result.data ?? DeletionRequestStatus.none;
+          _cancelling = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              result.message.isNotEmpty
+                  ? result.message
+                  : 'Account deletion request cancelled.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      if (result.statusCode == 400) {
+        // Nothing pending any more (an admin already decided): show the
+        // real state instead.
+        await _refreshStatus();
+        message = result.message.isNotEmpty
+            ? result.message
+            : 'There is no pending request to cancel.';
+      } else if (result.statusCode == 0) {
+        message =
+            "We couldn't reach the server. Check your connection and try again.";
+      } else {
+        message = result.message.isNotEmpty
+            ? result.message
+            : 'Unable to cancel your request right now. Please try again.';
+      }
+    } catch (_) {
+      message = 'Unable to cancel your request right now. Please try again.';
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _cancelling = false;
+      _cancelError = message;
+    });
+  }
+
   @override
   void dispose() {
     _reasonCtrl.dispose();
@@ -66,6 +152,8 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
           ),
         ),
       );
+      // A request may already be pending (e.g. made on the website): show it.
+      if (result.statusCode == 400) await _refreshStatus();
       return;
     }
 
@@ -99,7 +187,13 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
         surfaceTintColor: Colors.transparent,
       ),
       body: SafeArea(
-        child: _submitted ? _buildSubmitted() : _buildForm(),
+        child: _loadingStatus
+            ? const Center(child: CircularProgressIndicator())
+            : _submitted
+            ? _buildSubmitted()
+            : _status.isPending
+            ? _buildPending()
+            : _buildForm(),
       ),
     );
   }
@@ -108,6 +202,23 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       children: [
+        if (_status.isRejected) ...[
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.primaryLight,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+            ),
+            child: Text(
+              'Your previous deletion request was declined, so your account '
+              'is unchanged. You can submit a new request if you still want '
+              'to delete it.',
+              style: AppType.body(size: 13.5, height: 1.4)
+                  .copyWith(color: AppColors.textPrimary),
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -234,7 +345,11 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
                   )
                 : const Icon(Icons.delete_forever_rounded),
             label: Text(
-              _submitting ? 'Submitting...' : 'Submit Deletion Request',
+              _submitting
+                  ? 'Submitting...'
+                  : _status.isRejected
+                  ? 'Request Account Deletion Again'
+                  : 'Submit Deletion Request',
             ),
           ),
         ),
@@ -249,6 +364,81 @@ class _DeleteAccountScreenState extends State<DeleteAccountScreen> {
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildPending() {
+    final requestedAt = _status.requestedAt;
+    final requestedOn = requestedAt == null
+        ? ''
+        : ' on ${DateFormat('MMMM d, yyyy').format(requestedAt)}';
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: _dangerBg,
+            borderRadius: BorderRadius.circular(AppRadius.md),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.hourglass_top_rounded, color: _danger),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Deletion requested$requestedOn',
+                      style: AppType.body(size: 15, weight: FontWeight.w800)
+                          .copyWith(color: _danger),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Our team will review your request and email you once it has '
+                'been processed. Your account stays active until then.',
+                style: AppType.body(size: 13.5, height: 1.4)
+                    .copyWith(color: AppColors.textSecondary),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        SizedBox(
+          width: double.infinity,
+          height: 48,
+          child: OutlinedButton(
+            onPressed: _cancelling ? null : _cancelRequest,
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.primary,
+              side: const BorderSide(color: AppColors.primary),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+            ),
+            child: _cancelling
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Cancel request'),
+          ),
+        ),
+        if (_cancelError.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          Text(
+            _cancelError,
+            style: AppType.body(size: 13, weight: FontWeight.w700)
+                .copyWith(color: _danger),
+          ),
+        ],
       ],
     );
   }

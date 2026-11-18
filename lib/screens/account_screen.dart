@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_design_system.dart';
+import '../services/auth_service.dart';
 import '../services/auth_repository.dart';
 import '../services/idle_session_timer.dart';
 import 'profile_settings_screen.dart';
@@ -197,7 +198,7 @@ class AccountScreen extends StatelessWidget {
             const _SectionLabel('DANGER ZONE'),
             const SizedBox(height: 10),
             _DeleteAccountTile(
-              onTap: () => Navigator.push(
+              onOpen: () => Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => const DeleteAccountScreen()),
               ),
@@ -331,9 +332,42 @@ class _AccountTile extends StatelessWidget {
   }
 }
 
-class _DeleteAccountTile extends StatelessWidget {
-  final VoidCallback onTap;
-  const _DeleteAccountTile({required this.onTap});
+class _DeleteAccountTile extends StatefulWidget {
+  const _DeleteAccountTile({required this.onOpen});
+
+  /// Opens the delete-account screen; the returned future completes when the
+  /// user comes back, so the "Pending" hint can be refreshed.
+  final Future<void> Function() onOpen;
+
+  @override
+  State<_DeleteAccountTile> createState() => _DeleteAccountTileState();
+}
+
+class _DeleteAccountTileState extends State<_DeleteAccountTile> {
+  bool _pending = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStatus();
+  }
+
+  Future<void> _loadStatus() async {
+    var pending = false;
+    try {
+      final result = await AuthService().fetchDeletionStatus();
+      pending = result.success && (result.data?.isPending ?? false);
+    } catch (_) {
+      // The hint is optional; any failure just leaves it hidden.
+    }
+    if (!mounted || pending == _pending) return;
+    setState(() => _pending = pending);
+  }
+
+  Future<void> _open() async {
+    await widget.onOpen();
+    if (mounted) _loadStatus();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -342,7 +376,7 @@ class _DeleteAccountTile extends StatelessWidget {
       borderRadius: BorderRadius.circular(AppRadius.md),
       child: InkWell(
         borderRadius: BorderRadius.circular(AppRadius.md),
-        onTap: onTap,
+        onTap: _open,
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(AppRadius.md),
@@ -361,6 +395,22 @@ class _DeleteAccountTile extends StatelessWidget {
                       .copyWith(color: AccountScreen._danger),
                 ),
               ),
+              if (_pending) ...[
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: AccountScreen._dangerBg,
+                    borderRadius: BorderRadius.circular(AppRadius.chip),
+                  ),
+                  child: Text(
+                    'Pending',
+                    style: AppType.body(size: 11, weight: FontWeight.w900)
+                        .copyWith(color: AccountScreen._danger),
+                  ),
+                ),
+                const SizedBox(width: 6),
+              ],
               Icon(Icons.chevron_right_rounded,
                   color: AccountScreen._danger.withValues(alpha: 0.6)),
             ],
