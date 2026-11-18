@@ -33,6 +33,7 @@ class TokenStorageService {
   // so an existing logged-in user's session and profile survive the update
   // with no explicit migration flag to track or get out of sync.
   static const String _userIdKey = 'user_id';
+  static const String _patientIdKey = 'patient_id';
   static const String _userNameKey = 'user_name';
   static const String _userEmailKey = 'user_email';
   static const String _userRoleKey = 'user_role';
@@ -46,6 +47,7 @@ class TokenStorageService {
 
   static const List<String> _profileKeys = [
     _userIdKey,
+    _patientIdKey,
     _userNameKey,
     _userEmailKey,
     _userRoleKey,
@@ -123,9 +125,14 @@ class TokenStorageService {
     String state = '',
     String city = '',
     String location = '',
+    // The human-facing patient number (e.g. 12345). Never the account id: keep
+    // it separate from [userId], which must stay the server's `_id`. When
+    // null the stored value is left untouched.
+    String? patientId,
   }) async {
     final values = <String, String>{
       _userIdKey: userId,
+      _patientIdKey: ?patientId,
       _userNameKey: name,
       _userEmailKey: email,
       _userRoleKey: role,
@@ -186,6 +193,7 @@ class TokenStorageService {
       final prefs = await SharedPreferences.getInstance();
       return {
         'userId': prefs.getString(_userIdKey) ?? '',
+        'patientId': prefs.getString(_patientIdKey) ?? '',
         'name': prefs.getString(_userNameKey) ?? '',
         'email': prefs.getString(_userEmailKey) ?? '',
         'role': prefs.getString(_userRoleKey) ?? '',
@@ -204,6 +212,7 @@ class TokenStorageService {
 
     return {
       'userId': byKey[_userIdKey] ?? '',
+      'patientId': byKey[_patientIdKey] ?? '',
       'name': byKey[_userNameKey] ?? '',
       'email': byKey[_userEmailKey] ?? '',
       'role': byKey[_userRoleKey] ?? '',

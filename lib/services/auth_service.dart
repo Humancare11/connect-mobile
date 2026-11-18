@@ -656,6 +656,7 @@ class AuthService {
       state: authResponse.user.state,
       city: authResponse.user.city,
       location: authResponse.user.location,
+      patientId: authResponse.user.patientId,
     );
     // Fire-and-forget: FCM token registration now retries transient
     // failures with backoff (see notification_service.dart), which can add
@@ -665,6 +666,44 @@ class AuthService {
     // device gets push notifications has no bearing on whether login should
     // proceed.
     unawaited(NotificationService.instance.syncTokenAfterLogin());
+  }
+
+  /// Run on launch with a stored session: asks `GET /auth/me` who this session
+  /// belongs to and, on success, overwrites the stored `userId` with the
+  /// server's `_id` (and keeps the patient number separately). Repairs
+  /// installs where an earlier build saved the patient number as `userId`.
+  /// Any failure leaves the stored values untouched. Never throws.
+  Future<void> repairStoredUserId() async {
+    try {
+      final result = await _apiClient.get('/auth/me', null, true);
+      if (!result.success) return;
+
+      final user = UserModel.fromMaps(
+        result.data ?? <String, dynamic>{},
+        const <String, dynamic>{},
+      );
+      if (user.id.isEmpty) return;
+
+      final stored = await _tokenStorage.getUserProfile();
+      await _tokenStorage.saveUserProfile(
+        userId: user.id,
+        name: stored['name'] ?? '',
+        email: stored['email'] ?? '',
+        role: stored['role'] ?? '',
+        mobile: stored['mobile'] ?? '',
+        dob: stored['dob'] ?? '',
+        gender: stored['gender'] ?? '',
+        country: stored['country'] ?? '',
+        state: stored['state'] ?? '',
+        city: stored['city'] ?? '',
+        location: stored['location'] ?? '',
+        patientId: user.patientId.isNotEmpty
+            ? user.patientId
+            : (stored['patientId'] ?? ''),
+      );
+    } catch (error) {
+      debugPrint('repairStoredUserId failed: $error');
+    }
   }
 
   Future<ApiResult<Map<String, String>>> fetchCurrentProfile({
@@ -797,11 +836,13 @@ class AuthService {
       responseData['user'],
       findFirstMapByKeys(data, const {'user'}),
     ]);
-    final patientId = firstNonEmptyString([
-      responseUser['patientId'],
-      data['patientId'],
-      responseData['patientId'],
-    ]);
+    final patientId = user.patientId.isNotEmpty
+        ? user.patientId
+        : firstNonEmptyString([
+            responseUser['patientId'],
+            data['patientId'],
+            responseData['patientId'],
+          ]);
 
     String pick(String key, String candidate) {
       final text = candidate.trim();
@@ -810,7 +851,10 @@ class AuthService {
     }
 
     return {
-      'userId': pick('userId', patientId.isNotEmpty ? patientId : user.id),
+      // `userId` is always the server `_id` (used for socket rooms, video
+      // call identity and cache keys). The patient number is kept apart.
+      'userId': pick('userId', user.id),
+      'patientId': pick('patientId', patientId),
       'name': pick('name', user.name),
       'email': pick('email', user.email),
       'role': pick('role', user.role),

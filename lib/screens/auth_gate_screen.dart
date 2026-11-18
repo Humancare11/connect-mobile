@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
+import '../services/auth_service.dart';
 import '../services/idle_session_timer.dart';
 import '../services/token_storage_service.dart';
 import 'login_screen.dart';
@@ -48,7 +51,11 @@ class _AuthGateScreenState extends State<AuthGateScreen> {
     // A stored session found at cold start means the 30-minute inactivity
     // countdown needs to (re)start here too — AuthService.saveSession only
     // covers a *fresh* login, not resuming an existing one.
-    if (authenticated) IdleSessionTimer.instance.start();
+    if (authenticated) {
+      IdleSessionTimer.instance.start();
+      // Fire-and-forget: make sure the stored userId is the server's _id.
+      unawaited(AuthService().repairStoredUserId());
+    }
 
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(

@@ -27,6 +27,7 @@ class UserModel {
     required this.state,
     required this.city,
     required this.location,
+    this.patientId = '',
   });
 
   final String id;
@@ -40,6 +41,9 @@ class UserModel {
   final String state;
   final String city;
   final String location;
+
+  /// The human-facing patient number — NOT the account id ([id]).
+  final String patientId;
 
   factory UserModel.fromMaps(
     Map<String, dynamic> data,
@@ -129,6 +133,11 @@ class UserModel {
         user['location'],
         data['location'],
         responseData['location'],
+      ]),
+      patientId: firstNonEmptyString([
+        user['patientId'],
+        data['patientId'],
+        responseData['patientId'],
       ]),
     );
   }

@@ -46,6 +46,8 @@ class _EditProfilePageState extends State<EditProfilePage> {
   String gender = "";
   DateTime? dob;
   String userId = '';
+  // Human-facing patient number shown in the "Patient ID" row (never the _id).
+  String patientId = '';
   String role = 'patient';
   String location = '';
   // "ip" while the saved location is only the backend's IP-based estimate
@@ -240,7 +242,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
             ),
           ),
           const SizedBox(height: 18),
-          if (userId.isNotEmpty) _metaRow("🆔", "Patient ID", userId),
+          if (patientId.isNotEmpty) _metaRow("🆔", "Patient ID", patientId),
           if (gender.isNotEmpty) _metaRow("👤", "Gender", gender),
           if (age != null) _metaRow("🎂", "Age", "$age years old"),
           if ((originalData['mobile'] ?? '').isNotEmpty)
@@ -791,6 +793,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
     final profile = updateResult.data!;
     await _tokenStorage.saveUserProfile(
       userId: profile['userId'] ?? userId,
+      patientId: profile['patientId'],
       name: profile['name'] ?? trimmedName,
       email: profile['email'] ?? trimmedEmail,
       role: profile['role'] ?? role,
@@ -849,6 +852,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
     final remoteProfile = remoteResult.data!;
     await _tokenStorage.saveUserProfile(
       userId: remoteProfile['userId'] ?? userId,
+      patientId: remoteProfile['patientId'],
       name: remoteProfile['name'] ?? nameCtrl.text,
       email: remoteProfile['email'] ?? emailCtrl.text,
       role: remoteProfile['role'] ?? role,
@@ -871,6 +875,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   void _applyProfile(Map<String, String> profile) {
     userId = profile['userId'] ?? '';
+    patientId = profile['patientId'] ?? '';
     nameCtrl.text = profile['name'] ?? '';
     emailCtrl.text = profile['email'] ?? '';
     role = (profile['role']?.trim().isNotEmpty ?? false)
