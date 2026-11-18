@@ -59,77 +59,40 @@ class TicketService {
     bool silent = false,
   }) async {
     final isDoctor = await _isDoctor();
-    final endpoints = isDoctor
-        ? const [
-            '/tickets',
-            '/tickets/doctor',
-            '/tickets/my-tickets',
-            '/tickets/doctor/my-tickets',
-            '/tickets/doctor/all',
-            '/tickets/doctor/list',
-          ]
-        : const [
-            '/tickets/user',
-            '/tickets/user/my-tickets',
-            '/tickets/user/all',
-            '/tickets/user/list',
-            '/tickets/user/tickets',
-            '/tickets/my-tickets',
-          ];
+    // Same endpoints the web app uses: GET /api/tickets/user/my (patient) and
+    // GET /api/tickets/my (doctor).
+    final endpoint = isDoctor ? '/tickets/my' : '/tickets/user/my';
 
-    ApiResult<Map<String, dynamic>>? lastFailure;
+    final result = await _apiClient.get(endpoint, null, silent);
 
-    for (final endpoint in endpoints) {
-      final result = await _apiClient.get(endpoint, null, silent);
-      if (result.success) {
-        return ApiResult<List<Map<String, dynamic>>>(
-          success: true,
-          message: result.message,
-          data: _ticketListFrom(result.data ?? <String, dynamic>{}),
-          raw: result.raw,
-          statusCode: result.statusCode,
-        );
-      }
-
-      lastFailure = result;
-      if (_shouldTryNextTicketEndpoint(result)) {
-        continue;
-      } else {
-        break;
-      }
-    }
-
-    if (lastFailure != null && _isAuthFailure(lastFailure)) {
-      // Expired/invalid auth was previously treated identically to
-      // "endpoint not found" and silently rendered as an empty ticket list
-      // (success:true, data:[]) — a user whose session expired saw "No
-      // tickets found" with no indication they needed to log in again.
+    if (result.success) {
       return ApiResult<List<Map<String, dynamic>>>(
-        success: false,
-        message: 'Session expired. Please log in again.',
-        raw: lastFailure.raw,
-        statusCode: lastFailure.statusCode,
+        success: true,
+        message: result.message,
+        data: _ticketListFrom(result.data ?? <String, dynamic>{}),
+        raw: result.raw,
+        statusCode: result.statusCode,
       );
     }
 
-    if (lastFailure == null ||
-        _shouldTreatMissingTicketListAsEmpty(lastFailure)) {
+    // Every failure (including 404/405) is surfaced as an error — it must
+    // never be rendered as "No tickets found".
+    if (_isAuthFailure(result)) {
       return ApiResult<List<Map<String, dynamic>>>(
-        success: true,
-        message: '',
-        data: const <Map<String, dynamic>>[],
-        raw: lastFailure?.raw ?? const <String, dynamic>{},
-        statusCode: lastFailure?.statusCode ?? 0,
+        success: false,
+        message: 'Session expired. Please log in again.',
+        raw: result.raw,
+        statusCode: result.statusCode,
       );
     }
 
     return ApiResult<List<Map<String, dynamic>>>(
       success: false,
-      message: lastFailure.message.isNotEmpty == true
-          ? lastFailure.message
+      message: result.message.isNotEmpty
+          ? result.message
           : 'Unable to load tickets.',
-      raw: lastFailure.raw,
-      statusCode: lastFailure.statusCode,
+      raw: result.raw,
+      statusCode: result.statusCode,
     );
   }
 
@@ -225,23 +188,6 @@ class TicketService {
 
 bool _isAuthFailure(ApiResult<Map<String, dynamic>> result) {
   return result.statusCode == 401 || result.statusCode == 403;
-}
-
-bool _shouldTryNextTicketEndpoint(ApiResult<Map<String, dynamic>> result) {
-  // 401/403 means "wrong identity for this resource," not "wrong URL" — an
-  // auth failure will happen identically on every remaining endpoint, and
-  // trying them all just delays surfacing the real problem (an expired
-  // session) to the user. Stop immediately instead.
-  if (_isAuthFailure(result)) return false;
-  return [404, 405].contains(result.statusCode) ||
-      result.message.startsWith('Unexpected response from the server');
-}
-
-bool _shouldTreatMissingTicketListAsEmpty(
-  ApiResult<Map<String, dynamic>> result,
-) {
-  return [404, 405].contains(result.statusCode) ||
-      result.message.startsWith('Unexpected response from the server');
 }
 
 List<Map<String, dynamic>> _ticketListFrom(Map<String, dynamic> data) {
