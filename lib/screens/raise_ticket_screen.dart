@@ -1,17 +1,34 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../config/app_design_system.dart';
+import '../services/socket_service.dart';
 import '../services/ticket_service.dart';
+import '../services/token_storage_service.dart';
+import '../widgets/ticket_thread_view.dart';
 
 class RaiseTicketPage extends StatefulWidget {
-  const RaiseTicketPage({super.key});
+  const RaiseTicketPage({
+    super.key,
+    this.ticketService,
+    this.enableRealtime = true,
+  });
+
+  /// Injectable for tests; defaults to the real service.
+  final TicketService? ticketService;
+
+  /// Refresh the list on socket `ticket-updated` / `ticket-created`.
+  final bool enableRealtime;
 
   @override
   State<RaiseTicketPage> createState() => _RaiseTicketPageState();
 }
 
 class _RaiseTicketPageState extends State<RaiseTicketPage> {
-  final _ticketService = TicketService();
+  late final TicketService _ticketService =
+      widget.ticketService ?? TicketService();
+  Timer? _realtimeTimer;
   final titleCtrl = TextEditingController();
   final descCtrl = TextEditingController();
 
@@ -48,10 +65,61 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _restoreAndLoadTickets();
     });
+    if (widget.enableRealtime) _connectRealtime();
+  }
+
+  // Support replies and closures arrive over the socket (events sent to the
+  // patient's room); refresh the list when one does.
+  void _connectRealtime() {
+    final socket = SocketService.instance;
+    socket.on('connect', _onSocketConnected);
+    socket.on('ticket-updated', _onTicketEvent);
+    socket.on('ticket-created', _onTicketEvent);
+
+    if (socket.connected) {
+      _joinPatientRoom();
+    } else {
+      socket.connect();
+    }
+  }
+
+  void _disconnectRealtime() {
+    final socket = SocketService.instance;
+    socket.off('connect', _onSocketConnected);
+    socket.off('ticket-updated', _onTicketEvent);
+    socket.off('ticket-created', _onTicketEvent);
+  }
+
+  void _onSocketConnected(dynamic _) {
+    _joinPatientRoom();
+    _queueRealtimeRefresh();
+  }
+
+  void _onTicketEvent(dynamic _) => _queueRealtimeRefresh();
+
+  void _queueRealtimeRefresh() {
+    _realtimeTimer?.cancel();
+    _realtimeTimer = Timer(const Duration(milliseconds: 300), () {
+      _realtimeTimer = null;
+      if (mounted) _loadTickets();
+    });
+  }
+
+  Future<void> _joinPatientRoom() async {
+    final profile = await const TokenStorageService().getUserProfile();
+    final userId = (profile['userId'] ?? '').trim();
+    if (userId.isEmpty || !SocketService.instance.connected) return;
+
+    SocketService.instance.emit('user-online', {
+      'userId': userId,
+      'role': 'user',
+    });
   }
 
   @override
   void dispose() {
+    _realtimeTimer?.cancel();
+    if (widget.enableRealtime) _disconnectRealtime();
     titleCtrl.dispose();
     descCtrl.dispose();
     super.dispose();
@@ -512,13 +580,19 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          "$catLabel · ${_formatDate(ticket["createdAt"])}",
+                          [
+                            if ((ticket["ref"]?.toString() ?? "").isNotEmpty)
+                              ticket["ref"].toString(),
+                            catLabel,
+                            _formatDate(ticket["createdAt"]),
+                          ].join(" · "),
                           style: AppType.body(size: 12)
                               .copyWith(color: AppColors.textSecondary),
                         ),
                       ],
                     ),
                   ),
+                  if (_hasNewReply(ticket)) _newReplyChip(),
                   _statusBadge(status),
                   Icon(
                     isOpen
@@ -538,40 +612,107 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Divider(color: AppColors.border),
-                  Text(
-                    "Description",
-                    style: AppType.body(size: 12, weight: FontWeight.w900)
-                        .copyWith(color: AppColors.textSecondary),
-                  ),
                   const SizedBox(height: 6),
-                  Text(
-                    ticket["description"] ?? "",
-                    style: AppType.body(size: 13.5)
-                        .copyWith(color: AppColors.textPrimary),
+                  TicketThreadView(
+                    key: ValueKey("thread-${ticket["_id"]}"),
+                    messages: _messagesOf(ticket),
+                    closed: isResolved,
+                    closedAt: _parseDate(ticket["closedAt"]),
+                    onSend: (text) => _sendReply(ticket, text),
                   ),
-                  if (isResolved && _hasResolution(ticket)) ...[
-                    const SizedBox(height: 12),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: _statusResolved.withValues(alpha: 0.10),
-                        borderRadius: BorderRadius.circular(AppRadius.sm),
-                      ),
-                      child: Text(
-                        "Resolution\n${_resolutionText(ticket)}",
-                        style: AppType.body(size: 13).copyWith(
-                          color: const Color(0xFF15803D),
-                        ),
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
         ],
       ),
     );
+  }
+
+  List<TicketMessage> _messagesOf(Map<String, dynamic> ticket) {
+    return TicketMessage.listFrom(
+      ticket["messages"],
+      fallbackText: ticket["description"]?.toString() ?? "",
+      fallbackAt: ticket["createdAt"],
+    );
+  }
+
+  // Open ticket whose latest message is from support (the user hasn't
+  // answered yet) — same "New reply" cue as the web.
+  bool _hasNewReply(Map<String, dynamic> ticket) {
+    if (_statusKey(ticket["status"]) == "resolved") return false;
+    final messages = _messagesOf(ticket);
+    return messages.isNotEmpty && !messages.last.isMine;
+  }
+
+  Widget _newReplyChip() {
+    return Container(
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(AppRadius.chip),
+      ),
+      child: Text(
+        "New reply",
+        style: AppType.body(size: 10.5, weight: FontWeight.w900)
+            .copyWith(color: AppColors.primary),
+      ),
+    );
+  }
+
+  /// Sends a reply on [ticket]. Returns `null` on success, otherwise the
+  /// message to show under the reply box.
+  Future<String?> _sendReply(Map<String, dynamic> ticket, String text) async {
+    final id = ticket["_id"]?.toString() ?? "";
+    final result = await _ticketService.replyToTicket(ticketId: id, text: text);
+    if (!mounted) return null;
+
+    if (result.success && (result.data?.isNotEmpty ?? false)) {
+      setState(() => _replaceTicket(_ticketFromResponse(result.data!)));
+      await _saveTickets();
+      return null;
+    }
+
+    if (result.statusCode == 409) {
+      // Support closed it while the box was open: show the closed state
+      // instead of a dead reply box, and pick up the final conversation.
+      setState(() {
+        final index = tickets.indexWhere((t) => t["_id"] == id);
+        if (index != -1) {
+          tickets[index] = {
+            ...tickets[index],
+            "status": "resolved",
+            "closedAt": tickets[index]["closedAt"] ??
+                DateTime.now().toIso8601String(),
+          };
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "This ticket has just been closed. Please raise a new ticket if you still need help.",
+          ),
+        ),
+      );
+      unawaited(_loadTickets());
+      return null;
+    }
+
+    if (result.statusCode == 401) {
+      return "Session expired. Please log in again.";
+    }
+    return result.message.isNotEmpty
+        ? result.message
+        : "Could not send your message. Please try again.";
+  }
+
+  void _replaceTicket(Map<String, dynamic> updated) {
+    final index = tickets.indexWhere((t) => t["_id"] == updated["_id"]);
+    if (index == -1) {
+      tickets.insert(0, updated);
+    } else {
+      tickets[index] = updated;
+    }
   }
 
   Widget _statusBadge(String status) {
@@ -740,6 +881,11 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
       "category":
           ticketCategory?.isNotEmpty == true ? ticketCategory : category,
       "status": status,
+      if ((ticket["ref"]?.toString().trim() ?? "").isNotEmpty)
+        "ref": ticket["ref"].toString().trim(),
+      if (ticket["messages"] is List) "messages": ticket["messages"],
+      if ((ticket["closedAt"]?.toString().trim() ?? "").isNotEmpty)
+        "closedAt": ticket["closedAt"].toString().trim(),
       if ((ticket["resolution"]?.toString().trim() ?? "").isNotEmpty)
         "resolution": ticket["resolution"].toString().trim(),
       if ((ticket["resolvedBy"]?.toString().trim() ?? "").isNotEmpty)
@@ -777,13 +923,6 @@ class _RaiseTicketPageState extends State<RaiseTicketPage> {
     return resolution.isNotEmpty ||
         resolvedBy.isNotEmpty ||
         resolvedAt.isNotEmpty;
-  }
-
-  String _resolutionText(Map<String, dynamic> ticket) {
-    final resolution = ticket["resolution"]?.toString().trim() ?? "";
-    if (resolution.isNotEmpty) return resolution;
-
-    return "Resolved by support.";
   }
 
   List<Map<String, dynamic>> _mergeTickets(

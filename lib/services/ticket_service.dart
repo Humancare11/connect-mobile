@@ -55,6 +55,31 @@ class TicketService {
     );
   }
 
+  /// `POST /tickets/user/:id/reply` (doctors: `/tickets/:id/reply`) — adds a
+  /// message to the conversation. On success `data` is the full updated ticket
+  /// (with `messages`). A `409` means support closed the ticket meanwhile.
+  Future<ApiResult<Map<String, dynamic>>> replyToTicket({
+    required String ticketId,
+    required String text,
+  }) async {
+    final isDoctor = await _isDoctor();
+    final id = Uri.encodeComponent(ticketId.trim());
+
+    final result = await _apiClient.post(
+      isDoctor ? '/tickets/$id/reply' : '/tickets/user/$id/reply',
+      {'text': text.trim()},
+      silent: true,
+    );
+
+    return ApiResult<Map<String, dynamic>>(
+      success: result.success,
+      message: result.message,
+      data: result.success ? asMap(result.data?['ticket']) : null,
+      raw: result.raw,
+      statusCode: result.statusCode,
+    );
+  }
+
   Future<ApiResult<List<Map<String, dynamic>>>> fetchTickets({
     bool silent = false,
   }) async {
