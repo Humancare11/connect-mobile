@@ -8,10 +8,12 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../config/app_info.dart';
 import '../models/api_result.dart';
+import 'active_call_tracker.dart';
 import 'app_update_service.dart';
 import 'idle_session_timer.dart';
 import 'loading_service.dart';
 import 'session_expired_service.dart';
+import 'session_logout.dart';
 import 'token_storage_service.dart';
 
 class ApiClient {
@@ -404,9 +406,33 @@ class ApiClient {
   /// several requests that all 401'd around the same moment.
   Future<void> _handleSessionExpired() async {
     if (SessionExpiredService.instance.isExpired) return;
+    // Never tear the session down in the middle of a video consultation:
+    // wait until the call ends, then run the normal expiry.
+    if (ActiveCallTracker.instance.isActive) {
+      _deferSessionExpiryUntilCallEnds();
+      return;
+    }
     IdleSessionTimer.instance.stop();
-    await _tokenStorage.clearAll();
+    // Same flow as the manual logout (server revoke, FCM token, storage),
+    // detached so the expiry screen is not held up by the network.
+    await SessionLogout.shared.perform(background: true);
     SessionExpiredService.instance.trigger();
+  }
+
+  static bool _expiryDeferred = false;
+
+  void _deferSessionExpiryUntilCallEnds() {
+    if (_expiryDeferred) return;
+    _expiryDeferred = true;
+    final tracker = ActiveCallTracker.instance;
+    void onChanged() {
+      if (tracker.isActive) return;
+      tracker.activeCount.removeListener(onChanged);
+      _expiryDeferred = false;
+      unawaited(_handleSessionExpired());
+    }
+
+    tracker.activeCount.addListener(onChanged);
   }
 
   /// Parses a completed HTTP exchange (any status code) into an [ApiResult].

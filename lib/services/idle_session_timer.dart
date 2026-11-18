@@ -4,7 +4,7 @@ import 'package:flutter/widgets.dart';
 
 import 'active_call_tracker.dart';
 import 'session_expired_service.dart';
-import 'token_storage_service.dart';
+import 'session_logout.dart';
 
 /// Logs the user out after 30 minutes of continuous inactivity, mirroring
 /// the web app's `SessionTimeoutManager` idle timer
@@ -64,7 +64,6 @@ class IdleSessionTimer with WidgetsBindingObserver {
   bool _running = false;
   bool _pendingLogout = false;
   DateTime? _lastActivityAt;
-  final TokenStorageService _tokenStorage = const TokenStorageService();
 
   /// Starts the idle countdown. Call once a session exists — cold start
   /// with a stored session ([AuthGateScreen]) or right after
@@ -164,7 +163,9 @@ class IdleSessionTimer with WidgetsBindingObserver {
   Future<void> _logout() async {
     if (!_running) return; // already handled via another path
     stop();
-    await _tokenStorage.clearAll();
+    // Same flow as the manual logout (server revoke, FCM token, storage),
+    // detached so the expiry screen is not held up by the network.
+    await SessionLogout.shared.perform(background: true);
     SessionExpiredService.instance.trigger();
   }
 
