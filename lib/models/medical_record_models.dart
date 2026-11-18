@@ -111,6 +111,8 @@ class PrescriptionRecord {
     this.instructions = '',
     this.followUpDate = '',
     this.createdAt = '',
+    this.isSigned = false,
+    this.signedAt = '',
   });
 
   factory PrescriptionRecord.fromJson(Map<String, dynamic> json) {
@@ -125,6 +127,8 @@ class PrescriptionRecord {
       instructions: (json['instructions'] ?? '').toString(),
       followUpDate: (json['followUpDate'] ?? '').toString(),
       createdAt: (json['createdAt'] ?? '').toString(),
+      isSigned: json['isSigned'] == true,
+      signedAt: (json['signedAt'] ?? '').toString(),
     );
   }
 
@@ -136,6 +140,11 @@ class PrescriptionRecord {
   final String instructions;
   final String followUpDate;
   final String createdAt;
+
+  /// True when the doctor signed this prescription. Older prescriptions (and
+  /// ones issued unsigned) have no such flag and read as unsigned.
+  final bool isSigned;
+  final String signedAt;
 }
 
 class MedicalCertificateRecord {
@@ -151,6 +160,8 @@ class MedicalCertificateRecord {
     this.notes = '',
     this.issuedDate = '',
     this.createdAt = '',
+    this.isSigned = false,
+    this.signedAt = '',
   });
 
   factory MedicalCertificateRecord.fromJson(Map<String, dynamic> json) {
@@ -166,6 +177,8 @@ class MedicalCertificateRecord {
       notes: (json['notes'] ?? '').toString(),
       issuedDate: (json['issuedDate'] ?? '').toString(),
       createdAt: (json['createdAt'] ?? '').toString(),
+      isSigned: json['isSigned'] == true,
+      signedAt: (json['signedAt'] ?? '').toString(),
     );
   }
 
@@ -180,4 +193,8 @@ class MedicalCertificateRecord {
   final String notes;
   final String issuedDate;
   final String createdAt;
+
+  /// See [PrescriptionRecord.isSigned].
+  final bool isSigned;
+  final String signedAt;
 }

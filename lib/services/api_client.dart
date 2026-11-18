@@ -254,6 +254,72 @@ class ApiClient {
     }
   }
 
+  /// GET for a binary body (an image, for instance) — the JSON methods above
+  /// can't be used for these because they decode the response as JSON.
+  /// Sends the same auth/build headers and, like them, recovers once from an
+  /// expired access token (one coalesced refresh, one retry) before declaring
+  /// the session dead. Never throws: a network failure is `statusCode == 0`.
+  Future<ApiBytesResult> getBytes(String path, {bool silent = true}) async {
+    IdleSessionTimer.instance.registerActivity();
+    if (!silent) LoadingService.instance.show();
+    try {
+      final token = await _tokenStorage.getToken() ?? '';
+      final uri = Uri.parse('${ApiConfig.baseUrl}$path');
+      Map<String, String> headersFor(String accessToken) => {
+        'Accept': 'image/png, */*',
+        ...AppBuildInfo.headers,
+        if (accessToken.isNotEmpty) 'Authorization': 'Bearer $accessToken',
+      };
+
+      _log('GET (bytes) $uri');
+      var response = await _client
+          .get(uri, headers: headersFor(token))
+          .timeout(const Duration(seconds: 30));
+
+      if (response.statusCode == 401 && token.isNotEmpty) {
+        final refreshed = await _refreshOnUnauthorized();
+        if (refreshed != null) {
+          response = await _client
+              .get(uri, headers: headersFor(refreshed))
+              .timeout(const Duration(seconds: 30));
+        }
+        if (refreshed == null || response.statusCode == 401) {
+          await _handleSessionExpired();
+        }
+      }
+
+      return ApiBytesResult(
+        statusCode: response.statusCode,
+        bytes: response.bodyBytes,
+        contentType: response.headers['content-type'] ?? '',
+        message: response.statusCode >= 200 && response.statusCode < 300
+            ? ''
+            : _bytesErrorMessage(response),
+      );
+    } catch (error) {
+      _log('GET (bytes) $path failed: $error');
+      return ApiBytesResult(
+        statusCode: 0,
+        bytes: Uint8List(0),
+        message: 'Network error. Please try again.',
+      );
+    } finally {
+      if (!silent) LoadingService.instance.hide();
+    }
+  }
+
+  String _bytesErrorMessage(http.Response response) {
+    try {
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      if (decoded is Map) {
+        return (decoded['msg'] ?? decoded['message'] ?? '').toString();
+      }
+    } catch (_) {
+      // Not JSON: no message.
+    }
+    return '';
+  }
+
   /// Refreshes the access token using the stored refresh token, persisting
   /// the rotated pair on success. This is the only call in the app that
   /// sends the refresh token as a bearer credential — every other request

@@ -9,6 +9,7 @@ import 'package:printing/printing.dart';
 
 import '../config/app_design_system.dart';
 import '../models/medical_record_models.dart';
+import '../services/document_signature_service.dart';
 import '../services/medical_records_service.dart';
 import '../services/socket_service.dart';
 import '../services/token_storage_service.dart';
@@ -29,9 +30,22 @@ PdfColor get _pdfBrandDeep => _pdfColor(_brandDeep);
 PdfColor get _pdfBrandTint => _pdfColor(_brand.withValues(alpha: 0.06));
 
 class MyRecordsPage extends StatefulWidget {
-  const MyRecordsPage({super.key, this.initialTab = 'prescriptions'});
+  const MyRecordsPage({
+    super.key,
+    this.initialTab = 'prescriptions',
+    this.recordsService,
+    this.signatureService,
+    this.sharePdf,
+    this.enableRealtime = true,
+  });
 
   final String initialTab;
+
+  // Injectable for tests; the defaults are the real services / sharing sheet.
+  final MedicalRecordsService? recordsService;
+  final DocumentSignatureService? signatureService;
+  final Future<void> Function(Uint8List bytes, String filename)? sharePdf;
+  final bool enableRealtime;
 
   @override
   State<MyRecordsPage> createState() => _MyRecordsPageState();
@@ -39,7 +53,11 @@ class MyRecordsPage extends StatefulWidget {
 
 class _MyRecordsPageState extends State<MyRecordsPage>
     with WidgetsBindingObserver {
-  final _recordsService = MedicalRecordsService();
+  late final MedicalRecordsService _recordsService =
+      widget.recordsService ?? MedicalRecordsService();
+  late final DocumentSignatureService _signatures =
+      widget.signatureService ?? DocumentSignatureService();
+  final Set<String> _loadingSignatures = {};
   final _tokenStorage = const TokenStorageService();
   Timer? _refreshTimer;
   DateTime? _lastFetchAt;
@@ -73,16 +91,18 @@ class _MyRecordsPageState extends State<MyRecordsPage>
         ? _RecordsTab.certificates
         : _RecordsTab.prescriptions;
     _bootstrap();
-    _connectRealtimeUpdates();
+    if (widget.enableRealtime) _connectRealtimeUpdates();
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _refreshTimer?.cancel();
-    SocketService.instance.off('connect', _handleSocketConnected);
-    SocketService.instance.off('new-prescription', _handleRealtimeUpdate);
-    SocketService.instance.off('new-certificate', _handleRealtimeUpdate);
+    if (widget.enableRealtime) {
+      SocketService.instance.off('connect', _handleSocketConnected);
+      SocketService.instance.off('new-prescription', _handleRealtimeUpdate);
+      SocketService.instance.off('new-certificate', _handleRealtimeUpdate);
+    }
     super.dispose();
   }
 
@@ -91,6 +111,37 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     if (!mounted) return;
     setState(() => _patient = patient);
     await _loadRecords(withLoader: true);
+  }
+
+  /// Fetches the doctor's signature for a signed document (when its card is
+  /// opened). A failure just leaves the slip's signature area empty; opening
+  /// the card again retries.
+  Future<void> _loadSignature(SignedDocumentKind kind, String id) async {
+    if (_signatures.cached(kind, id) != null || !_loadingSignatures.add(id)) {
+      return;
+    }
+    try {
+      await _signatures.fetch(kind, id);
+    } finally {
+      _loadingSignatures.remove(id);
+    }
+    if (mounted) setState(() {});
+  }
+
+  /// The signature to embed in an exported PDF: `null` for an unsigned
+  /// document. For a signed one it is loaded (with one retry) — if it still
+  /// can't be, the export is stopped rather than producing a document that
+  /// looks signed but has no signature.
+  Future<Uint8List?> _signatureForExport(
+    SignedDocumentKind kind,
+    String id,
+    bool isSigned,
+  ) async {
+    if (!isSigned) return null;
+    final bytes = await _signatures.fetchWithRetry(kind, id);
+    if (bytes == null) throw const _SignatureUnavailable();
+    if (mounted) setState(() {});
+    return bytes;
   }
 
   Future<void> _loadRecords({bool withLoader = false}) async {
@@ -513,7 +564,14 @@ class _MyRecordsPageState extends State<MyRecordsPage>
       subtitle: subtitleParts.join(' · '),
       open: open,
       onDownload: () => _downloadPrescription(record),
-      child: _PrescriptionSlip(record: record, patient: _patient),
+      onExpand: record.isSigned
+          ? () => _loadSignature(SignedDocumentKind.prescription, record.id)
+          : null,
+      child: _PrescriptionSlip(
+        record: record,
+        patient: _patient,
+        signature: _signatures.cached(SignedDocumentKind.prescription, record.id),
+      ),
     );
   }
 
@@ -532,7 +590,14 @@ class _MyRecordsPageState extends State<MyRecordsPage>
           '${doctorName.isNotEmpty ? 'Dr. $doctorName' : 'Dr. -'} · Issued: $issuedDate',
       open: open,
       onDownload: () => _downloadCertificate(record),
-      child: _CertificateSlip(record: record, patient: _patient),
+      onExpand: record.isSigned
+          ? () => _loadSignature(SignedDocumentKind.certificate, record.id)
+          : null,
+      child: _CertificateSlip(
+        record: record,
+        patient: _patient,
+        signature: _signatures.cached(SignedDocumentKind.certificate, record.id),
+      ),
     );
   }
 
@@ -544,6 +609,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     required bool open,
     required VoidCallback onDownload,
     required Widget child,
+    VoidCallback? onExpand,
   }) {
     final isDownloading = _downloadingId == id;
     return Container(
@@ -553,7 +619,10 @@ class _MyRecordsPageState extends State<MyRecordsPage>
       child: Column(
         children: [
           InkWell(
-            onTap: () => setState(() => _expandedId = open ? null : id),
+            onTap: () {
+              setState(() => _expandedId = open ? null : id);
+              if (!open) onExpand?.call();
+            },
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Row(
@@ -692,6 +761,9 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     );
   }
 
+  static Future<void> _defaultSharePdf(Uint8List bytes, String filename) =>
+      Printing.sharePdf(bytes: bytes, filename: filename);
+
   Future<void> _runPdfExport({
     required String id,
     required String filename,
@@ -700,7 +772,17 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     setState(() => _downloadingId = id);
     try {
       final bytes = await builder();
-      await Printing.sharePdf(bytes: bytes, filename: filename);
+      await (widget.sharePdf ?? _defaultSharePdf)(bytes, filename);
+    } on _SignatureUnavailable {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Couldn't load the doctor's signature, so the PDF wasn't created. "
+            'Please try again.',
+          ),
+        ),
+      );
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -714,13 +796,18 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   }
 
   Future<Uint8List> _buildPrescriptionPdf(PrescriptionRecord record) async {
+    final signature = await _signatureForExport(
+      SignedDocumentKind.prescription,
+      record.id,
+      record.isSigned,
+    );
     final pdf = pw.Document();
     final logo = await _loadPdfLogo();
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(24),
-        build: (_) => _pdfPrescriptionBody(record, logo),
+        build: (_) => _pdfPrescriptionBody(record, logo, signature),
       ),
     );
     return pdf.save();
@@ -729,13 +816,18 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   Future<Uint8List> _buildCertificatePdf(
     MedicalCertificateRecord record,
   ) async {
+    final signature = await _signatureForExport(
+      SignedDocumentKind.certificate,
+      record.id,
+      record.isSigned,
+    );
     final pdf = pw.Document();
     final logo = await _loadPdfLogo();
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(24),
-        build: (_) => _pdfCertificateBody(record, logo),
+        build: (_) => _pdfCertificateBody(record, logo, signature),
       ),
     );
     return pdf.save();
@@ -753,6 +845,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   pw.Widget _pdfPrescriptionBody(
     PrescriptionRecord record,
     pw.MemoryImage? logo,
+    Uint8List? signature,
   ) {
     final doctorName = record.doctor.name.isNotEmpty ? record.doctor.name : '-';
     final patientName = (_patient['name'] ?? '').isNotEmpty
@@ -812,6 +905,10 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                   : '-',
             ],
           ]),
+          if (record.isSigned) ...[
+            pw.SizedBox(height: 16),
+            _pdfSignature(signature, record.signedAt),
+          ],
           pw.Spacer(),
           _pdfFooter(),
         ],
@@ -822,6 +919,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   pw.Widget _pdfCertificateBody(
     MedicalCertificateRecord record,
     pw.MemoryImage? logo,
+    Uint8List? signature,
   ) {
     final patientName = (_patient['name'] ?? '').isNotEmpty
         ? _patient['name']!
@@ -879,7 +977,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
           pw.SizedBox(height: 14),
           _pdfDetailsTable(record),
           pw.SizedBox(height: 14),
-          _pdfDoctorBox(record, doctorName),
+          _pdfDoctorBox(record, doctorName, signature),
           pw.SizedBox(height: 10),
           _pdfValidityNote(),
           pw.Spacer(),
@@ -1211,7 +1309,46 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     );
   }
 
-  pw.Widget _pdfDoctorBox(MedicalCertificateRecord record, String doctorName) {
+  /// The doctor's signature, same look as the on-screen slip: label, the image
+  /// (at most 44pt high), and a "Digitally signed" caption.
+  pw.Widget _pdfSignature(Uint8List? signature, String signedAt) {
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(
+          'Signature',
+          style: pw.TextStyle(
+            fontSize: 9,
+            color: _pdfBrandDeep,
+            fontWeight: pw.FontWeight.bold,
+          ),
+        ),
+        pw.SizedBox(height: 3),
+        pw.SizedBox(
+          height: 44,
+          width: 160,
+          child: signature == null
+              ? pw.SizedBox()
+              : pw.Image(
+                  pw.MemoryImage(signature),
+                  fit: pw.BoxFit.contain,
+                  alignment: pw.Alignment.centerLeft,
+                ),
+        ),
+        pw.SizedBox(height: 3),
+        pw.Text(
+          _signedCaption(signedAt, separator: '-'),
+          style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
+        ),
+      ],
+    );
+  }
+
+  pw.Widget _pdfDoctorBox(
+    MedicalCertificateRecord record,
+    String doctorName,
+    Uint8List? signature,
+  ) {
     final enrollment = record.enrollment;
     return pw.Container(
       decoration: pw.BoxDecoration(
@@ -1284,14 +1421,20 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                   ),
                 ),
                 pw.SizedBox(width: 14),
-                pw.Text(
-                  'This is a system-generated certificate and does not require a signature or stamp.',
-                  textAlign: pw.TextAlign.center,
-                  style: const pw.TextStyle(
-                    fontSize: 8,
-                    color: PdfColors.grey600,
+                if (record.isSigned)
+                  pw.SizedBox(
+                    width: 170,
+                    child: _pdfSignature(signature, record.signedAt),
+                  )
+                else
+                  pw.Text(
+                    'This is a system-generated certificate and does not require a signature or stamp.',
+                    textAlign: pw.TextAlign.center,
+                    style: const pw.TextStyle(
+                      fontSize: 8,
+                      color: PdfColors.grey600,
+                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -1389,11 +1532,73 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   }
 }
 
+/// "Digitally signed · 7 Nov 2026, 03:30 PM" (just "Digitally signed" when
+/// the signing time is unknown).
+String _signedCaption(String signedAt, {String separator = '·'}) {
+  final date = DateTime.tryParse(signedAt);
+  if (date == null) return 'Digitally signed';
+  return 'Digitally signed $separator ${DateFormat('d MMM yyyy, hh:mm a').format(date.toLocal())}';
+}
+
+/// Thrown when a signed document's signature could not be loaded for a PDF
+/// export (see `_signatureForExport`).
+class _SignatureUnavailable implements Exception {
+  const _SignatureUnavailable();
+}
+
+/// The doctor's signature on a slip: label, the image (56px high) and a
+/// "Digitally signed" caption. While the image is still loading — or if it
+/// could not be loaded — the space is kept empty so the layout doesn't jump.
+class _SignatureBlock extends StatelessWidget {
+  const _SignatureBlock({required this.signedAt, this.signature});
+
+  final String signedAt;
+  final Uint8List? signature;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Signature',
+          style: AppType.body(size: 12, weight: FontWeight.w800)
+              .copyWith(color: _brand),
+        ),
+        const SizedBox(height: 4),
+        SizedBox(
+          height: 56,
+          child: signature == null
+              ? null
+              : Image.memory(
+                  signature!,
+                  height: 56,
+                  fit: BoxFit.contain,
+                  alignment: Alignment.centerLeft,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          _signedCaption(signedAt),
+          style: AppType.body(size: 11).copyWith(color: AppColors.textSecondary),
+        ),
+      ],
+    );
+  }
+}
+
 class _PrescriptionSlip extends StatelessWidget {
-  const _PrescriptionSlip({required this.record, required this.patient});
+  const _PrescriptionSlip({
+    required this.record,
+    required this.patient,
+    this.signature,
+  });
 
   final PrescriptionRecord record;
   final Map<String, String> patient;
+  final Uint8List? signature;
 
   @override
   Widget build(BuildContext context) {
@@ -1477,6 +1682,14 @@ class _PrescriptionSlip extends StatelessWidget {
               ],
             ),
           ),
+          if (record.isSigned)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 4),
+              child: _SignatureBlock(
+                signedAt: record.signedAt,
+                signature: signature,
+              ),
+            ),
           const _SlipFooter(),
         ],
       ),
@@ -1528,10 +1741,15 @@ class _PrescriptionSlip extends StatelessWidget {
 }
 
 class _CertificateSlip extends StatelessWidget {
-  const _CertificateSlip({required this.record, required this.patient});
+  const _CertificateSlip({
+    required this.record,
+    required this.patient,
+    this.signature,
+  });
 
   final MedicalCertificateRecord record;
   final Map<String, String> patient;
+  final Uint8List? signature;
 
   @override
   Widget build(BuildContext context) {
@@ -1607,7 +1825,7 @@ class _CertificateSlip extends StatelessWidget {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
-            child: _DoctorCertificateBox(record: record),
+            child: _DoctorCertificateBox(record: record, signature: signature),
           ),
           Container(
             margin: const EdgeInsets.fromLTRB(14, 10, 14, 12),
@@ -1964,9 +2182,10 @@ class _CertificateDetailsTable extends StatelessWidget {
 }
 
 class _DoctorCertificateBox extends StatelessWidget {
-  const _DoctorCertificateBox({required this.record});
+  const _DoctorCertificateBox({required this.record, this.signature});
 
   final MedicalCertificateRecord record;
+  final Uint8List? signature;
 
   @override
   Widget build(BuildContext context) {
@@ -2049,20 +2268,31 @@ class _DoctorCertificateBox extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 12),
-                SizedBox(
-                  width: 210,
-                  child: Text(
-                    'This is a system-generated certificate and does not require a signature or stamp.',
-                    textAlign: TextAlign.center,
-                    style: AppType.body(
-                      size: 11,
-                      height: 1.45,
-                    ).copyWith(
-                      color: AppColors.textSecondary,
-                      fontStyle: FontStyle.italic,
+                if (record.isSigned)
+                  // Signed: the doctor's signature replaces the
+                  // "system-generated" note (as on the web).
+                  SizedBox(
+                    width: 210,
+                    child: _SignatureBlock(
+                      signedAt: record.signedAt,
+                      signature: signature,
+                    ),
+                  )
+                else
+                  SizedBox(
+                    width: 210,
+                    child: Text(
+                      'This is a system-generated certificate and does not require a signature or stamp.',
+                      textAlign: TextAlign.center,
+                      style: AppType.body(
+                        size: 11,
+                        height: 1.45,
+                      ).copyWith(
+                        color: AppColors.textSecondary,
+                        fontStyle: FontStyle.italic,
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
           ),
