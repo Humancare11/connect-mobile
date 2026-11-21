@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/api_result.dart';
@@ -14,11 +15,25 @@ class TicketService {
     ApiClient? apiClient,
     TokenStorageService? tokenStorage,
     FlutterSecureStorage? secureStorage,
+    Future<String> Function()? timeZoneProvider,
   }) : _apiClient = apiClient ?? ApiClient(),
        _tokenStorage = tokenStorage ?? const TokenStorageService(),
-       _secureStorage = secureStorage ?? const FlutterSecureStorage();
+       _secureStorage = secureStorage ?? const FlutterSecureStorage(),
+       _timeZoneProvider = timeZoneProvider ?? _deviceTimeZone;
 
   final ApiClient _apiClient;
+  // The device's IANA time zone ("Asia/Kolkata"), sent with a new ticket so
+  // support can see the raiser's local time. Injectable for tests.
+  final Future<String> Function() _timeZoneProvider;
+
+  static Future<String> _deviceTimeZone() async {
+    try {
+      return (await FlutterTimezone.getLocalTimezone()).identifier;
+    } catch (_) {
+      // Never let a time zone lookup stop a ticket from being raised.
+      return '';
+    }
+  }
   final TokenStorageService _tokenStorage;
   // Ticket titles/descriptions can contain PHI (patients describing
   // symptoms), so this cache lives in flutter_secure_storage on mobile —
@@ -33,12 +48,19 @@ class TicketService {
     required String category,
   }) async {
     final isDoctor = await _isDoctor();
+    var timeZone = '';
+    try {
+      timeZone = (await _timeZoneProvider()).trim();
+    } catch (_) {
+      // Never let a time zone lookup stop a ticket from being raised.
+    }
 
     final payload = <String, dynamic>{
       'title': title.trim(),
       'description': description.trim(),
       if (!isDoctor)
         'category': category.trim().isEmpty ? 'other' : category.trim(),
+      if (timeZone.isNotEmpty) 'userTimezone': timeZone,
     };
 
     final result = await _apiClient.post(
