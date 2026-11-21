@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -115,5 +116,19 @@ void main() {
 
     expect(request.path, '/api/tickets/user/create');
     expect(request.body['title'], 'Help');
+  });
+
+  test('by default the zone comes from the shared device lookup', () async {
+    const channel = MethodChannel('flutter_timezone');
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (_) async => 'Asia/Tokyo');
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null),
+    );
+
+    final request = await create();
+
+    expect(request.body['userTimezone'], 'Asia/Tokyo');
   });
 }

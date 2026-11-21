@@ -5,6 +5,7 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../config/api_config.dart';
 import '../services/appointment_tree_service.dart';
+import '../services/device_time_zone.dart';
 import '../services/payment_service.dart';
 import '../services/token_storage_service.dart';
 
@@ -28,6 +29,16 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
   // successful booking; also naturally reset if the user leaves this screen,
   // since a stale reference isn't reused across a fresh navigation.
   String? _succeededPaymentIntentId;
+
+  // The device's IANA time zone, looked up as soon as the screen opens so the
+  // booking write (which happens right after a payment) never waits on it.
+  late final Future<String> _timeZone;
+
+  @override
+  void initState() {
+    super.initState();
+    _timeZone = deviceTimeZone();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -514,7 +525,7 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     num amount,
     String paymentIntentId,
   ) async {
-    final appointmentPayload = _appointmentPayload(
+    final appointmentPayload = await _appointmentPayload(
       args,
       amount,
       paymentIntentId,
@@ -561,7 +572,7 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     final amount = _amount(args['cost']);
     final paymentIntentId =
         'local_payment_${DateTime.now().millisecondsSinceEpoch}';
-    final appointmentPayload = _appointmentPayload(
+    final appointmentPayload = await _appointmentPayload(
       args,
       amount,
       paymentIntentId,
@@ -678,14 +689,17 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     }
   }
 
-  Map<String, dynamic> _appointmentPayload(
+  Future<Map<String, dynamic>> _appointmentPayload(
     Map<String, dynamic> args,
     num amount,
     String paymentIntentId,
-  ) {
+  ) async {
     final date = _parseDate(args['date']) ?? DateTime.now();
     final time = args['time']?.toString() ?? '';
     final appointmentDateTime = _combineDateAndTime(date, time);
+    // Already running since the screen opened, so this normally resolves at
+    // once. '' (lookup failed) means the field is simply left out.
+    final timeZone = await _timeZone;
 
     final serviceId = args['serviceId']?.toString() ?? '';
     final categoryId = args['catId']?.toString() ?? '';
@@ -699,7 +713,7 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       'date': _apiDate(date),
       'time': time,
       'appointmentDateTimeUtc': appointmentDateTime.toUtc().toIso8601String(),
-      'patientTimezone': DateTime.now().timeZoneName,
+      if (timeZone.isNotEmpty) 'patientTimezone': timeZone,
       'problem': args['problem']?.toString() ?? '',
       'medicalReports': _medicalReports(args['medicalReports']),
       'paymentIntentId': paymentIntentId,
