@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_design_system.dart';
 import '../models/medical_record_models.dart';
@@ -14,7 +15,7 @@ import '../services/medical_records_service.dart';
 import '../services/socket_service.dart';
 import '../services/token_storage_service.dart';
 
-enum _RecordsTab { prescriptions, certificates }
+enum _RecordsTab { prescriptions, certificates, reports }
 
 // ── Shared brand-colour helpers ───────────────────────────────────────────────
 // The "slip" facsimiles and the exported PDFs used to hardcode a blue medical
@@ -36,6 +37,7 @@ class MyRecordsPage extends StatefulWidget {
     this.recordsService,
     this.signatureService,
     this.sharePdf,
+    this.openUrl,
     this.enableRealtime = true,
   });
 
@@ -45,6 +47,7 @@ class MyRecordsPage extends StatefulWidget {
   final MedicalRecordsService? recordsService;
   final DocumentSignatureService? signatureService;
   final Future<void> Function(Uint8List bytes, String filename)? sharePdf;
+  final Future<bool> Function(Uri uri)? openUrl;
   final bool enableRealtime;
 
   @override
@@ -78,6 +81,10 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   _RecordsTab _activeTab = _RecordsTab.prescriptions;
   List<PrescriptionRecord> _prescriptions = const [];
   List<MedicalCertificateRecord> _certificates = const [];
+  List<MedicalReportRecord> _reports = const [];
+  final Map<_RecordsTab, GlobalKey> _tabKeys = {
+    for (final tab in _RecordsTab.values) tab: GlobalKey(),
+  };
   Map<String, String> _patient = const {};
   String? _expandedId;
   String _error = '';
@@ -87,9 +94,12 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   @override
   void initState() {
     super.initState();
-    _activeTab = widget.initialTab == 'certificates'
-        ? _RecordsTab.certificates
-        : _RecordsTab.prescriptions;
+    _activeTab = switch (widget.initialTab) {
+      'certificates' => _RecordsTab.certificates,
+      'reports' => _RecordsTab.reports,
+      _ => _RecordsTab.prescriptions,
+    };
+    WidgetsBinding.instance.addPostFrameCallback((_) => _showActiveTab());
     _bootstrap();
     if (widget.enableRealtime) _connectRealtimeUpdates();
   }
@@ -147,7 +157,9 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   Future<void> _loadRecords({bool withLoader = false}) async {
     // Only block the screen with a spinner when there's nothing on it yet —
     // see the matching comment in appointments_screen.dart.
-    final hasData = _prescriptions.isNotEmpty || _certificates.isNotEmpty;
+    final hasData = _prescriptions.isNotEmpty ||
+        _certificates.isNotEmpty ||
+        _reports.isNotEmpty;
     final showLoader = withLoader && !hasData;
     if (withLoader && mounted) {
       setState(() {
@@ -166,6 +178,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     setState(() {
       _prescriptions = snapshot.prescriptions;
       _certificates = snapshot.certificates;
+      _reports = snapshot.reports;
       _error = snapshot.error;
       _loading = false;
     });
@@ -314,6 +327,11 @@ class _MyRecordsPageState extends State<MyRecordsPage>
             ),
           ),
         ];
+        final reportsCard = _summaryCard(
+          icon: Icons.medical_services_outlined,
+          count: _reports.length,
+          label: 'Reports',
+        );
 
         if (constraints.maxWidth < 360) {
           return Column(
@@ -329,11 +347,19 @@ class _MyRecordsPageState extends State<MyRecordsPage>
                 count: _certificates.length,
                 label: 'Certificates',
               ),
+              const SizedBox(height: 12),
+              reportsCard,
             ],
           );
         }
 
-        return Row(children: cards);
+        return Column(
+          children: [
+            Row(children: cards),
+            const SizedBox(height: 12),
+            reportsCard,
+          ],
+        );
       },
     );
   }
@@ -415,22 +441,45 @@ class _MyRecordsPageState extends State<MyRecordsPage>
         borderRadius: BorderRadius.circular(AppRadius.md),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
-        children: [
-          _tabButton(
-            tab: _RecordsTab.prescriptions,
-            icon: Icons.medication_outlined,
-            label: 'Prescriptions',
-            count: _prescriptions.length,
-          ),
-          _tabButton(
-            tab: _RecordsTab.certificates,
-            icon: Icons.description_outlined,
-            label: 'Medical Certificates',
-            count: _certificates.length,
-          ),
-        ],
+      // Three tabs are wider than a phone, so the bar scrolls sideways; each
+      // tab keeps its own look and takes its natural width.
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            _tabButton(
+              tab: _RecordsTab.prescriptions,
+              icon: Icons.medication_outlined,
+              label: 'Prescriptions',
+              count: _prescriptions.length,
+            ),
+            _tabButton(
+              tab: _RecordsTab.certificates,
+              icon: Icons.description_outlined,
+              label: 'Medical Certificates',
+              count: _certificates.length,
+            ),
+            _tabButton(
+              tab: _RecordsTab.reports,
+              icon: Icons.medical_services_outlined,
+              label: 'Reports',
+              count: _reports.length,
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  /// Scrolls the tab bar so the selected tab is fully visible (e.g. when the
+  /// page opens straight on Reports).
+  void _showActiveTab() {
+    final context = _tabKeys[_activeTab]?.currentContext;
+    if (context == null) return;
+    Scrollable.ensureVisible(
+      context,
+      duration: const Duration(milliseconds: 200),
+      alignment: 0.5,
     );
   }
 
@@ -441,14 +490,18 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     required int count,
   }) {
     final active = _activeTab == tab;
-    return Expanded(
+    // Not Expanded: the tab bar scrolls, so each tab sizes to its content.
+    return Padding(
+      padding: EdgeInsets.zero,
       child: InkWell(
+        key: _tabKeys[tab],
         borderRadius: BorderRadius.circular(AppRadius.sm),
         onTap: () {
           setState(() {
             _activeTab = tab;
             _expandedId = null;
           });
+          _showActiveTab();
         },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
@@ -458,6 +511,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
             borderRadius: BorderRadius.circular(AppRadius.sm),
           ),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(
@@ -534,6 +588,17 @@ class _MyRecordsPageState extends State<MyRecordsPage>
       );
     }
 
+    if (_activeTab == _RecordsTab.reports) {
+      if (_reports.isEmpty) {
+        return _emptyState(
+          icon: Icons.medical_services_outlined,
+          title: 'No medical reports yet',
+          message: 'Medical reports issued to you will appear here.',
+        );
+      }
+      return Column(children: _reports.map(_buildReportCard).toList());
+    }
+
     if (_certificates.isEmpty) {
       return _emptyState(
         icon: Icons.description_outlined,
@@ -599,6 +664,170 @@ class _MyRecordsPageState extends State<MyRecordsPage>
         signature: _signatures.cached(SignedDocumentKind.certificate, record.id),
       ),
     );
+  }
+
+  /// An admin-issued medical report: the same card as a prescription or
+  /// certificate, but static (the report is a PDF opened from the server, so
+  /// there is nothing to expand). A voided report stays in the list, dimmed and
+  /// flagged, without a PDF button.
+  Widget _buildReportCard(MedicalReportRecord report) {
+    final voided = report.isVoided;
+    final isOpening = _downloadingId == report.id;
+    final doctorName = report.doctorName.trim();
+    final subtitle = [
+      doctorName.isNotEmpty ? doctorName : 'Humancare',
+      _formatDate(report.reportDate),
+      if (report.reportNumber.trim().isNotEmpty) report.reportNumber.trim(),
+    ].join(' · ');
+
+    return Opacity(
+      opacity: voided ? 0.75 : 1,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: _cardDecoration(),
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: _brandTint,
+                borderRadius: BorderRadius.circular(AppRadius.sm),
+              ),
+              child: Icon(
+                Icons.medical_services_outlined,
+                color: AppColors.primary,
+                size: 24,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text.rich(
+                    TextSpan(
+                      text: report.title.isNotEmpty ? report.title : '-',
+                      children: [
+                        if (voided)
+                          WidgetSpan(
+                            alignment: PlaceholderAlignment.middle,
+                            child: Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: _voidedBadge(),
+                            ),
+                          ),
+                      ],
+                    ),
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppType.body(size: 16, weight: FontWeight.w800)
+                        .copyWith(color: AppColors.textPrimary),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppType.body(size: 12.5)
+                        .copyWith(color: AppColors.textSecondary),
+                  ),
+                  if (voided) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'This report is no longer valid. A corrected report may be issued separately.',
+                      style: AppType.body(size: 12.5)
+                          .copyWith(color: AppColors.textSecondary),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (!voided) ...[
+              const SizedBox(width: 8),
+              TextButton.icon(
+                onPressed: isOpening ? null : () => _openReport(report),
+                icon: isOpening
+                    ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.download_rounded, size: 17),
+                label: const Text('PDF'),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Same pill as the tab's count badge, in the warning (amber) colour.
+  Widget _voidedBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: AppColors.warning.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(AppRadius.chip),
+      ),
+      child: Text(
+        'Voided',
+        style: AppType.body(size: 11, weight: FontWeight.w800)
+            .copyWith(color: AppColors.amberInk),
+      ),
+    );
+  }
+
+  static Future<bool> _defaultOpenUrl(Uri uri) =>
+      launchUrl(uri, mode: LaunchMode.externalApplication);
+
+  /// Asks the server for a short-lived link to the report PDF and opens it
+  /// outside the app (like the invoice in Payment History).
+  Future<void> _openReport(MedicalReportRecord report) async {
+    if (_downloadingId.isNotEmpty) return;
+    setState(() => _downloadingId = report.id);
+    try {
+      final result = await _recordsService.fetchReportDownloadLink(
+        report.id,
+        silent: true,
+      );
+      if (!mounted) return;
+      if (!result.success || result.data == null) {
+        _showSnack(
+          result.message.isNotEmpty
+              ? result.message
+              : 'Could not open the report. Please try again.',
+        );
+        return;
+      }
+
+      final uri = Uri.tryParse(result.data!.url);
+      var launched = false;
+      if (uri != null) {
+        try {
+          launched = await (widget.openUrl ?? _defaultOpenUrl)(uri);
+        } catch (_) {
+          launched = false;
+        }
+      }
+      if (!launched) {
+        _showSnack('Could not open the report. Please try again.');
+      }
+    } finally {
+      if (mounted) setState(() => _downloadingId = '');
+    }
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Widget _recordCard({

@@ -198,3 +198,57 @@ class MedicalCertificateRecord {
   final bool isSigned;
   final String signedAt;
 }
+
+/// An admin-issued medical report (`GET /medical/my-reports`). Metadata only —
+/// the report itself is a PDF held in private storage, opened through
+/// [MedicalReportDownloadLink].
+class MedicalReportRecord {
+  const MedicalReportRecord({
+    required this.id,
+    this.reportNumber = '',
+    this.title = '',
+    this.reportDate = '',
+    this.doctorName = '',
+    this.status = '',
+    this.createdAt = '',
+  });
+
+  factory MedicalReportRecord.fromJson(Map<String, dynamic> json) {
+    return MedicalReportRecord(
+      id: (json['_id'] ?? json['id'] ?? '').toString(),
+      reportNumber: (json['reportNumber'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      reportDate: (json['reportDate'] ?? '').toString(),
+      doctorName: (json['doctorName'] ?? '').toString(),
+      status: (json['status'] ?? '').toString().trim().toLowerCase(),
+      createdAt: (json['createdAt'] ?? '').toString(),
+    );
+  }
+
+  final String id;
+  final String reportNumber;
+  final String title;
+  final String reportDate;
+  final String doctorName;
+  final String status;
+  final String createdAt;
+
+  /// A voided report stays in the list (flagged) but can no longer be opened.
+  bool get isVoided => status == 'voided';
+}
+
+/// `GET /medical/my-reports/:id/download` — a short-lived (5 min) presigned
+/// link to the report PDF.
+class MedicalReportDownloadLink {
+  const MedicalReportDownloadLink({required this.url, this.reportNumber = ''});
+
+  factory MedicalReportDownloadLink.fromJson(Map<String, dynamic> json) {
+    return MedicalReportDownloadLink(
+      url: (json['url'] ?? '').toString(),
+      reportNumber: (json['reportNumber'] ?? '').toString(),
+    );
+  }
+
+  final String url;
+  final String reportNumber;
+}

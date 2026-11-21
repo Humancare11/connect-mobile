@@ -462,7 +462,8 @@ class NotificationService {
         route.contains('prescription') ||
         route.contains('certificate') ||
         type.contains('prescription') ||
-        type.contains('certificate')) {
+        type.contains('certificate') ||
+        type.contains('medical-report')) {
       return _NotificationTarget.records;
     }
     if (route.contains('book')) return _NotificationTarget.booking;
@@ -489,6 +490,7 @@ class NotificationService {
     final value = _normalized(
       _firstNonEmpty([data['tab'], data['recordType'], data['type']]),
     );
+    if (value.contains('report')) return 'reports';
     return value.contains('certificate') ? 'certificates' : 'prescriptions';
   }
 
