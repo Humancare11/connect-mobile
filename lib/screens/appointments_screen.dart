@@ -108,7 +108,6 @@ class Appointment {
   }
 
   String get displayStatus {
-    if (status == 'assigned' && hasAssignedDoctor) return 'confirmed';
     return status;
   }
 
