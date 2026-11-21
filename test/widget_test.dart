@@ -37,6 +37,11 @@ void main() {
   ) async {
     final authRepository = _FakeAuthRepository();
 
+    // A taller viewport so the whole (lazily built) Account list is on screen.
+    tester.view.physicalSize = const Size(800, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
     await tester.pumpWidget(
       MaterialApp(home: AccountScreen(authRepository: authRepository)),
     );
