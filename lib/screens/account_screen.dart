@@ -7,6 +7,7 @@ import '../services/auth_repository.dart';
 import '../services/idle_session_timer.dart';
 import 'profile_settings_screen.dart';
 import 'my_records_screen.dart';
+import 'my_visit_notes_screen.dart';
 import 'payment_history_screen.dart';
 import 'raise_ticket_screen.dart';
 import 'change_password_screen.dart';
@@ -118,6 +119,12 @@ class AccountScreen extends StatelessWidget {
         title: 'My Records',
         subtitle: 'View your medical records',
         builder: (_) => const MyRecordsPage(),
+      ),
+      _AccountOption(
+        icon: Icons.assignment_outlined,
+        title: 'My Visit Notes',
+        subtitle: 'View your signed consultation notes',
+        builder: (_) => const MyVisitNotesScreen(),
       ),
       _AccountOption(
         icon: Icons.edit_outlined,
