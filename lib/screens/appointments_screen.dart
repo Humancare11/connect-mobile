@@ -9,6 +9,7 @@ import '../services/token_storage_service.dart';
 import '../services/api_client.dart';
 import '../services/socket_service.dart';
 import 'book_appointment_screen.dart';
+import 'my_records_screen.dart';
 import 'video_call_screen.dart';
 
 class DoctorInfo {
@@ -50,6 +51,25 @@ class MedicalReport {
   final String? type;
 }
 
+/// The read-only `reschedule` summary the backend adds to a booking an admin
+/// has moved (`GET /appointments/mine`): the slot it was moved *from* and when
+/// it last changed. Never carries the reason or who did it.
+class RescheduleInfo {
+  const RescheduleInfo({this.previousDate, this.previousTime, this.lastAt});
+
+  factory RescheduleInfo.fromJson(Map<String, dynamic> json) {
+    return RescheduleInfo(
+      previousDate: json['previousDate']?.toString(),
+      previousTime: json['previousTime']?.toString(),
+      lastAt: json['lastAt']?.toString(),
+    );
+  }
+
+  final String? previousDate;
+  final String? previousTime;
+  final String? lastAt;
+}
+
 class Appointment {
   const Appointment({
     required this.id,
@@ -60,6 +80,7 @@ class Appointment {
     this.time,
     this.problem,
     this.medicalReports = const [],
+    this.reschedule,
     this.raw = const <String, dynamic>{},
   });
 
@@ -85,6 +106,13 @@ class Appointment {
             ),
           )
           .toList(),
+      reschedule: json['reschedule'] is Map
+          ? RescheduleInfo.fromJson(
+              (json['reschedule'] as Map).map(
+                (key, value) => MapEntry(key.toString(), value),
+              ),
+            )
+          : null,
       raw: json,
     );
   }
@@ -97,6 +125,7 @@ class Appointment {
   final String? time;
   final String? problem;
   final List<MedicalReport> medicalReports;
+  final RescheduleInfo? reschedule;
   final Map<String, dynamic> raw;
 
   bool get hasAssignedDoctor {
@@ -137,9 +166,18 @@ class Appointment {
 }
 
 class AppointmentsScreen extends StatefulWidget {
-  const AppointmentsScreen({super.key, this.activityId});
+  const AppointmentsScreen({
+    super.key,
+    this.activityId,
+    this.apiClient,
+    this.enableRealtime = true,
+  });
 
   final String? activityId;
+
+  // Injectable for tests; the defaults are the real client and live updates.
+  final ApiClient? apiClient;
+  final bool enableRealtime;
 
   @override
   State<AppointmentsScreen> createState() => _AppointmentsScreenState();
@@ -147,7 +185,7 @@ class AppointmentsScreen extends StatefulWidget {
 
 class _AppointmentsScreenState extends State<AppointmentsScreen>
     with WidgetsBindingObserver {
-  final _apiClient = ApiClient();
+  late final ApiClient _apiClient = widget.apiClient ?? ApiClient();
   final _tokenStorage = const TokenStorageService();
   final _scrollController = ScrollController();
   final Map<String, GlobalKey> _cardKeys = {};
@@ -184,7 +222,7 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
   void initState() {
     super.initState();
     _loadAppointments();
-    _connectAppointmentUpdates();
+    if (widget.enableRealtime) _connectAppointmentUpdates();
   }
 
   @override
@@ -407,6 +445,16 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
     return DateFormat('d MMM y').format(date);
   }
 
+  /// "d MMM y, h:mm a" in the device's time zone; empty when there is no
+  /// usable timestamp.
+  String _formatDateTime(String? value) {
+    final raw = (value ?? '').trim();
+    if (raw.isEmpty) return '';
+    final date = DateTime.tryParse(raw);
+    if (date == null) return '';
+    return DateFormat('d MMM y, h:mm a').format(date.toLocal());
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -621,19 +669,21 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
         icon: Icons.event_note_outlined,
         title: 'No $_activeTab appointments',
         message: _emptyMessage,
-        action: _activeTab == 'completed'
-            ? null
-            : OutlinedButton(
-                onPressed: _openBooking,
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.primary,
-                  side: const BorderSide(color: AppColors.primary),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(AppRadius.sm),
-                  ),
-                ),
-                child: const Text('Book Appointment'),
-              ),
+        action: OutlinedButton(
+          onPressed: _activeTab == 'completed' ? _openRecords : _openBooking,
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.primary,
+            side: const BorderSide(color: AppColors.primary),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppRadius.sm),
+            ),
+          ),
+          child: Text(
+            _activeTab == 'completed'
+                ? 'View Medical Records'
+                : 'Book Appointment',
+          ),
+        ),
       );
     }
 
@@ -771,6 +821,10 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
           // ── Reason (handles long, multi-line text gracefully) ───────────
           if (problem.isNotEmpty) _buildReasonBlock(problem),
 
+          // ── Rescheduled by the admin ────────────────────────────────────
+          if (appointment.reschedule != null)
+            _buildRescheduleBanner(appointment.reschedule!),
+
           // ── Attachments ─────────────────────────────────────────────────
           if (appointment.medicalReports.isNotEmpty)
             _buildAttachments(appointment.medicalReports),
@@ -818,6 +872,64 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
               overflow: TextOverflow.ellipsis,
               style: AppType.body(size: 13, height: 1.35)
                   .copyWith(color: AppColors.textPrimary),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRescheduleBanner(RescheduleInfo info) {
+    final previousTime = (info.previousTime ?? '').trim();
+    final lastAt = _formatDateTime(info.lastAt);
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppColors.primaryLight,
+          borderRadius: BorderRadius.circular(AppRadius.sm),
+          border: Border.all(
+            color: AppColors.primary.withValues(alpha: 0.25),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Icon(Icons.event_repeat_outlined,
+                  size: 16, color: AppColors.primaryDeep),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Your appointment was rescheduled',
+                    style: AppType.body(size: 13, weight: FontWeight.w700)
+                        .copyWith(color: AppColors.primaryDeep),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Rescheduled from ${_formatDate(info.previousDate)}'
+                    '${previousTime.isNotEmpty ? ', $previousTime' : ''}',
+                    style: AppType.body(size: 12.5)
+                        .copyWith(color: AppColors.primaryDeep),
+                  ),
+                  if (lastAt.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      'Changed on $lastAt',
+                      style: AppType.body(size: 11.5)
+                          .copyWith(color: AppColors.textSecondary),
+                    ),
+                  ],
+                ],
+              ),
             ),
           ],
         ),
@@ -988,9 +1100,9 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
     final canJoinVideoCall = appointment.displayStatus == 'confirmed';
 
     if (_activeTab == 'pending') {
-      final text = appointment.status == 'assigned'
-          ? 'Doctor assigned. Awaiting confirmation.'
-          : 'Awaiting confirmation.';
+      final text = const {'requested', 'upcoming'}.contains(appointment.status)
+          ? 'Awaiting admin review and doctor assignment'
+          : 'Awaiting doctor confirmation';
       return Text(
         text,
         style: AppType.body(size: 13).copyWith(
@@ -1001,10 +1113,31 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
     }
 
     if (_activeTab == 'completed') {
-      return Text(
-        'Consultation completed',
-        style: AppType.body(size: 13)
-            .copyWith(color: AppColors.textSecondary),
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Consultation completed',
+            style: AppType.body(size: 13)
+                .copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _openRecords,
+              icon: const Icon(Icons.description_outlined, size: 18),
+              label: const Text('View Prescription & Certificate'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                side: const BorderSide(color: AppColors.primary),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.sm),
+                ),
+              ),
+            ),
+          ),
+        ],
       );
     }
 
@@ -1072,6 +1205,14 @@ class _AppointmentsScreenState extends State<AppointmentsScreen>
       default:
         return _statusConfirmed;
     }
+  }
+
+  // Same navigation as Account -> My Records: Records is not a footer tab.
+  void _openRecords() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const MyRecordsPage()),
+    );
   }
 
   Future<void> _openBooking() async {
