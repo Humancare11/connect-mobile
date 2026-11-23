@@ -23,6 +23,8 @@ class _MedService {
   final String title;
   final String subtitle; // kept for search only, not displayed
   final num price;
+  final num? priceEur;
+  final num? priceGbp;
   final Color accent;
   final Color bgColor;
 
@@ -32,6 +34,8 @@ class _MedService {
     required this.title,
     required this.subtitle,
     required this.price,
+    this.priceEur,
+    this.priceGbp,
     required this.accent,
     required this.bgColor,
   });
@@ -112,6 +116,8 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
           title: service.name,
           subtitle: service.description,
           price: service.price,
+          priceEur: service.priceEur,
+          priceGbp: service.priceGbp,
           accent: _accentColors[index % _accentColors.length],
           bgColor: _bgColors[index % _bgColors.length],
         ),
@@ -274,6 +280,8 @@ class _ServiceTileState extends State<_ServiceTile> {
         'condName': item.subtitle,
         'condIcon': '',
         'cost': item.price,
+        'priceEur': item.priceEur,
+        'priceGbp': item.priceGbp,
         'serviceId': item.id,
         'bookingType': 'service',
       },

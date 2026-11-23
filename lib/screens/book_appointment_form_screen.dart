@@ -1,8 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart' show TapGestureRecognizer;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/currency_service.dart';
+import '../services/pricing_service.dart';
 import '../utils/direct_upload.dart';
+import '../utils/money.dart';
+import '../utils/price_resolver.dart';
 
 class AppointmentFormPage extends StatefulWidget {
   const AppointmentFormPage({super.key});
@@ -74,8 +80,53 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
       TapGestureRecognizer()..onTap = () => _openPolicy(link.path),
   ];
 
+  // The price is shown in the customer's currency, which the server decides
+  // (see CurrencyService); the price table carries the EUR / GBP prices.
+  final CurrencyService _currency = CurrencyService.instance;
+  final PricingService _pricing = PricingService.instance;
+  StreamSubscription<CurrencyChange>? _currencyChanges;
+
+  @override
+  void initState() {
+    super.initState();
+    _currency.addListener(_onPriceInputsChanged);
+    _pricing.addListener(_onPriceInputsChanged);
+    _currencyChanges = _currency.changes.listen(_onCurrencyChanged);
+    // A new booking screen asks the server again (at most every 20 s).
+    _currency.ensureLoaded().then((_) => _currency.recheck());
+    _pricing.refresh();
+  }
+
+  void _onPriceInputsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onCurrencyChanged(CurrencyChange change) {
+    // Both booking screens can be open at once: only the one in front says so.
+    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(currencyChangeNotice(change.to)),
+        duration: const Duration(seconds: 8),
+      ),
+    );
+  }
+
+  PriceInfo _priceInfo(Map<String, dynamic> selection) {
+    return selectionPriceInfo(
+      selection: selection,
+      prices: _pricing.prices,
+      currency: _currency.currency,
+      currencyLoading: _currency.loading,
+      pricesLoading: _pricing.loading,
+    );
+  }
+
   @override
   void dispose() {
+    _currency.removeListener(_onPriceInputsChanged);
+    _pricing.removeListener(_onPriceInputsChanged);
+    _currencyChanges?.cancel();
     notesCtrl.dispose();
     for (final recognizer in _policyLinkRecognizers) {
       recognizer.dispose();
@@ -97,6 +148,7 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
           "condIcon": "",
           "cost": 0,
         };
+    final price = _priceInfo(selection);
 
     return Scaffold(
       backgroundColor: const Color(0xfff6f8fb),
@@ -121,7 +173,7 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
             ),
             const SizedBox(height: 18),
 
-            _summaryCard(selection),
+            _summaryCard(selection, price),
             const SizedBox(height: 18),
 
             _progress(),
@@ -147,7 +199,7 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                onPressed: _uploading
+                onPressed: _uploading || price.loading
                     ? null
                     : () => _validateAndOpenConsent(selection),
                 child: _uploading
@@ -170,7 +222,9 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
                         ],
                       )
                     : Text(
-                        "Proceed to Payment — \$${selection["cost"]} →",
+                        price.ready
+                            ? "Proceed to Payment — ${formatPrice(price.amount, price.currency)} →"
+                            : "Proceed to Payment →",
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
               ),
@@ -181,7 +235,7 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
     );
   }
 
-  Widget _summaryCard(Map<String, dynamic> selection) {
+  Widget _summaryCard(Map<String, dynamic> selection, PriceInfo price) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: _box(),
@@ -225,14 +279,23 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
                 "Fee",
                 style: TextStyle(color: Colors.black45, fontSize: 12),
               ),
-              Text(
-                "\$${selection["cost"] ?? 0}",
-                style: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 18,
-                  color: Color(0xff1a3a5c),
+              if (price.loading)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                Text(
+                  price.ready
+                      ? formatPrice(price.amount, price.currency)
+                      : "Price unavailable",
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                    color: Color(0xff1a3a5c),
+                  ),
                 ),
-              ),
             ],
           ),
         ],
@@ -556,6 +619,16 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
     if (_parsedCost(selection["cost"]) == null) {
       _snack(
         "We couldn't determine a valid price for this selection. Please go back and choose again.",
+      );
+      return;
+    }
+
+    // The customer's currency has no price for this selection and the price
+    // table could not be loaded (never a made-up price, never a USD price
+    // under a pound sign).
+    if (_priceInfo(selection).unavailable) {
+      _snack(
+        "The price is not available right now. Please go back and try again in a moment.",
       );
       return;
     }

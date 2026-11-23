@@ -6,9 +6,13 @@ class AppointmentTreeCategory {
     required this.price,
     required this.specialties,
     this.isActive = true,
+    this.pricingSlug = '',
   });
 
   final String id;
+  // The key of the public price table (`GET /pricing`), which carries the
+  // category's EUR / GBP prices. Empty when the backend does not send it.
+  final String pricingSlug;
   final String label;
   final String icon;
   final num price;
@@ -45,6 +49,7 @@ class AppointmentTreeCategory {
 
     return AppointmentTreeCategory(
       id: id.isNotEmpty ? id : label,
+      pricingSlug: _firstString(json, const ['pricingSlug']),
       label: label,
       icon: _firstString(json, const [
         'icon',
@@ -67,6 +72,7 @@ class AppointmentTreeCategory {
   Map<String, dynamic> toUiMap() {
     return {
       'id': id,
+      'pricingSlug': pricingSlug,
       'label': label,
       'icon': icon,
       'cost': price,

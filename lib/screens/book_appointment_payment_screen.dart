@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -5,9 +7,13 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../config/api_config.dart';
 import '../services/appointment_tree_service.dart';
+import '../services/currency_service.dart';
 import '../services/device_time_zone.dart';
 import '../services/payment_service.dart';
+import '../services/pricing_service.dart';
 import '../services/token_storage_service.dart';
+import '../utils/money.dart';
+import '../utils/price_resolver.dart';
 
 class AppointmentPaymentPage extends StatefulWidget {
   const AppointmentPaymentPage({super.key});
@@ -34,10 +40,60 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
   // booking write (which happens right after a payment) never waits on it.
   late final Future<String> _timeZone;
 
+  // The price is shown in the customer's currency, which the server decides
+  // (see CurrencyService); the price table carries the EUR / GBP prices. What
+  // is actually charged is decided by the server when the intent is created.
+  final CurrencyService _currency = CurrencyService.instance;
+  final PricingService _pricing = PricingService.instance;
+  StreamSubscription<CurrencyChange>? _currencyChanges;
+  // True while a refused charge is being explained: its message says the same
+  // thing as the "prices updated" notice, so only one of them is shown.
+  bool _explainingChange = false;
+
   @override
   void initState() {
     super.initState();
     _timeZone = deviceTimeZone();
+    _currency.addListener(_onPriceInputsChanged);
+    _pricing.addListener(_onPriceInputsChanged);
+    _currencyChanges = _currency.changes.listen(_onCurrencyChanged);
+    // A new booking screen asks the server again (at most every 20 s).
+    _currency.ensureLoaded().then((_) => _currency.recheck());
+    _pricing.ensureLoaded();
+  }
+
+  @override
+  void dispose() {
+    _currency.removeListener(_onPriceInputsChanged);
+    _pricing.removeListener(_onPriceInputsChanged);
+    _currencyChanges?.cancel();
+    super.dispose();
+  }
+
+  void _onPriceInputsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onCurrencyChanged(CurrencyChange change) {
+    // Both booking screens can be open at once: only the one in front says so.
+    if (!mounted || _explainingChange) return;
+    if (ModalRoute.of(context)?.isCurrent != true) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(currencyChangeNotice(change.to)),
+        duration: const Duration(seconds: 8),
+      ),
+    );
+  }
+
+  PriceInfo _priceFor(Map<String, dynamic> args) {
+    return selectionPriceInfo(
+      selection: args,
+      prices: _pricing.prices,
+      currency: _currency.currency,
+      currencyLoading: _currency.loading,
+      pricesLoading: _pricing.loading,
+    );
   }
 
   @override
@@ -45,7 +101,7 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     final args =
         ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>? ??
         <String, dynamic>{};
-    final amount = _amount(args['cost']);
+    final price = _priceFor(args);
     final pendingBookingOnly = _succeededPaymentIntentId != null;
 
     return Scaffold(
@@ -62,7 +118,7 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
           children: [
             _progress(),
             const SizedBox(height: 18),
-            _summary(args, amount),
+            _summary(args, price),
             const SizedBox(height: 18),
             _paymentCard(),
             if (pendingBookingOnly) ...[
@@ -88,7 +144,11 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
                     borderRadius: BorderRadius.circular(16),
                   ),
                 ),
-                onPressed: _processing ? null : () => _payAndCreate(args),
+                // A booking that is already paid for only has to be finished,
+                // whatever the price slot is doing.
+                onPressed: _processing || (!pendingBookingOnly && price.loading)
+                    ? null
+                    : () => _payAndCreate(args),
                 child: _processing
                     ? const SizedBox(
                         width: 22,
@@ -103,7 +163,9 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
                             ? 'Create Test Appointment'
                             : pendingBookingOnly
                             ? 'Complete Booking'
-                            : 'Pay \$${_displayAmount(amount)}',
+                            : price.ready
+                            ? 'Pay ${formatPrice(price.amount, price.currency)}'
+                            : 'Pay',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
               ),
@@ -114,7 +176,7 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     );
   }
 
-  Widget _summary(Map<String, dynamic> args, num amount) {
+  Widget _summary(Map<String, dynamic> args, PriceInfo price) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: _box(),
@@ -139,16 +201,38 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
                 'Total',
                 style: TextStyle(fontWeight: FontWeight.w900),
               ),
-              Text(
-                '\$${_displayAmount(amount)}',
-                style: const TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xff1a3a5c),
+              if (price.loading)
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                Text(
+                  price.ready
+                      ? formatPrice(price.amount, price.currency)
+                      : 'Price unavailable',
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xff1a3a5c),
+                  ),
                 ),
-              ),
             ],
           ),
+          if (price.loading) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'Loading your price...',
+              style: TextStyle(color: Colors.black54),
+            ),
+          ] else if (price.unavailable) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'The price is not available right now. Please go back and try again in a moment.',
+              style: TextStyle(color: Colors.black54),
+            ),
+          ],
         ],
       ),
     );
@@ -353,7 +437,28 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
         debugPrint('[PaymentSheet] Stripe settings applied.');
       }
 
+      // The USD price of the selection: what the booking records as its
+      // consultationPrice (the server replaces it with what was really paid).
       final amount = _amount(args['cost']);
+
+      // Right before anything is created at Stripe the customer's location is
+      // asked again (no 20 s limit): the IP may have changed since the screen
+      // opened. If the currency changed, the screen follows it at once (with
+      // the "prices updated" notice) and nothing is created for the old one.
+      final recheck = await _currency.recheck(force: true);
+      if (!mounted) return;
+      if (recheck.changed) return;
+      await _pricing.refresh();
+      if (!mounted) return;
+
+      final shown = _priceFor(args);
+      if (!shown.ready) {
+        _snack(
+          'The price is not available right now. Please go back and try again in a moment.',
+        );
+        return;
+      }
+
       final intentResult = await _paymentService.createStripeIntent(
         priceType: priceType,
         priceRef: priceRef,
@@ -404,24 +509,45 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       );
       _validateStripeMode(stripeKey, intent);
 
-      // The price shown on this screen (`amount`, derived from
-      // args['cost']) was never checked against what the backend actually
-      // created a PaymentIntent for. If server-side pricing had changed or
-      // diverged (a stale category price, a currency mismatch) between the
-      // user seeing the summary and this call, the Stripe sheet — and the
-      // real charge — could silently differ from what the user consented
-      // to. Abort before presenting the sheet rather than charging a
-      // different amount than what was displayed.
-      final expectedCents = (amount * 100).round();
-      if (intent.amountCents != expectedCents || intent.currency != 'usd') {
+      // The price shown on this screen was never checked against what the
+      // backend actually created a PaymentIntent for. If server-side pricing
+      // had changed or diverged (a stale category price, the customer's
+      // location) between the user seeing the summary and this call, the
+      // Stripe sheet — and the real charge — could silently differ from what
+      // the user consented to. Abort before presenting the sheet rather than
+      // charging a different amount or currency than what was displayed.
+      final check = checkCharge(
+        intentAmountCents: intent.amountCents,
+        intentCurrency: intent.currency,
+        shownAmount: shown.amount!,
+        shownCurrency: shown.currency,
+      );
+      if (check != ChargeCheck.ok) {
         debugPrint(
-          '[PaymentSheet] Amount/currency mismatch: displayed \$${_displayAmount(amount)} '
-          '($expectedCents cents, usd) but PaymentIntent is '
-          '${intent.amountCents} ${intent.currency}.',
+          '[PaymentSheet] Amount/currency mismatch ($check): displayed '
+          '${formatPrice(shown.amount, shown.currency)} '
+          '(${(shown.amount! * 100).round()} ${shown.currency}) but '
+          'PaymentIntent is ${intent.amountCents} ${intent.currency}.',
         );
-        _snack(
-          'The price for this appointment changed. Please go back and try again.',
-        );
+        if (check == ChargeCheck.currencyChanged) {
+          // The customer's location changed: the screen is brought up to date
+          // instead of charging in a currency that was not shown.
+          _explainingChange = true;
+          try {
+            await _currency.recheck(force: true);
+            await _pricing.refresh();
+          } finally {
+            _explainingChange = false;
+          }
+          _snack(
+            'Your location changed, so the price was updated. Please check it and tap Pay again.',
+          );
+        } else {
+          await _pricing.refresh();
+          _snack(
+            'The price for this appointment changed. Please go back and try again.',
+          );
+        }
         return;
       }
 
@@ -437,7 +563,8 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
           customFlow: false,
           paymentIntentClientSecret: intent.clientSecret,
           merchantDisplayName: 'Humancare Connect',
-          primaryButtonLabel: 'Pay \$${_displayAmount(amount)}',
+          primaryButtonLabel:
+              'Pay ${formatPrice(shown.amount, shown.currency)}',
           style: ThemeMode.system,
           allowsDelayedPaymentMethods: false,
           // The signed-in patient's real name/email are attached to the
@@ -811,11 +938,6 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
         normalized.contains('not found') ||
         normalized.contains('invalid') ||
         normalized.contains('no longer');
-  }
-
-  String _displayAmount(num amount) {
-    if (amount == amount.roundToDouble()) return amount.round().toString();
-    return amount.toStringAsFixed(2);
   }
 
   void _snack(String msg) {

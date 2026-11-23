@@ -6,6 +6,8 @@
 /// `PaymentHistory` page consumes.
 library;
 
+import '../utils/money.dart';
+
 int _asInt(Object? value) {
   if (value is int) return value;
   if (value is num) return value.round();
@@ -104,14 +106,11 @@ class PaymentRecord {
   String get displayDescription =>
       description.isNotEmpty ? description : 'Tele Consultation';
 
-  /// `$50.00` for USD; `EUR 50.00` style fallback for anything else — matches
-  /// the web `formatAmount()` helper (Intl currency with a manual fallback).
-  String get amountDisplay {
-    final amount = amountCents / 100;
-    final code = currency.toUpperCase();
-    if (currency == 'usd') return '\$${amount.toStringAsFixed(2)}';
-    return '$code ${amount.toStringAsFixed(2)}';
-  }
+  /// `$59.00`, `€59.00`, `£55.00` — matches the web `formatAmount()` helper
+  /// (`Intl.NumberFormat("en-US", { style: "currency" })`: symbol first, always
+  /// two decimals, thousands grouped). A currency without a known symbol is
+  /// shown as `CODE 59.00`.
+  String get amountDisplay => formatCharge(amountCents / 100, currency);
 }
 
 class PaymentHistoryResult {
