@@ -55,12 +55,21 @@ void main() {
       expect(AppBuildInfo.headers, {
         'X-Client-Platform': 'android',
         'X-App-Version': '1.0.0+16',
+        // This build can pay in rupees (Razorpay).
+        'X-Client-Capabilities': 'razorpay',
       });
       expect(AppBuildInfo.buildNumber, 16);
     });
 
     test('before init there are no headers (undeclared client)', () {
       expect(AppBuildInfo.headers, isEmpty);
+    });
+
+    test('the Razorpay capability is only declared with a platform', () {
+      AppBuildInfo.setForTest(platform: '', version: '1.0.0+21');
+      expect(AppBuildInfo.headers.containsKey('X-Client-Capabilities'), isFalse);
+      AppBuildInfo.setForTest(platform: 'ios', version: '1.0.0+21');
+      expect(AppBuildInfo.headers['X-Client-Capabilities'], 'razorpay');
     });
   });
 

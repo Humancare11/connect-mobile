@@ -25,6 +25,7 @@ class _MedService {
   final num price;
   final num? priceEur;
   final num? priceGbp;
+  final num? priceInr;
   final Color accent;
   final Color bgColor;
 
@@ -36,6 +37,7 @@ class _MedService {
     required this.price,
     this.priceEur,
     this.priceGbp,
+    this.priceInr,
     required this.accent,
     required this.bgColor,
   });
@@ -118,6 +120,7 @@ class _MedicalServicesSectionState extends State<MedicalServicesSection> {
           price: service.price,
           priceEur: service.priceEur,
           priceGbp: service.priceGbp,
+          priceInr: service.priceInr,
           accent: _accentColors[index % _accentColors.length],
           bgColor: _bgColors[index % _bgColors.length],
         ),
@@ -282,6 +285,7 @@ class _ServiceTileState extends State<_ServiceTile> {
         'cost': item.price,
         'priceEur': item.priceEur,
         'priceGbp': item.priceGbp,
+        'priceInr': item.priceInr,
         'serviceId': item.id,
         'bookingType': 'service',
       },

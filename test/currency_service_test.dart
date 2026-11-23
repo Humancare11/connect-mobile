@@ -131,9 +131,20 @@ void main() {
       }
     });
 
-    test('rupees are never shown by this build: INR reads as USD', () async {
+    test('India is priced in rupees (INR)', () async {
       final server = _Server([
         {'currency': 'INR', 'country': 'IN', 'source': 'ip'},
+      ]);
+      final s = service(server);
+      await s.ensureLoaded();
+      expect(s.currency, 'INR');
+      expect(s.state.loading, isFalse);
+      s.dispose();
+    });
+
+    test('a currency this build does not know reads as USD', () async {
+      final server = _Server([
+        {'currency': 'AUD', 'country': 'AU', 'source': 'ip'},
       ]);
       final s = service(server);
       await s.ensureLoaded();

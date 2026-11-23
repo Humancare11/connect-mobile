@@ -43,6 +43,10 @@ class AppBuildInfo {
   static Map<String, String> get headers => {
     if (_platform.isNotEmpty) 'X-Client-Platform': _platform,
     if (_platform.isNotEmpty && _version.isNotEmpty) 'X-App-Version': _version,
+    // This build can take a payment in rupees (Razorpay Checkout). The server
+    // prices a customer in India in INR only for an app that says so; an app
+    // without it is kept on USD (see the backend's appCurrencyGate.js).
+    if (_platform.isNotEmpty) 'X-Client-Capabilities': 'razorpay',
   };
 
   static String platformFor(TargetPlatform target, {required bool isWeb}) {

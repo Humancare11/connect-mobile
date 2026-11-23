@@ -4,14 +4,16 @@ import '../utils/json_helpers.dart';
 import 'api_client.dart';
 
 /// One category's entry of the public price table (`GET /api/pricing`):
-/// `price` is always the USD price; `priceEur` / `priceGbp` are `null` until
-/// they have been set for that category.
+/// `price` is always the USD price; `priceEur` / `priceGbp` / `priceInr` are
+/// `null` until they have been set for that category (`priceInr` is only sent
+/// while rupees are switched on).
 class PricingRecord {
   const PricingRecord({
     required this.price,
     this.label = '',
     this.priceEur,
     this.priceGbp,
+    this.priceInr,
   });
 
   factory PricingRecord.fromJson(Map<String, dynamic> json) {
@@ -20,6 +22,7 @@ class PricingRecord {
       label: (json['label'] ?? '').toString(),
       priceEur: _number(json['priceEur']),
       priceGbp: _number(json['priceGbp']),
+      priceInr: _number(json['priceInr']),
     );
   }
 
@@ -27,6 +30,7 @@ class PricingRecord {
   final String label;
   final num? priceEur;
   final num? priceGbp;
+  final num? priceInr;
 
   static num? _number(Object? value) {
     if (value is num) return value;

@@ -59,3 +59,14 @@
 #    Flutter engine / AndroidManifest, not from any Kotlin call site R8 can
 #    trace) ─────────────────────────────────────────────────────────────
 -keep class com.humancareconnect.app.** { *; }
+
+# ── razorpay_flutter (Razorpay Checkout) ────────────────────────────────
+# The rules the plugin's README asks for when the build is minified: the SDK
+# calls back into its own classes and the onPayment* handlers by name.
+-keepattributes *Annotation*
+-dontwarn com.razorpay.**
+-keep class com.razorpay.** {*;}
+-optimizations !method/inlining/
+-keepclasseswithmembers class * {
+  public void onPayment*(...);
+}

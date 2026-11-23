@@ -9,6 +9,7 @@ const _general = PricingRecord(
   label: 'General & Everyday Care',
   priceEur: 55,
   priceGbp: 49,
+  priceInr: 4999,
 );
 const _usdOnly = PricingRecord(price: 39, label: 'Mental Health');
 
@@ -66,9 +67,18 @@ void main() {
       );
     });
 
-    test('rupees are not supported: the USD price', () {
+    test('rupees read the INR price', () {
       expect(resolveCategoryPrice(_general, 'INR'),
-          const PriceInfo(amount: 59, currency: 'USD'));
+          const PriceInfo(amount: 4999, currency: 'INR'));
+    });
+
+    test('a category with no INR price shows its USD price, labelled USD', () {
+      expect(resolveCategoryPrice(_usdOnly, 'INR'),
+          const PriceInfo(amount: 39, currency: 'USD'));
+      expect(
+        resolveCategoryPrice(const PricingRecord(price: 39, priceInr: 0), 'INR'),
+        const PriceInfo(amount: 39, currency: 'USD'),
+      );
     });
 
     test('no usable price at all is null', () {
@@ -104,11 +114,17 @@ void main() {
           const PriceInfo(amount: 59, currency: 'USD'));
     });
 
-    test('GBP and EUR come from the price table', () {
+    test('GBP, EUR and INR come from the price table', () {
       expect(_info(_selection(), 'GBP'),
           const PriceInfo(amount: 49, currency: 'GBP'));
       expect(_info(_selection(), 'EUR'),
           const PriceInfo(amount: 55, currency: 'EUR'));
+      expect(_info(_selection(), 'INR'),
+          const PriceInfo(amount: 4999, currency: 'INR'));
+    });
+
+    test('a price table that could not load is "unavailable" for INR too', () {
+      expect(_info(_selection(), 'INR', noPrices: true).unavailable, isTrue);
     });
 
     test('a category with no GBP price shows the USD price, labelled USD', () {
@@ -151,18 +167,30 @@ void main() {
   });
 
   group('selectionPriceInfo: a service booking', () {
-    Map<String, dynamic> service({Object? eur = 45, Object? gbp = 40}) => {
+    Map<String, dynamic> service({
+      Object? eur = 45,
+      Object? gbp = 40,
+      Object? inr = 3999,
+    }) => {
       'bookingType': 'service',
       'specName': 'Fit to fly',
       'cost': 50,
       'priceEur': eur,
       'priceGbp': gbp,
+      'priceInr': inr,
     };
 
     test('is priced from the service record in the customer currency', () {
       expect(_info(service(), 'GBP'), const PriceInfo(amount: 40, currency: 'GBP'));
       expect(_info(service(), 'EUR'), const PriceInfo(amount: 45, currency: 'EUR'));
       expect(_info(service(), 'USD'), const PriceInfo(amount: 50, currency: 'USD'));
+    });
+
+    test('rupees come from the service own INR price', () {
+      expect(_info(service(), 'INR'),
+          const PriceInfo(amount: 3999, currency: 'INR'));
+      expect(_info(service(inr: null), 'INR'),
+          const PriceInfo(amount: 50, currency: 'USD'));
     });
 
     test('a missing GBP price falls back to USD, labelled USD', () {
@@ -249,13 +277,15 @@ void main() {
 
     test('a service keeps its EUR / GBP prices', () {
       final services = parseServices([
-        {'_id': 's1', 'name': 'Fit to fly', 'price': 50, 'priceEur': 45, 'priceGbp': '40'},
+        {'_id': 's1', 'name': 'Fit to fly', 'price': 50, 'priceEur': 45, 'priceGbp': '40', 'priceInr': 3999},
         {'_id': 's2', 'name': 'Sick note', 'price': 30},
       ]);
       expect(services[0].priceEur, 45);
       expect(services[0].priceGbp, 40);
+      expect(services[0].priceInr, 3999);
       expect(services[1].priceEur, isNull);
       expect(services[1].priceGbp, isNull);
+      expect(services[1].priceInr, isNull);
     });
   });
 }

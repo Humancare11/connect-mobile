@@ -6,12 +6,12 @@ import 'package:intl/intl.dart';
 /// amount reads the same on both. The server decides the currency (see
 /// `CurrencyService`); the app only displays it and never converts an amount.
 ///
-/// Phase 1 prices in USD, EUR and GBP. INR (Razorpay) is not supported by the
-/// app yet: the backend keeps an app that cannot pay rupees on USD, and any
-/// other code is treated as USD here.
+/// The app prices in USD, EUR, GBP and INR. Rupees are paid through Razorpay
+/// (the server only returns INR to an app that sends
+/// `X-Client-Capabilities: razorpay`); any other code is treated as USD here.
 
 const String kDefaultCurrency = 'USD';
-const List<String> kAppCurrencies = ['USD', 'EUR', 'GBP'];
+const List<String> kAppCurrencies = ['USD', 'EUR', 'GBP', 'INR'];
 
 const Map<String, String> _symbols = {
   'USD': r'$',
@@ -20,14 +20,13 @@ const Map<String, String> _symbols = {
   'INR': '₹',
 };
 
-/// USD / EUR / GBP in upper case; anything else (including INR, which this
-/// build cannot pay) is USD.
+/// USD / EUR / GBP / INR in upper case; anything else is USD.
 String normalizeCurrency(String? value) {
   final code = (value ?? '').trim().toUpperCase();
   return kAppCurrencies.contains(code) ? code : kDefaultCurrency;
 }
 
-/// "$", "€" or "£".
+/// "$", "€", "£" or "₹".
 String currencySymbol(String? currency) => _symbols[normalizeCurrency(currency)]!;
 
 /// The notice shown when the customer's location changes during a session and
@@ -37,17 +36,21 @@ String currencyChangeNotice(String? currency) {
   return 'Prices updated to your current location (${currencySymbol(code)} $code)';
 }
 
-/// Symbol first: $30, €30, £30. A whole amount has no decimals; a fractional
-/// one always has two ($29.50, not $29.5). Thousands are grouped: $1,234.50.
-/// Empty when the amount is not a finite number, so a missing price never
-/// shows as "$NaN".
+/// Symbol first: $30, €30, £30, ₹4,999 (rupees use Indian digit grouping:
+/// ₹1,00,000). A whole amount has no decimals; a fractional one always has two
+/// ($29.50, not $29.5). Thousands are grouped: $1,234.50. Empty when the
+/// amount is not a finite number, so a missing price never shows as "$NaN".
 String formatPrice(num? amount, [String? currency = kDefaultCurrency]) {
   if (amount == null) return '';
   final value = amount.toDouble();
   if (!value.isFinite) return '';
   final whole = (value % 1).abs() < 1e-9;
-  final pattern = whole ? '#,##0' : '#,##0.00';
-  return '${currencySymbol(currency)}${NumberFormat(pattern, 'en_US').format(value)}';
+  final digits = whole ? 0 : 2;
+  final locale = normalizeCurrency(currency) == 'INR' ? 'en_IN' : 'en_US';
+  final format = NumberFormat.decimalPattern(locale)
+    ..minimumFractionDigits = digits
+    ..maximumFractionDigits = digits;
+  return '${currencySymbol(currency)}${format.format(value)}';
 }
 
 /// An amount that was actually charged, as the Payment History shows it

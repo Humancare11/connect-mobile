@@ -7,6 +7,7 @@ class ServiceModel {
     required this.price,
     this.priceEur,
     this.priceGbp,
+    this.priceInr,
   });
 
   final String id;
@@ -15,10 +16,11 @@ class ServiceModel {
   final String icon;
   final num price;
 
-  // The service's own EUR / GBP prices (`GET /services` adds them while
+  // The service's own EUR / GBP / INR prices (`GET /services` adds them while
   // multi-currency is on). Null = not set, so the USD `price` applies.
   final num? priceEur;
   final num? priceGbp;
+  final num? priceInr;
 
   factory ServiceModel.fromJson(Map<String, dynamic> json) {
     return ServiceModel(
@@ -45,6 +47,7 @@ class ServiceModel {
       ]),
       priceEur: _optionalNum(json['priceEur']),
       priceGbp: _optionalNum(json['priceGbp']),
+      priceInr: _optionalNum(json['priceInr']),
     );
   }
 

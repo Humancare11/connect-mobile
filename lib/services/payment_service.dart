@@ -30,8 +30,28 @@ class StripeIntent {
   }
 }
 
+/// A Razorpay order the SERVER created for a rupee payment
+/// (`POST /razorpay/create-order`): the amount (in paise) and the currency are
+/// its decision. `keyId` is the PUBLIC key Checkout needs.
+class RazorpayOrder {
+  const RazorpayOrder({
+    required this.orderId,
+    required this.amountCents,
+    required this.currency,
+    required this.keyId,
+  });
+
+  final String orderId;
+  final int amountCents;
+  final String currency;
+  final String keyId;
+}
+
 class PaymentService {
   PaymentService({ApiClient? apiClient}) : _apiClient = apiClient ?? ApiClient();
+
+  /// The shared instance the payment screen uses. Replaceable in tests.
+  static PaymentService instance = PaymentService();
 
   final ApiClient _apiClient;
 
@@ -194,6 +214,51 @@ class PaymentService {
         currency: currency,
         livemode: livemode,
         id: paymentIntentId,
+      ),
+      raw: result.raw,
+      statusCode: result.statusCode,
+    );
+  }
+
+  /// `POST /razorpay/create-order` — the rupee counterpart of
+  /// [createStripeIntent]. Like it, the body says only WHAT is being booked
+  /// (`priceType` + `priceRef`); the server decides the amount and the
+  /// currency, and refuses with 400 when it prices this customer in anything
+  /// other than INR.
+  Future<ApiResult<RazorpayOrder>> createRazorpayOrder({
+    required String priceType,
+    required String priceRef,
+  }) async {
+    final result = await _apiClient.post('/razorpay/create-order', {
+      'priceType': priceType,
+      'priceRef': priceRef,
+    });
+    _log(
+      '[PaymentService] create-order status=${result.statusCode} '
+      'success=${result.success} message="${result.message}"',
+    );
+
+    final data = result.data ?? result.raw;
+    final orderId = (data['orderId'] ?? '').toString().trim();
+    final keyId = (data['keyId'] ?? '').toString().trim();
+    final amount = _asInt(data['amountCents']);
+    if (!result.success || orderId.isEmpty || keyId.isEmpty || amount <= 0) {
+      return ApiResult<RazorpayOrder>(
+        success: false,
+        message: result.message,
+        raw: result.raw,
+        statusCode: result.statusCode,
+      );
+    }
+
+    return ApiResult<RazorpayOrder>(
+      success: true,
+      message: result.message,
+      data: RazorpayOrder(
+        orderId: orderId,
+        amountCents: amount,
+        currency: (data['currency'] ?? 'INR').toString().trim().toUpperCase(),
+        keyId: keyId,
       ),
       raw: result.raw,
       statusCode: result.statusCode,

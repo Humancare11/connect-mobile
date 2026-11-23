@@ -47,9 +47,9 @@ double? _positive(Object? value) {
 }
 
 /// One category's price in [currency], from its price-table entry. A EUR / GBP
-/// price that is not set falls back to the USD price, labelled USD: the same
-/// rule the server charges by, so what is shown is what is charged. Null when
-/// there is no usable price at all.
+/// / INR price that is not set falls back to the USD price, labelled USD: the
+/// same rule the server charges by, so what is shown is what is charged. Null
+/// when there is no usable price at all.
 PriceInfo? resolveCategoryPrice(PricingRecord? record, String? currency) {
   if (record == null) return null;
   final wanted = normalizeCurrency(currency);
@@ -60,6 +60,10 @@ PriceInfo? resolveCategoryPrice(PricingRecord? record, String? currency) {
   if (wanted == 'GBP') {
     final gbp = _positive(record.priceGbp);
     if (gbp != null) return PriceInfo(amount: gbp, currency: 'GBP');
+  }
+  if (wanted == 'INR') {
+    final inr = _positive(record.priceInr);
+    if (inr != null) return PriceInfo(amount: inr, currency: 'INR');
   }
   final usd = _positive(record.price);
   return usd != null ? PriceInfo(amount: usd, currency: 'USD') : null;
@@ -89,7 +93,7 @@ PricingRecord? priceRecordFor(
 ///
 /// `selection['cost']` is the USD price the booking page already loaded.
 /// A service booking is priced from the service's own record (`priceEur`,
-/// `priceGbp` carried in the selection); a category booking from the price
+/// `priceGbp`, `priceInr` carried in the selection); a category booking from the price
 /// table, found through `pricingSlug`.
 PriceInfo selectionPriceInfo({
   required Map<String, dynamic>? selection,
@@ -109,6 +113,7 @@ PriceInfo selectionPriceInfo({
           price: usdCost,
           priceEur: _positive(selection?['priceEur']),
           priceGbp: _positive(selection?['priceGbp']),
+          priceInr: _positive(selection?['priceInr']),
         ),
         wanted,
       );

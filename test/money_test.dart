@@ -35,14 +35,24 @@ void main() {
       expect(formatPrice(double.infinity, 'GBP'), '');
     });
 
-    test('rupees are not a currency of this build: they read as USD', () {
-      expect(normalizeCurrency('INR'), 'USD');
-      expect(formatPrice(4999, 'INR'), r'$4,999');
+    test('rupees: ₹ with Indian digit grouping, like the web (en-IN)', () {
+      expect(formatPrice(499, 'INR'), '₹499');
+      expect(formatPrice(4999, 'INR'), '₹4,999');
+      expect(formatPrice(100000, 'INR'), '₹1,00,000');
+      expect(formatPrice(1234.5, 'INR'), '₹1,234.50');
+      expect(formatPrice(1234567.25, 'INR'), '₹12,34,567.25');
+      expect(formatPrice(499, 'inr'), '₹499');
+    });
+
+    test('other currencies keep the western grouping', () {
+      expect(formatPrice(1000000, 'USD'), r'$1,000,000');
+      expect(formatPrice(1000000, 'EUR'), '€1,000,000');
     });
   });
 
   group('currency helpers', () {
-    test('normalizeCurrency keeps USD / EUR / GBP, everything else is USD', () {
+    test('normalizeCurrency keeps USD / EUR / GBP / INR, everything else is USD', () {
+      expect(normalizeCurrency('inr'), 'INR');
       expect(normalizeCurrency('gbp'), 'GBP');
       expect(normalizeCurrency(' eur '), 'EUR');
       expect(normalizeCurrency('USD'), 'USD');
@@ -63,6 +73,10 @@ void main() {
       expect(
         currencyChangeNotice('USD'),
         r'Prices updated to your current location ($ USD)',
+      );
+      expect(
+        currencyChangeNotice('INR'),
+        'Prices updated to your current location (₹ INR)',
       );
     });
   });

@@ -11,6 +11,7 @@ import '../services/currency_service.dart';
 import '../services/device_time_zone.dart';
 import '../services/payment_service.dart';
 import '../services/pricing_service.dart';
+import '../services/razorpay_checkout.dart';
 import '../services/token_storage_service.dart';
 import '../utils/money.dart';
 import '../utils/price_resolver.dart';
@@ -23,7 +24,7 @@ class AppointmentPaymentPage extends StatefulWidget {
 }
 
 class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
-  final _paymentService = PaymentService();
+  final _paymentService = PaymentService.instance;
   bool _processing = false;
 
   // Set once a Stripe charge has actually succeeded. If the subsequent
@@ -35,6 +36,15 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
   // successful booking; also naturally reset if the user leaves this screen,
   // since a stale reference isn't reused across a fresh navigation.
   String? _succeededPaymentIntentId;
+
+  // The rupee counterpart of the above: a Razorpay payment has gone through but
+  // the booking has not been saved yet. It is also kept in secure storage (see
+  // PendingRazorpayBookingStore), so the booking can still be finished after
+  // the app was closed — `_pendingRazorpayArgs` is the booking it belongs to,
+  // which then replaces whatever this screen was opened with.
+  RazorpayPayment? _pendingRazorpay;
+  Map<String, dynamic>? _pendingRazorpayArgs;
+  num _pendingRazorpayAmount = 0;
 
   // The device's IANA time zone, looked up as soon as the screen opens so the
   // booking write (which happens right after a payment) never waits on it.
@@ -60,6 +70,38 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     // A new booking screen asks the server again (at most every 20 s).
     _currency.ensureLoaded().then((_) => _currency.recheck());
     _pricing.ensureLoaded();
+    _restorePendingRazorpay();
+  }
+
+  Future<String> _userId() async {
+    final profile = await const TokenStorageService().getUserProfile();
+    return (profile['userId'] ?? '').trim();
+  }
+
+  /// A rupee payment that was made but whose booking was never saved (the app
+  /// was closed or the booking call failed): bring it back so the customer can
+  /// finish the booking without paying again.
+  Future<void> _restorePendingRazorpay() async {
+    final saved = await PendingRazorpayBookingStore.instance.load(
+      await _userId(),
+    );
+    if (!mounted || saved == null || _pendingRazorpay != null) return;
+    setState(() {
+      _pendingRazorpay = saved.payment;
+      _pendingRazorpayArgs = saved.args;
+      _pendingRazorpayAmount = saved.amount;
+    });
+  }
+
+  Future<void> _clearPendingRazorpay() async {
+    if (mounted) {
+      setState(() {
+        _pendingRazorpay = null;
+        _pendingRazorpayArgs = null;
+        _pendingRazorpayAmount = 0;
+      });
+    }
+    await PendingRazorpayBookingStore.instance.clear(await _userId());
   }
 
   @override
@@ -98,11 +140,12 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
 
   @override
   Widget build(BuildContext context) {
-    final args =
+    final args = _pendingRazorpayArgs ??
         ModalRoute.of(context)?.settings.arguments as Map<String, dynamic>? ??
         <String, dynamic>{};
     final price = _priceFor(args);
-    final pendingBookingOnly = _succeededPaymentIntentId != null;
+    final pendingBookingOnly =
+        _succeededPaymentIntentId != null || _pendingRazorpay != null;
 
     return Scaffold(
       backgroundColor: const Color(0xfff6f8fb),
@@ -120,10 +163,10 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
             const SizedBox(height: 18),
             _summary(args, price),
             const SizedBox(height: 18),
-            _paymentCard(),
+            _paymentCard(price),
             if (pendingBookingOnly) ...[
               const SizedBox(height: 18),
-              _paymentReceivedCard(),
+              _paymentReceivedCard(razorpay: _pendingRazorpay != null),
             ],
             if (_useLocalPaymentBypass) ...[
               const SizedBox(height: 18),
@@ -163,6 +206,8 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
                             ? 'Create Test Appointment'
                             : pendingBookingOnly
                             ? 'Complete Booking'
+                            : price.ready && price.currency == 'INR'
+                            ? 'Pay ${formatPrice(price.amount, price.currency)} with Razorpay'
                             : price.ready
                             ? 'Pay ${formatPrice(price.amount, price.currency)}'
                             : 'Pay',
@@ -238,46 +283,59 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     );
   }
 
-  Widget _paymentCard() {
+  Widget _paymentCard(PriceInfo price) {
+    // Customers in India pay in rupees through Razorpay only (the web hides
+    // Stripe for them too).
+    final rupees = price.currency == 'INR' && !_useLocalPaymentBypass;
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: _box(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Card Payment',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+          Text(
+            rupees ? 'Online Payment' : 'Card Payment',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
           ),
           const SizedBox(height: 8),
           Text(
             _useLocalPaymentBypass
                 ? 'Local payment bypass is enabled. Stripe will be skipped for this development build.'
+                : rupees
+                ? 'Secure checkout is processed by Razorpay.'
                 : 'Secure checkout is processed by Stripe. Your card details are not stored in this app.',
             style: const TextStyle(color: Colors.black54, height: 1.4),
           ),
+          if (rupees) ...[
+            const SizedBox(height: 6),
+            const Text(
+              'UPI · Cards · Netbanking · Wallets',
+              style: TextStyle(color: Colors.black54, height: 1.4),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _paymentReceivedCard() {
+  Widget _paymentReceivedCard({bool razorpay = false}) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: _box().copyWith(color: const Color(0xffeefbf3)),
-      child: const Column(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          const Text(
             'Payment Received',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
           ),
-          SizedBox(height: 8),
+          const SizedBox(height: 8),
           Text(
-            'Your card has already been charged. We just need to finish '
-            'saving your appointment — tap below to complete it. You will '
-            'not be charged again.',
-            style: TextStyle(color: Colors.black87, height: 1.4),
+            // A rupee payment may have been made by UPI, not by card.
+            '${razorpay ? 'Your payment has' : 'Your card has'} already been '
+            'charged. We just need to finish saving your appointment — tap '
+            'below to complete it. You will not be charged again.',
+            style: const TextStyle(color: Colors.black87, height: 1.4),
           ),
         ],
       ),
@@ -404,8 +462,33 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       return;
     }
 
+    // The same for a rupee payment that is already made: finish its booking
+    // with the saved reference, never charge again.
+    final pendingRazorpay = _pendingRazorpay;
+    if (pendingRazorpay != null) {
+      setState(() => _processing = true);
+      try {
+        await _finishRazorpayBooking(
+          args,
+          _pendingRazorpayAmount > 0
+              ? _pendingRazorpayAmount
+              : _amount(args['cost']),
+          pendingRazorpay,
+        );
+      } finally {
+        if (mounted) setState(() => _processing = false);
+      }
+      return;
+    }
+
     if (_useLocalPaymentBypass) {
       await _createAppointmentWithLocalPayment(args);
+      return;
+    }
+
+    // Customers priced in rupees pay through Razorpay only.
+    if (_priceFor(args).currency == 'INR') {
+      await _payWithRazorpay(args, priceType, priceRef);
       return;
     }
 
@@ -529,25 +612,7 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
           '(${(shown.amount! * 100).round()} ${shown.currency}) but '
           'PaymentIntent is ${intent.amountCents} ${intent.currency}.',
         );
-        if (check == ChargeCheck.currencyChanged) {
-          // The customer's location changed: the screen is brought up to date
-          // instead of charging in a currency that was not shown.
-          _explainingChange = true;
-          try {
-            await _currency.recheck(force: true);
-            await _pricing.refresh();
-          } finally {
-            _explainingChange = false;
-          }
-          _snack(
-            'Your location changed, so the price was updated. Please check it and tap Pay again.',
-          );
-        } else {
-          await _pricing.refresh();
-          _snack(
-            'The price for this appointment changed. Please go back and try again.',
-          );
-        }
+        await _explainChargeMismatch(check);
         return;
       }
 
@@ -642,6 +707,215 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     } finally {
       if (mounted) setState(() => _processing = false);
     }
+  }
+
+  /// The server created a charge that is not what the screen shows. The screen
+  /// is brought up to date and the customer is told why (nothing was paid).
+  Future<void> _explainChargeMismatch(ChargeCheck check) async {
+    if (check == ChargeCheck.currencyChanged) {
+      // The customer's location changed: the screen is brought up to date
+      // instead of charging in a currency that was not shown.
+      _explainingChange = true;
+      try {
+        await _currency.recheck(force: true);
+        await _pricing.refresh();
+      } finally {
+        _explainingChange = false;
+      }
+      _snack(
+        'Your location changed, so the price was updated. Please check it and tap Pay again.',
+      );
+    } else {
+      await _pricing.refresh();
+      _snack(
+        'The price for this appointment changed. Please go back and try again.',
+      );
+    }
+  }
+
+  /// Rupee payment through Razorpay Checkout, like the web: the server creates
+  /// the order (amount and currency are its decision), Checkout collects the
+  /// payment, and the three values it returns go to the booking request, where
+  /// the server verifies them before anything is booked.
+  Future<void> _payWithRazorpay(
+    Map<String, dynamic> args,
+    String priceType,
+    String priceRef,
+  ) async {
+    setState(() => _processing = true);
+    try {
+      // The USD price of the selection: what the booking records as its
+      // consultationPrice (the server replaces it with what was really paid).
+      final amount = _amount(args['cost']);
+
+      // Right before an order is created the customer's location is asked
+      // again (no 20 s limit). If the currency changed, the screen follows it
+      // and nothing is created for the old one.
+      final recheck = await _currency.recheck(force: true);
+      if (!mounted) return;
+      if (recheck.changed) return;
+      await _pricing.refresh();
+      if (!mounted) return;
+
+      final shown = _priceFor(args);
+      if (!shown.ready) {
+        _snack(
+          'The price is not available right now. Please go back and try again in a moment.',
+        );
+        return;
+      }
+      if (shown.currency != 'INR') {
+        // The price table no longer has a rupee price for this selection.
+        _snack(
+          'The price for this appointment changed. Please go back and try again.',
+        );
+        return;
+      }
+
+      final orderResult = await _paymentService.createRazorpayOrder(
+        priceType: priceType,
+        priceRef: priceRef,
+      );
+      if (!mounted) return;
+      final order = orderResult.data;
+      if (!orderResult.success || order == null) {
+        if (_looksLikeStalePriceRefError(orderResult.message)) {
+          AppointmentTreeService.invalidateCache();
+          _snack(
+            '${orderResult.message} Please reselect and try again.',
+          );
+          final navigator = Navigator.of(context);
+          navigator.pop();
+          if (navigator.canPop()) navigator.pop();
+          return;
+        }
+        _snack(
+          orderResult.message.isEmpty
+              ? kRazorpayStartFailedMessage
+              : orderResult.message,
+        );
+        return;
+      }
+
+      final check = checkCharge(
+        intentAmountCents: order.amountCents,
+        intentCurrency: order.currency,
+        shownAmount: shown.amount!,
+        shownCurrency: shown.currency,
+      );
+      if (check != ChargeCheck.ok) {
+        debugPrint(
+          '[Razorpay] Amount/currency mismatch ($check): displayed '
+          '${formatPrice(shown.amount, shown.currency)} but the order is '
+          '${order.amountCents} ${order.currency}.',
+        );
+        await _explainChargeMismatch(check);
+        return;
+      }
+
+      const tokenStorage = TokenStorageService();
+      final profile = await tokenStorage.getUserProfile();
+      final category = (args['catLabel']?.toString() ?? '').trim();
+      final outcome = await RazorpayCheckout.launcher.open(
+        RazorpayCheckout.buildOptions(
+          keyId: order.keyId,
+          orderId: order.orderId,
+          amountPaise: order.amountCents,
+          description:
+              '${category.isEmpty ? 'Consultation' : category} booking fee',
+          name: profile['name'] ?? '',
+          email: profile['email'] ?? '',
+          contact: profile['mobile'] ?? '',
+        ),
+      );
+      if (!mounted) return;
+
+      switch (outcome) {
+        case RazorpayCancelled():
+          _snack(kRazorpayCancelledMessage);
+        case RazorpayFailed(:final message):
+          _snack(message.isEmpty ? kRazorpayFailedMessage : message);
+        case RazorpaySuccess(:final payment):
+          // The customer has paid. From here on a failure must never lead to a
+          // second charge: keep the payment (also across an app restart) until
+          // the booking is saved.
+          setState(() {
+            _pendingRazorpay = payment;
+            _pendingRazorpayArgs = args;
+            _pendingRazorpayAmount = amount;
+          });
+          await PendingRazorpayBookingStore.instance.save(
+            await _userId(),
+            PendingRazorpayBooking(
+              payment: payment,
+              args: args,
+              amount: amount,
+            ),
+          );
+          await _finishRazorpayBooking(args, amount, payment);
+      }
+    } catch (error, stackTrace) {
+      if (!mounted) return;
+      debugPrint('Razorpay payment failed: $error');
+      debugPrint('$stackTrace');
+      _snack(kRazorpayStartFailedMessage);
+    } finally {
+      if (mounted) setState(() => _processing = false);
+    }
+  }
+
+  /// Saves the booking of a rupee payment that has been made. An answer in the
+  /// 4xx range is final (the payment is refused, already used, the slot is
+  /// gone): the saved payment is dropped so the customer is never stuck on
+  /// "Complete Booking", and the server's message says what to do.
+  Future<void> _finishRazorpayBooking(
+    Map<String, dynamic> args,
+    num amount,
+    RazorpayPayment payment,
+  ) async {
+    final appointmentPayload = await _appointmentPayload(
+      args,
+      amount,
+      '',
+      razorpay: payment,
+    );
+    debugPrint(
+      '[Razorpay] Creating paid appointment for payment=${payment.paymentId}',
+    );
+    final appointmentResult = await _paymentService.createPaidAppointment(
+      appointmentPayload,
+    );
+    if (!mounted) return;
+
+    if (!appointmentResult.success) {
+      debugPrint(
+        '[Razorpay] Appointment creation failed after successful payment: '
+        'status=${appointmentResult.statusCode} '
+        'message="${appointmentResult.message}"',
+      );
+      final status = appointmentResult.statusCode;
+      if (status >= 400 && status < 500) await _clearPendingRazorpay();
+      _snack(
+        appointmentResult.message.isEmpty
+            ? 'Appointment creation failed after payment. Please contact support.'
+            : appointmentResult.message,
+      );
+      return;
+    }
+    await _clearPendingRazorpay();
+    if (!mounted) return;
+
+    Navigator.pushNamedAndRemoveUntil(
+      context,
+      '/appointment-confirmation',
+      (route) => route.isFirst,
+      arguments: {
+        ...args,
+        'amount': amount,
+        'paymentIntentId': payment.paymentId,
+        'appointment': appointmentResult.data ?? <String, dynamic>{},
+      },
+    );
   }
 
   // Shared by both the first-attempt flow and the "payment already
@@ -819,8 +1093,9 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
   Future<Map<String, dynamic>> _appointmentPayload(
     Map<String, dynamic> args,
     num amount,
-    String paymentIntentId,
-  ) async {
+    String paymentIntentId, {
+    RazorpayPayment? razorpay,
+  }) async {
     final date = _parseDate(args['date']) ?? DateTime.now();
     final time = args['time']?.toString() ?? '';
     final appointmentDateTime = _combineDateAndTime(date, time);
@@ -843,7 +1118,12 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       if (timeZone.isNotEmpty) 'patientTimezone': timeZone,
       'problem': args['problem']?.toString() ?? '',
       'medicalReports': _medicalReports(args['medicalReports']),
-      'paymentIntentId': paymentIntentId,
+      // Stripe sends the PaymentIntent id; Razorpay the three values Checkout
+      // returned (the web's paymentFields()).
+      if (razorpay != null)
+        ...razorpay.toBookingFields()
+      else
+        'paymentIntentId': paymentIntentId,
       if (serviceId.isNotEmpty) 'serviceId': serviceId,
     };
   }
