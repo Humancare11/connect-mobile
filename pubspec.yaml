@@ -79,6 +79,7 @@ flutter:
   assets:
     - .env
     - assets/
+    - assets/pdf/
 
   # Bundled rather than pulled at runtime through google_fonts: a downloaded
   # font renders as the platform fallback (Roboto) until it arrives, so weights

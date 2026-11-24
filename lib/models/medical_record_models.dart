@@ -49,6 +49,7 @@ class DoctorEnrollment {
     this.clinicAddress = '',
     this.medicalRegistrationNumber = '',
     this.medicalCouncilName = '',
+    this.country = '',
   });
 
   factory DoctorEnrollment.fromJson(dynamic value) {
@@ -62,6 +63,7 @@ class DoctorEnrollment {
       medicalRegistrationNumber: (json['medicalRegistrationNumber'] ?? '')
           .toString(),
       medicalCouncilName: (json['medicalCouncilName'] ?? '').toString(),
+      country: (json['country'] ?? '').toString(),
     );
   }
 
@@ -71,6 +73,9 @@ class DoctorEnrollment {
   final String clinicAddress;
   final String medicalRegistrationNumber;
   final String medicalCouncilName;
+
+  /// ISO code (or name) of the doctor's country, as the web prescription shows.
+  final String country;
 }
 
 class PrescriptionMedicine {
@@ -107,6 +112,7 @@ class PrescriptionRecord {
     required this.diagnosis,
     this.doctor = const DoctorSummary(),
     this.appointment = const AppointmentSummary(),
+    this.enrollment = const DoctorEnrollment(),
     this.medicines = const <PrescriptionMedicine>[],
     this.instructions = '',
     this.followUpDate = '',
@@ -121,6 +127,7 @@ class PrescriptionRecord {
       diagnosis: (json['diagnosis'] ?? '').toString(),
       doctor: DoctorSummary.fromJson(json['doctorId']),
       appointment: AppointmentSummary.fromJson(json['appointmentId']),
+      enrollment: DoctorEnrollment.fromJson(json['doctorEnrollment']),
       medicines: (json['medicines'] as List<dynamic>? ?? const [])
           .map(PrescriptionMedicine.fromJson)
           .toList(),
@@ -136,6 +143,7 @@ class PrescriptionRecord {
   final String diagnosis;
   final DoctorSummary doctor;
   final AppointmentSummary appointment;
+  final DoctorEnrollment enrollment;
   final List<PrescriptionMedicine> medicines;
   final String instructions;
   final String followUpDate;
