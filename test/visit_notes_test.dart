@@ -16,6 +16,7 @@ import 'package:humancare_connect/services/api_client.dart';
 import 'package:humancare_connect/services/token_storage_service.dart';
 import 'package:humancare_connect/services/visit_notes_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/fake_document_saver.dart';
 
 /// A real, valid 1x1 PNG.
 final Uint8List _png = base64Decode(
@@ -99,7 +100,7 @@ Future<void> _pumpList(WidgetTester tester, _FakeService service) async {
     MaterialApp(
       home: MyVisitNotesScreen(
         service: service,
-        sharePdf: (bytes, filename) async {},
+        documentSaver: FakeDocumentSaver(),
       ),
     ),
   );
@@ -375,17 +376,13 @@ void main() {
       expect(service.mineCalls, 2);
     });
 
-    testWidgets('Download PDF hands a PDF named after the report to the share sheet', (tester) async {
-      Uint8List? shared;
-      String? name;
+    testWidgets('Download PDF saves a PDF named after the report and offers Open', (tester) async {
+      final saver = FakeDocumentSaver();
       await tester.pumpWidget(
         MaterialApp(
           home: MyVisitNotesScreen(
             service: _FakeService(mine: _snapshot(reports: [_report()]), signature: _png),
-            sharePdf: (bytes, filename) async {
-              shared = bytes;
-              name = filename;
-            },
+            documentSaver: saver,
           ),
         ),
       );
@@ -397,8 +394,30 @@ void main() {
       });
       await tester.pumpAndSettle();
 
-      expect(name, 'visit-note_HCR-2026-0001.pdf');
-      expect(String.fromCharCodes(shared!.take(5)), '%PDF-');
+      expect(saver.saved.single.$2, 'visit-note_HCR-2026-0001.pdf');
+      expect(String.fromCharCodes(saver.saved.single.$1.take(5)), '%PDF-');
+      expect(find.text('Saved to Downloads'), findsOneWidget);
+      expect(find.text('Open'), findsOneWidget);
+    });
+
+    testWidgets('Download PDF shows the download message when saving fails', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: MyVisitNotesScreen(
+            service: _FakeService(mine: _snapshot(reports: [_report()]), signature: _png),
+            documentSaver: FakeDocumentSaver(failSave: true),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Download PDF'));
+        await Future<void>.delayed(const Duration(seconds: 2));
+      });
+      await tester.pumpAndSettle();
+
+      expect(find.text('Could not download the PDF. Please try again.'), findsOneWidget);
     });
   });
 
@@ -409,7 +428,7 @@ void main() {
           home: VisitNoteDetailScreen(
             reportId: 'r1',
             service: service,
-            sharePdf: (bytes, filename) async {},
+            documentSaver: FakeDocumentSaver(),
           ),
         ),
       );

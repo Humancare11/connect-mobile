@@ -10,9 +10,11 @@ import 'package:humancare_connect/models/api_result.dart';
 import 'package:humancare_connect/models/medical_record_models.dart';
 import 'package:humancare_connect/screens/my_records_screen.dart';
 import 'package:humancare_connect/services/api_client.dart';
+import 'package:humancare_connect/services/document_saver.dart';
 import 'package:humancare_connect/services/medical_records_service.dart';
 import 'package:humancare_connect/services/token_storage_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/fake_document_saver.dart';
 
 Map<String, dynamic> _rx() => {
   '_id': 'rx1',
@@ -221,8 +223,7 @@ void main() {
       String error = '',
       String initialTab = 'prescriptions',
       ApiResult<MedicalReportDownloadLink>? link,
-      List<Uri>? launched,
-      bool launchOk = true,
+      FakeDocumentSaver? saver,
     }) async {
       // Tall enough that the whole page (3 summary cards, tabs, cards) is on screen.
       tester.view.physicalSize = const Size(800, 2000);
@@ -235,10 +236,7 @@ void main() {
             key: UniqueKey(),
             initialTab: initialTab,
             recordsService: fake,
-            openUrl: (uri) async {
-              launched?.add(uri);
-              return launchOk;
-            },
+            documentSaver: saver ?? FakeDocumentSaver(),
             enableRealtime: false,
           ),
         ),
@@ -316,20 +314,51 @@ void main() {
       expect(find.text('Humancare · 05 Nov 2026 · MR-2026-0001'), findsOneWidget);
     });
 
-    testWidgets('PDF asks for the link and opens it outside the app', (tester) async {
-      final launched = <Uri>[];
+    testWidgets('PDF asks for the link, downloads it in the app and saves it to Downloads', (tester) async {
+      final saver = FakeDocumentSaver();
       final fake = await pumpPage(
         tester,
         reports: [_report()],
         initialTab: 'reports',
-        launched: launched,
+        saver: saver,
       );
 
       await tester.tap(find.text('PDF'));
       await tester.pumpAndSettle();
 
       expect(fake.opened, ['mr1']);
-      expect(launched.single.toString(), 'https://files.test/r.pdf');
+      expect(saver.fetched.single.toString(), 'https://files.test/r.pdf');
+      expect(saver.saved.single.$2, startsWith('report_'));
+      expect(saver.saved.single.$2, endsWith('.pdf'));
+      expect(find.text('Saved to Downloads'), findsOneWidget);
+      expect(saver.opened, isEmpty, reason: 'only the Open action opens it');
+
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.tap(find.text('Open'));
+      await tester.pump();
+      expect(saver.opened.single, endsWith(saver.saved.single.$2));
+    });
+
+    testWidgets('on iOS the file is saved to Files and the preview opens at once', (tester) async {
+      final saver = FakeDocumentSaver(where: SavedWhere.files);
+      await pumpPage(tester, reports: [_report()], initialTab: 'reports', saver: saver);
+
+      await tester.tap(find.text('PDF'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Saved to Files'), findsOneWidget);
+      expect(saver.opened, hasLength(1));
+    });
+
+    testWidgets('when the phone refuses a public save the PDF just opens in the viewer', (tester) async {
+      final saver = FakeDocumentSaver(where: SavedWhere.viewOnly);
+      await pumpPage(tester, reports: [_report()], initialTab: 'reports', saver: saver);
+
+      await tester.tap(find.text('PDF'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Saved to Downloads'), findsNothing);
+      expect(saver.opened, hasLength(1));
     });
 
     testWidgets('a refused link shows the server message', (tester) async {
@@ -346,13 +375,29 @@ void main() {
       expect(find.text('This report has been voided.'), findsOneWidget);
     });
 
-    testWidgets('a link that cannot be opened shows a message', (tester) async {
-      await pumpPage(tester, reports: [_report()], initialTab: 'reports', launchOk: false);
+    testWidgets('a download that fails shows the download message and saves nothing', (tester) async {
+      final saver = FakeDocumentSaver(failFetch: true);
+      await pumpPage(tester, reports: [_report()], initialTab: 'reports', saver: saver);
 
       await tester.tap(find.text('PDF'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Could not open the report. Please try again.'), findsOneWidget);
+      expect(find.text('Could not download the PDF. Please try again.'), findsOneWidget);
+      expect(saver.saved, isEmpty);
+    });
+
+    testWidgets('a save that fails shows the download message', (tester) async {
+      await pumpPage(
+        tester,
+        reports: [_report()],
+        initialTab: 'reports',
+        saver: FakeDocumentSaver(failSave: true),
+      );
+
+      await tester.tap(find.text('PDF'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Could not download the PDF. Please try again.'), findsOneWidget);
     });
 
     testWidgets('when only reports fail, the banner shows and the other tabs still work', (tester) async {

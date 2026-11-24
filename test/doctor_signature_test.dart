@@ -16,6 +16,7 @@ import 'package:humancare_connect/services/session_expired_service.dart';
 import 'package:humancare_connect/services/session_logout.dart';
 import 'package:humancare_connect/services/token_storage_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'support/fake_document_saver.dart';
 
 /// A real, valid 1x1 PNG.
 final Uint8List _png = base64Decode(
@@ -285,7 +286,7 @@ void main() {
   });
 
   group('MyRecordsPage', () {
-    late List<(Uint8List, String)> shared;
+    late FakeDocumentSaver saver;
 
     Future<void> pumpPage(
       WidgetTester tester, {
@@ -297,7 +298,7 @@ void main() {
       tester.view.physicalSize = const Size(900, 6000);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
-      shared = [];
+      saver = FakeDocumentSaver();
       await tester.pumpWidget(
         MaterialApp(
           home: MyRecordsPage(
@@ -305,7 +306,7 @@ void main() {
             initialTab: initialTab,
             recordsService: _FakeRecords(prescriptions, certificates),
             signatureService: signatures,
-            sharePdf: (bytes, name) async => shared.add((bytes, name)),
+            documentSaver: saver,
             enableRealtime: false,
           ),
         ),
@@ -405,7 +406,7 @@ void main() {
         await Future<void>.delayed(const Duration(seconds: 2));
       });
       await tester.pump();
-      final withSignature = imageCount(shared.single.$1);
+      final withSignature = imageCount(saver.saved.single.$1);
 
       final unsigned = _FakeSignatures(bytes: _png);
       await pumpPage(tester, prescriptions: [_rx()], signatures: unsigned);
@@ -414,7 +415,7 @@ void main() {
         await Future<void>.delayed(const Duration(seconds: 2));
       });
       await tester.pump();
-      final without = imageCount(shared.single.$1);
+      final without = imageCount(saver.saved.single.$1);
 
       // an embedded PNG is an image object plus its alpha mask
       expect(withSignature, without + 2);
@@ -433,7 +434,7 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(shared, isEmpty, reason: 'nothing was shared');
+      expect(saver.saved, isEmpty, reason: 'nothing was saved');
       expect(signatures.calls.length, 2, reason: 'retried once');
       expect(find.textContaining("Couldn't load the doctor's signature"),
           findsOneWidget);

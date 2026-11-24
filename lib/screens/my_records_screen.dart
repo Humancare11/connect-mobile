@@ -5,11 +5,10 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_design_system.dart';
 import '../models/medical_record_models.dart';
+import '../services/document_saver.dart';
 import '../services/document_signature_service.dart';
 import '../services/medical_records_service.dart';
 import '../services/socket_service.dart';
@@ -36,18 +35,16 @@ class MyRecordsPage extends StatefulWidget {
     this.initialTab = 'prescriptions',
     this.recordsService,
     this.signatureService,
-    this.sharePdf,
-    this.openUrl,
+    this.documentSaver,
     this.enableRealtime = true,
   });
 
   final String initialTab;
 
-  // Injectable for tests; the defaults are the real services / sharing sheet.
+  // Injectable for tests; the defaults are the real services / file saver.
   final MedicalRecordsService? recordsService;
   final DocumentSignatureService? signatureService;
-  final Future<void> Function(Uint8List bytes, String filename)? sharePdf;
-  final Future<bool> Function(Uri uri)? openUrl;
+  final DocumentSaver? documentSaver;
   final bool enableRealtime;
 
   @override
@@ -58,6 +55,8 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     with WidgetsBindingObserver {
   late final MedicalRecordsService _recordsService =
       widget.recordsService ?? MedicalRecordsService();
+  late final DocumentSaver _saver =
+      widget.documentSaver ?? const DocumentSaver();
   late final DocumentSignatureService _signatures =
       widget.signatureService ?? DocumentSignatureService();
   final Set<String> _loadingSignatures = {};
@@ -785,11 +784,9 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     );
   }
 
-  static Future<bool> _defaultOpenUrl(Uri uri) =>
-      launchUrl(uri, mode: LaunchMode.externalApplication);
-
-  /// Asks the server for a short-lived link to the report PDF and opens it
-  /// outside the app (like the invoice in Payment History).
+  /// Asks the server for a short-lived link to the report PDF, downloads it
+  /// inside the app and saves it to the phone (like the invoice in Payment
+  /// History).
   Future<void> _openReport(MedicalReportRecord report) async {
     if (_downloadingId.isNotEmpty) return;
     setState(() => _downloadingId = report.id);
@@ -809,17 +806,27 @@ class _MyRecordsPageState extends State<MyRecordsPage>
       }
 
       final uri = Uri.tryParse(result.data!.url);
-      var launched = false;
+      SavedDocument? document;
       if (uri != null) {
         try {
-          launched = await (widget.openUrl ?? _defaultOpenUrl)(uri);
+          final bytes = await _saver.fetch(uri);
+          final number = result.data!.reportNumber.isNotEmpty
+              ? result.data!.reportNumber
+              : report.reportNumber;
+          document = await _saver.save(
+            bytes,
+            'report_${number.isNotEmpty ? number : report.id}.pdf',
+          );
         } catch (_) {
-          launched = false;
+          document = null;
         }
       }
-      if (!launched) {
-        _showSnack('Could not open the report. Please try again.');
+      if (document == null) {
+        _showSnack(DocumentSaver.downloadFailedText);
+        return;
       }
+      if (!mounted) return;
+      await announceSaved(ScaffoldMessenger.of(context), _saver, document);
     } finally {
       if (mounted) setState(() => _downloadingId = '');
     }
@@ -990,9 +997,6 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     );
   }
 
-  static Future<void> _defaultSharePdf(Uint8List bytes, String filename) =>
-      Printing.sharePdf(bytes: bytes, filename: filename);
-
   Future<void> _runPdfExport({
     required String id,
     required String filename,
@@ -1001,7 +1005,15 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     setState(() => _downloadingId = id);
     try {
       final bytes = await builder();
-      await (widget.sharePdf ?? _defaultSharePdf)(bytes, filename);
+      SavedDocument document;
+      try {
+        document = await _saver.save(bytes, filename);
+      } catch (_) {
+        _showSnack(DocumentSaver.downloadFailedText);
+        return;
+      }
+      if (!mounted) return;
+      await announceSaved(ScaffoldMessenger.of(context), _saver, document);
     } on _SignatureUnavailable {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

@@ -2,10 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../config/app_design_system.dart';
 import '../models/payment_model.dart';
+import '../services/document_saver.dart';
 import '../services/payment_history_service.dart';
 
 /// Patient billing dashboard — payment history with downloadable invoices.
@@ -20,10 +20,12 @@ class PaymentHistoryScreen extends StatefulWidget {
   const PaymentHistoryScreen({
     super.key,
     this.service,
+    this.documentSaver,
     this.expectRecentPayment = false,
   });
 
   final PaymentHistoryService? service;
+  final DocumentSaver? documentSaver;
 
   /// Set when opened straight after a booking. The backend writes the
   /// `Payment` row *after* it returns the 201, so a first fetch can briefly
@@ -40,6 +42,8 @@ class _PaymentHistoryScreenState extends State<PaymentHistoryScreen>
     with WidgetsBindingObserver {
   late final PaymentHistoryService _service =
       widget.service ?? PaymentHistoryService();
+  late final DocumentSaver _saver =
+      widget.documentSaver ?? const DocumentSaver();
 
   static const Color _bgCanvas = Color(0xFFF3F6F5);
   static const Color _errorBg = Color(0xFFFEF2F2);
@@ -232,21 +236,24 @@ class _PaymentHistoryScreenState extends State<PaymentHistoryScreen>
       }
 
       final uri = Uri.tryParse(result.data!.url);
-      var launched = false;
+      final number = result.data!.invoiceNumber;
+      SavedDocument? document;
       if (uri != null) {
         try {
-          launched = await launchUrl(
-            uri,
-            mode: LaunchMode.externalApplication,
-          );
+          final bytes = await _saver.fetch(uri);
+          document = await _saver.save(bytes, 'invoice_$number.pdf');
         } catch (_) {
-          launched = false;
+          document = null;
         }
       }
-      if (!launched && mounted) {
-        _snack('Couldn\'t open invoice ${result.data!.invoiceNumber}. '
-            'Please try again.');
+      if (document == null) {
+        if (mounted) {
+          _snack("Couldn't download invoice $number. Please try again.");
+        }
+        return;
       }
+      if (!mounted) return;
+      await announceSaved(ScaffoldMessenger.of(context), _saver, document);
     } finally {
       if (mounted) setState(() => _downloadingId = '');
     }

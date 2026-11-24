@@ -1,10 +1,9 @@
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:printing/printing.dart';
 
 import '../config/app_design_system.dart';
 import '../models/visit_note_models.dart';
+import '../services/document_saver.dart';
 import '../services/visit_notes_service.dart';
 import '../widgets/visit_note_widgets.dart';
 import 'visit_note_detail_screen.dart';
@@ -15,11 +14,11 @@ import 'visit_note_pdf.dart';
 /// "Report pending". Drafts are never sent to the patient. Same behaviour as
 /// the web `/user/my-visit-notes` page.
 class MyVisitNotesScreen extends StatefulWidget {
-  const MyVisitNotesScreen({super.key, this.service, this.sharePdf});
+  const MyVisitNotesScreen({super.key, this.service, this.documentSaver});
 
-  // Injectable for tests; the defaults are the real service / sharing sheet.
+  // Injectable for tests; the defaults are the real service / file saver.
   final VisitNotesService? service;
-  final Future<void> Function(Uint8List bytes, String filename)? sharePdf;
+  final DocumentSaver? documentSaver;
 
   @override
   State<MyVisitNotesScreen> createState() => _MyVisitNotesScreenState();
@@ -62,8 +61,8 @@ class _MyVisitNotesScreenState extends State<MyVisitNotesScreen> {
     });
   }
 
-  static Future<void> _defaultSharePdf(Uint8List bytes, String filename) =>
-      Printing.sharePdf(bytes: bytes, filename: filename);
+  late final DocumentSaver _saver =
+      widget.documentSaver ?? const DocumentSaver();
 
   Future<void> _download(VisitNoteReport report) async {
     if (_downloadingId.isNotEmpty) return;
@@ -78,10 +77,21 @@ class _MyVisitNotesScreenState extends State<MyVisitNotesScreen> {
         signature: signature,
         countryName: country,
       );
-      await (widget.sharePdf ?? _defaultSharePdf)(
-        bytes,
-        'visit-note_${report.reportNumber}.pdf',
-      );
+      SavedDocument document;
+      try {
+        document = await _saver.save(
+          bytes,
+          'visit-note_${report.reportNumber}.pdf',
+        );
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(DocumentSaver.downloadFailedText)),
+        );
+        return;
+      }
+      if (!mounted) return;
+      await announceSaved(ScaffoldMessenger.of(context), _saver, document);
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -101,7 +111,7 @@ class _MyVisitNotesScreenState extends State<MyVisitNotesScreen> {
         builder: (_) => VisitNoteDetailScreen(
           reportId: report.id,
           service: _service,
-          sharePdf: widget.sharePdf,
+          documentSaver: widget.documentSaver,
         ),
       ),
     );

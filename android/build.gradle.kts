@@ -42,6 +42,19 @@ subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
+// media_store_plus 0.1.3 is published compiled against Android 33, but the AndroidX
+// libraries it pulls in need 34+, so its release build fails the AAR metadata check.
+// Compile just that plugin against the same SDK as the app. This changes no
+// permission and no runtime behaviour. Registered before evaluationDependsOn below.
+subprojects {
+    if (project.name == "media_store_plus") {
+        afterEvaluate {
+            extensions.configure<com.android.build.gradle.LibraryExtension> {
+                compileSdk = 36
+            }
+        }
+    }
+}
 subprojects {
     project.evaluationDependsOn(":app")
 }
