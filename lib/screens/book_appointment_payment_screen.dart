@@ -7,6 +7,7 @@ import 'package:flutter_stripe/flutter_stripe.dart';
 
 import '../config/api_config.dart';
 import '../services/appointment_tree_service.dart';
+import '../services/auth_service.dart';
 import '../services/currency_service.dart';
 import '../services/device_time_zone.dart';
 import '../services/payment_service.dart';
@@ -14,14 +15,19 @@ import '../services/pricing_service.dart';
 import '../services/razorpay_checkout.dart';
 import '../services/token_storage_service.dart';
 import '../utils/money.dart';
+import '../utils/patient_profile.dart';
 import '../utils/price_resolver.dart';
 import '../utils/time_slots.dart';
+import 'complete_details_screen.dart';
 
 class AppointmentPaymentPage extends StatefulWidget {
-  const AppointmentPaymentPage({super.key, this.clock});
+  const AppointmentPaymentPage({super.key, this.clock, this.authService});
 
   /// The phone's local time; replaced in tests.
   final DateTime Function()? clock;
+
+  /// Replaced in tests.
+  final AuthService? authService;
 
   @override
   State<AppointmentPaymentPage> createState() => _AppointmentPaymentPageState();
@@ -565,6 +571,14 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
           '[PaymentSheet] create-intent failed: ${intentResult.message}',
         );
 
+        if (isProfileIncompleteResponse(
+          intentResult.statusCode,
+          intentResult.raw,
+        )) {
+          await _completeDetails();
+          return;
+        }
+
         // The backend resolves priceRef against its own current
         // HealthcareCategory/ServicePrice records — if the category or
         // service was renamed/removed after AppointmentTreeService cached
@@ -732,6 +746,23 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     return true;
   }
 
+  /// The server refused to start the payment because the profile has no date
+  /// of birth or gender (nothing was created). The step opens on top of this
+  /// screen; after saving, the patient taps Pay again: no automatic charge.
+  Future<void> _completeDetails() async {
+    final authService = widget.authService ?? AuthService();
+    final details = await authService.fetchPatientDetails();
+    if (!mounted) return;
+    final saved = await CompleteDetailsScreen.open(
+      context,
+      dob: details?.dob ?? '',
+      gender: details?.gender ?? '',
+      authService: authService,
+    );
+    if (!mounted || !saved) return;
+    _snack('Details saved. Tap Pay to continue.');
+  }
+
   /// The server created a charge that is not what the screen shows. The screen
   /// is brought up to date and the customer is told why (nothing was paid).
   Future<void> _explainChargeMismatch(ChargeCheck check) async {
@@ -805,6 +836,13 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       if (!mounted) return;
       final order = orderResult.data;
       if (!orderResult.success || order == null) {
+        if (isProfileIncompleteResponse(
+          orderResult.statusCode,
+          orderResult.raw,
+        )) {
+          await _completeDetails();
+          return;
+        }
         if (_looksLikeStalePriceRefError(orderResult.message)) {
           AppointmentTreeService.invalidateCache();
           _snack(

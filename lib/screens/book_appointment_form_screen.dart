@@ -4,18 +4,24 @@ import 'package:flutter/gestures.dart' show TapGestureRecognizer;
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../services/auth_service.dart';
 import '../services/currency_service.dart';
 import '../services/pricing_service.dart';
 import '../utils/direct_upload.dart';
 import '../utils/money.dart';
+import '../utils/patient_profile.dart';
 import '../utils/price_resolver.dart';
 import '../utils/time_slots.dart';
+import 'complete_details_screen.dart';
 
 class AppointmentFormPage extends StatefulWidget {
-  const AppointmentFormPage({super.key, this.clock});
+  const AppointmentFormPage({super.key, this.clock, this.authService});
 
   /// The phone's local time; replaced in tests.
   final DateTime Function()? clock;
+
+  /// Replaced in tests.
+  final AuthService? authService;
 
   @override
   State<AppointmentFormPage> createState() => _AppointmentFormPageState();
@@ -71,6 +77,8 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
   final CurrencyService _currency = CurrencyService.instance;
   final PricingService _pricing = PricingService.instance;
   StreamSubscription<CurrencyChange>? _currencyChanges;
+
+  late final AuthService _authService = widget.authService ?? AuthService();
 
   // Slots pass while the form is open: look again every few seconds.
   Timer? _slotTimer;
@@ -822,6 +830,13 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
     });
 
     try {
+      // Date of birth and gender come first, before anything is uploaded. The
+      // step sits on top of this screen, so everything chosen here stays.
+      if (!await _ensurePatientDetails()) return;
+      if (!mounted) return;
+      // The step can take a while too.
+      if (_stopForPassedSlot()) return;
+
       final medicalReports = <Map<String, dynamic>>[];
       for (final candidate in _files) {
         final uploaded = await uploadFileDirectToS3(candidate);
@@ -860,6 +875,24 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
     } finally {
       if (mounted) setState(() => _uploading = false);
     }
+  }
+
+  /// True when booking can go on: the profile has a date of birth and gender,
+  /// they were just saved, or the server could not be asked (never block a
+  /// booking on that). False when the patient backed out of the step.
+  Future<bool> _ensurePatientDetails() async {
+    final details = await _authService.fetchPatientDetails();
+    if (!mounted) return false;
+    if (details == null ||
+        isPatientProfileComplete(dob: details.dob, gender: details.gender)) {
+      return true;
+    }
+    return CompleteDetailsScreen.open(
+      context,
+      dob: details.dob,
+      gender: details.gender,
+      authService: _authService,
+    );
   }
 
   void _showConsentDialog(Map<String, dynamic> selection) {
