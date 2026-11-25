@@ -247,10 +247,29 @@ class _EditProfilePageState extends State<EditProfilePage> {
           if (age != null) _metaRow("🎂", "Age", "$age years old"),
           if ((originalData['mobile'] ?? '').isNotEmpty)
             _metaRow("📞", "Mobile", originalData['mobile']!),
-          if ((originalData['country'] ?? '').isNotEmpty)
-            _metaRow("🌍", "Country", originalData['country']!),
+          _locationMetaRows(),
         ],
       ),
+    );
+  }
+
+  /// Country, State and City follow the form as it is edited, like the web
+  /// profile card. An empty value has no row.
+  Widget _locationMetaRows() {
+    return ListenableBuilder(
+      listenable: _geo,
+      builder: (context, _) {
+        final country = _geo.countryName.trim();
+        final state = _geo.state.trim();
+        final city = _geo.city;
+        return Column(
+          children: [
+            if (country.isNotEmpty) _metaRow("🌍", "Country", country),
+            if (state.isNotEmpty) _metaRow("📍", "State / Province", state),
+            if (city.isNotEmpty) _metaRow("🏙️", "City", city),
+          ],
+        );
+      },
     );
   }
 

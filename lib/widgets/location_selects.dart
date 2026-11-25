@@ -181,7 +181,10 @@ class CountryField extends StatelessWidget {
         }
 
         return GeoPickerField(
-          label: c.requireLocation ? 'Country' : 'Country (optional)',
+          // The web profile page has no "(optional)" on these three labels.
+          label: c.requireLocation || style.isProfile
+              ? 'Country'
+              : 'Country (optional)',
           value: c.countryName,
           placeholder: loading
               ? 'Loading countries…'
@@ -258,7 +261,7 @@ class StateField extends StatelessWidget {
         }
 
         return GeoPickerField(
-          label: c.requireLocation
+          label: c.requireLocation || style.isProfile
               ? 'State / Province'
               : 'State / Province (optional)',
           value: c.state,
@@ -299,7 +302,9 @@ class CityField extends StatelessWidget {
       listenable: controller,
       builder: (context, _) {
         final c = controller;
-        final label = c.requireLocation ? 'City' : 'City (optional)';
+        final label = c.requireLocation || style.isProfile
+            ? 'City'
+            : 'City (optional)';
         return style.withOutsideLabel(
           label,
           TextFormField(
