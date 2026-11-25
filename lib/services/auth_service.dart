@@ -786,6 +786,71 @@ class AuthService {
     );
   }
 
+  /// The date of birth and gender on the server right now (`GET /auth/me`),
+  /// asked before a payment. Null when the server could not say (offline, an
+  /// error, too slow): the caller then carries on, so booking is never blocked
+  /// by this check. Never throws.
+  Future<({String dob, String gender})?> fetchPatientDetails({
+    Duration timeout = const Duration(seconds: 10),
+  }) async {
+    try {
+      final result = await _apiClient
+          .get('/auth/me', null, true)
+          .timeout(timeout);
+      final user = asMap(result.data?['user']);
+      if (!result.success || user.isEmpty) return null;
+      return (
+        dob: (user['dob'] ?? '').toString().trim(),
+        gender: (user['gender'] ?? '').toString().trim(),
+      );
+    } catch (error) {
+      debugPrint('fetchPatientDetails failed: $error');
+      return null;
+    }
+  }
+
+  /// `PUT /auth/patient-details`: the "Complete your details" step. The server
+  /// requires both values and writes them to the signed-in patient's profile.
+  Future<ApiResult<void>> savePatientDetails({
+    required String dob,
+    required String gender,
+  }) async {
+    final result = await _apiClient.put('/auth/patient-details', {
+      'dob': dob,
+      'gender': gender,
+    }, silent: true);
+
+    if (result.success) {
+      // Keep the phone's copy in step. The server has saved either way, so a
+      // storage problem here is not a failed save.
+      try {
+        final stored = await _tokenStorage.getUserProfile();
+        await _tokenStorage.saveUserProfile(
+          userId: stored['userId'] ?? '',
+          name: stored['name'] ?? '',
+          email: stored['email'] ?? '',
+          role: stored['role'] ?? '',
+          mobile: stored['mobile'] ?? '',
+          dob: dob,
+          gender: gender,
+          country: stored['country'] ?? '',
+          state: stored['state'] ?? '',
+          city: stored['city'] ?? '',
+          location: stored['location'] ?? '',
+        );
+      } catch (error) {
+        debugPrint('savePatientDetails: local copy not updated: $error');
+      }
+    }
+
+    return ApiResult<void>(
+      success: result.success,
+      message: result.message,
+      raw: result.raw,
+      statusCode: result.statusCode,
+    );
+  }
+
   Future<ApiResult<Map<String, String>>> updateProfile({
     required String userId,
     required String name,
