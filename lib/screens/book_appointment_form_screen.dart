@@ -9,9 +9,13 @@ import '../services/pricing_service.dart';
 import '../utils/direct_upload.dart';
 import '../utils/money.dart';
 import '../utils/price_resolver.dart';
+import '../utils/time_slots.dart';
 
 class AppointmentFormPage extends StatefulWidget {
-  const AppointmentFormPage({super.key});
+  const AppointmentFormPage({super.key, this.clock});
+
+  /// The phone's local time; replaced in tests.
+  final DateTime Function()? clock;
 
   @override
   State<AppointmentFormPage> createState() => _AppointmentFormPageState();
@@ -25,24 +29,6 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
   final List<UploadCandidate> _files = [];
   bool _uploading = false;
   String? _uploadError;
-
-  // Generated the same way as the web version: all 48 half-hour slots
-  // across the full 24-hour day (12:00 AM -> 11:30 PM), not just business
-  // hours.
-  late final List<String> timeSlots = _generateTimeSlots();
-
-  List<String> _generateTimeSlots() {
-    final List<String> slots = [];
-    for (int hour = 0; hour < 24; hour++) {
-      for (int minute = 0; minute < 60; minute += 30) {
-        final period = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
-        final ampm = hour < 12 ? "AM" : "PM";
-        final minuteStr = minute.toString().padLeft(2, "0");
-        slots.add("$period:$minuteStr $ampm");
-      }
-    }
-    return slots;
-  }
 
   // Patient Informed Consent — mirrors the web appointment flow's consent
   // modal (see AppointmentBookingForm.jsx): a single "I agree to the …"
@@ -86,6 +72,9 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
   final PricingService _pricing = PricingService.instance;
   StreamSubscription<CurrencyChange>? _currencyChanges;
 
+  // Slots pass while the form is open: look again every few seconds.
+  Timer? _slotTimer;
+
   @override
   void initState() {
     super.initState();
@@ -95,6 +84,10 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
     // A new booking screen asks the server again (at most every 20 s).
     _currency.ensureLoaded().then((_) => _currency.recheck());
     _pricing.refresh();
+    _slotTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!mounted || selectedDate == null) return;
+      if (!_clearPassedSlot()) setState(() {});
+    });
   }
 
   void _onPriceInputsChanged() {
@@ -127,6 +120,7 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
     _currency.removeListener(_onPriceInputsChanged);
     _pricing.removeListener(_onPriceInputsChanged);
     _currencyChanges?.cancel();
+    _slotTimer?.cancel();
     notesCtrl.dispose();
     for (final recognizer in _policyLinkRecognizers) {
       recognizer.dispose();
@@ -344,7 +338,8 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
   }
 
   Widget _timeSection() {
-    if (selectedDate == null) {
+    final date = selectedDate;
+    if (date == null) {
       return _section(
         number: "2",
         title: "Preferred Time Slot",
@@ -355,30 +350,202 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
       );
     }
 
+    final now = _now();
+    final passed = [
+      for (final slot in kTimeSlots) isSlotPassed(date, slot, now),
+    ];
+    final available = passed.where((p) => !p).length;
+    // The web's breakpoints on a phone: 3 columns, 2 on narrow screens.
+    final columns = MediaQuery.sizeOf(context).width <= 380 ? 2 : 3;
+
     return _section(
       number: "2",
       title: "Preferred Time Slot *",
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: timeSlots.map((slot) {
-          final selected = selectedTime == slot;
-
-          return ChoiceChip(
-            label: Text(slot),
-            selected: selected,
-            onSelected: (_) {
-              setState(() => selectedTime = slot);
-            },
-            selectedColor: const Color(0xff1a3a5c),
-            labelStyle: TextStyle(
-              color: selected ? Colors.white : Colors.black,
-              fontWeight: FontWeight.w700,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "$available of ${kTimeSlots.length} slots available",
+            style: _slotText(size: 11, color: _slotMuted),
+          ),
+          const SizedBox(height: 10),
+          for (var start = 0; start < kTimeSlots.length; start += columns) ...[
+            if (start > 0) const SizedBox(height: 7),
+            // Cells in a row share a height, as in the web's CSS grid.
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = start; i < start + columns; i++) ...[
+                    if (i > start) const SizedBox(width: 7),
+                    Expanded(
+                      child: i < kTimeSlots.length
+                          ? _slotButton(kTimeSlots[i], passed: passed[i])
+                          : const SizedBox.shrink(),
+                    ),
+                  ],
+                ],
+              ),
             ),
-          );
-        }).toList(),
+          ],
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 16,
+            runSpacing: 6,
+            children: [
+              _legendItem("Available", Colors.white, _slotBorder),
+              _legendItem("Selected", _slotSelected, _slotSelected),
+              _legendItem("Unavailable", _slotPassedFill, _slotPassedBorder),
+            ],
+          ),
+        ],
       ),
     );
+  }
+
+  static const Color _slotSelected = Color(0xff1a3a5c);
+  static const Color _slotBorder = Color(0xffd1d5db);
+  static const Color _slotInk = Color(0xff374151);
+  static const Color _slotMuted = Color(0xff6b7280);
+  static const Color _slotPassedFill = Color(0xfff9fafb);
+  static const Color _slotPassedBorder = Color(0xffe5e7eb);
+  static const Color _slotPassedInk = Color(0xffd1d5db);
+
+  TextStyle _slotText({
+    required double size,
+    required Color color,
+    FontWeight weight = FontWeight.w500,
+  }) {
+    return TextStyle(
+      fontFamily: 'Inter',
+      fontSize: size,
+      fontWeight: weight,
+      color: color,
+      height: 1.3,
+    );
+  }
+
+  Widget _slotButton(String slot, {required bool passed}) {
+    final selected = !passed && selectedTime == slot;
+    final fill = passed
+        ? _slotPassedFill
+        : selected
+        ? _slotSelected
+        : Colors.white;
+    final border = passed
+        ? _slotPassedBorder
+        : selected
+        ? _slotSelected
+        : _slotBorder;
+    final ink = passed
+        ? _slotPassedInk
+        : selected
+        ? Colors.white
+        : _slotInk;
+    final radius = BorderRadius.circular(8);
+
+    return Semantics(
+      button: true,
+      enabled: !passed,
+      selected: selected,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: fill,
+          borderRadius: radius,
+          border: Border.all(color: border),
+          boxShadow: selected
+              ? const [
+                  BoxShadow(
+                    color: Color(0x401a3a5c),
+                    blurRadius: 8,
+                    offset: Offset(0, 2),
+                  ),
+                ]
+              : null,
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            key: ValueKey('slot $slot'),
+            borderRadius: radius,
+            onTap: passed ? null : () => _selectSlot(slot),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 9),
+              child: Column(
+                children: [
+                  Text(
+                    slot,
+                    textAlign: TextAlign.center,
+                    style: _slotText(size: 12, color: ink),
+                  ),
+                  if (passed) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      "Passed",
+                      style: _slotText(
+                        size: 10,
+                        weight: FontWeight.w600,
+                        color: ink.withValues(alpha: 0.8),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _legendItem(String label, Color fill, Color border) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: fill,
+            borderRadius: BorderRadius.circular(3),
+            border: Border.all(color: border),
+          ),
+        ),
+        const SizedBox(width: 5),
+        Text(label, style: _slotText(size: 11, color: _slotMuted)),
+      ],
+    );
+  }
+
+  DateTime _now() => (widget.clock ?? DateTime.now)();
+
+  void _selectSlot(String slot) {
+    // The grid may be a few seconds old.
+    if (isSlotPassed(selectedDate!, slot, _now())) {
+      setState(() {});
+      _snack(kSlotPassedMessage);
+      return;
+    }
+    setState(() => selectedTime = slot);
+  }
+
+  /// Drops a chosen slot whose time has come. True when it did.
+  bool _clearPassedSlot() {
+    final date = selectedDate;
+    final time = selectedTime;
+    if (date == null || time == null || !isSlotPassed(date, time, _now())) {
+      return false;
+    }
+    setState(() => selectedTime = null);
+    return true;
+  }
+
+  /// Whether to stop on the way to payment: the slot has passed, or was
+  /// cleared for that reason since the user pressed "Proceed to Payment".
+  bool _stopForPassedSlot() {
+    if (!_clearPassedSlot() && selectedTime != null) return false;
+    _snack(kSlotPassedMessage);
+    return true;
   }
 
   Widget _problemSection() {
@@ -606,6 +773,8 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
       return;
     }
 
+    if (_stopForPassedSlot()) return;
+
     if (notesCtrl.text.trim().isEmpty) {
       _snack("Please describe your problem.");
       return;
@@ -644,6 +813,9 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
   }
 
   Future<void> _uploadAndProceed(Map<String, dynamic> selection) async {
+    // The consent dialog may have been open for a while.
+    if (_stopForPassedSlot()) return;
+
     setState(() {
       _uploading = true;
       _uploadError = null;
@@ -662,6 +834,8 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
       }
 
       if (!mounted) return;
+      // And so may the upload have taken a while.
+      if (_stopForPassedSlot()) return;
 
       Navigator.pushNamed(
         context,
@@ -673,7 +847,10 @@ class _AppointmentFormPageState extends State<AppointmentFormPage> {
           "problem": notesCtrl.text.trim(),
           "medicalReports": medicalReports,
         },
-      );
+      ).then((_) {
+        // The payment screen sends the user back when the slot has passed.
+        if (mounted) _clearPassedSlot();
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() {

@@ -15,9 +15,13 @@ import '../services/razorpay_checkout.dart';
 import '../services/token_storage_service.dart';
 import '../utils/money.dart';
 import '../utils/price_resolver.dart';
+import '../utils/time_slots.dart';
 
 class AppointmentPaymentPage extends StatefulWidget {
-  const AppointmentPaymentPage({super.key});
+  const AppointmentPaymentPage({super.key, this.clock});
+
+  /// The phone's local time; replaced in tests.
+  final DateTime Function()? clock;
 
   @override
   State<AppointmentPaymentPage> createState() => _AppointmentPaymentPageState();
@@ -481,6 +485,10 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       return;
     }
 
+    // Nothing has been paid yet (a paid booking is finished above, whatever
+    // the time): never take money for a slot that has passed.
+    if (_stopIfSlotPassed(args)) return;
+
     if (_useLocalPaymentBypass) {
       await _createAppointmentWithLocalPayment(args);
       return;
@@ -541,6 +549,9 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
         );
         return;
       }
+
+      // Asked again: the checks above can take a while.
+      if (_stopIfSlotPassed(args)) return;
 
       final intentResult = await _paymentService.createStripeIntent(
         priceType: priceType,
@@ -709,6 +720,18 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
     }
   }
 
+  /// When the chosen slot has passed: says so and goes back to the booking
+  /// form, which clears it.
+  bool _stopIfSlotPassed(Map<String, dynamic> args) {
+    final date = _parseDate(args['date']);
+    final time = args['time']?.toString() ?? '';
+    final now = (widget.clock ?? DateTime.now)();
+    if (date == null || !isSlotPassed(date, time, now)) return false;
+    _snack(kSlotPassedMessage);
+    Navigator.of(context).maybePop();
+    return true;
+  }
+
   /// The server created a charge that is not what the screen shows. The screen
   /// is brought up to date and the customer is told why (nothing was paid).
   Future<void> _explainChargeMismatch(ChargeCheck check) async {
@@ -771,6 +794,9 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
         );
         return;
       }
+
+      // Asked again: the checks above can take a while.
+      if (_stopIfSlotPassed(args)) return;
 
       final orderResult = await _paymentService.createRazorpayOrder(
         priceType: priceType,

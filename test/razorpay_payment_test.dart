@@ -41,7 +41,7 @@ Map<String, dynamic> _args({String label = 'General & Everyday Care'}) => {
   'pricingSlug': 'general',
   'condName': 'Fever',
   'cost': 59,
-  'date': '2026-12-01 00:00:00.000',
+  'date': '2099-12-01 00:00:00.000',
   'time': '10:00 AM',
   'problem': 'Fever',
   'medicalReports': <Map<String, dynamic>>[],
