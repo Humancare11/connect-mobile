@@ -338,7 +338,7 @@ void main() {
       await openCard(tester, 'Migraine');
 
       expect(signatures.calls, ['prescription:rx1']);
-      expect(find.text('Signature'), findsOneWidget);
+      expect(find.text('SIGNATURE'), findsOneWidget);
       expect(find.textContaining('Digitally signed'), findsOneWidget);
       expect(signatureImage, findsOneWidget);
     });
@@ -351,7 +351,7 @@ void main() {
       await openCard(tester, 'Migraine');
 
       expect(signatures.calls, isEmpty);
-      expect(find.text('Signature'), findsNothing);
+      expect(find.text('SIGNATURE'), findsNothing);
       expect(find.textContaining('Digitally signed'), findsNothing);
     });
 
@@ -362,7 +362,7 @@ void main() {
 
       await openCard(tester, 'Migraine');
 
-      expect(find.text('Signature'), findsOneWidget);
+      expect(find.text('SIGNATURE'), findsOneWidget);
       expect(find.textContaining('Digitally signed'), findsOneWidget);
       expect(signatureImage, findsNothing);
     });

@@ -13,15 +13,13 @@ import '../services/medical_records_service.dart';
 import '../services/socket_service.dart';
 import '../services/token_storage_service.dart';
 import '../services/visit_notes_service.dart';
+import '../widgets/slips/certificate_slip_view.dart';
+import '../widgets/slips/prescription_slip_view.dart';
 
 enum _RecordsTab { prescriptions, certificates, reports }
 
-// ── Shared brand-colour helpers ───────────────────────────────────────────────
-// The "slip" facsimiles and the exported PDFs used to hardcode a blue medical
-// palette. Both now derive from AppColors.primary so the whole app — screen,
-// document preview, and downloaded PDF — shares one accent colour.
-Color get _brand => AppColors.primary;
-Color get _brandDeep => AppColors.primaryDeep;
+// ── Brand-colour helper for the page's cards and tabs ─────────────────────────
+// (The opened prescription / certificate use the web's own colours.)
 Color get _brandTint => AppColors.primary.withValues(alpha: 0.08);
 
 
@@ -33,6 +31,7 @@ class MyRecordsPage extends StatefulWidget {
     this.signatureService,
     this.documentSaver,
     this.enableRealtime = true,
+    this.countryName,
   });
 
   final String initialTab;
@@ -42,6 +41,9 @@ class MyRecordsPage extends StatefulWidget {
   final DocumentSignatureService? signatureService;
   final DocumentSaver? documentSaver;
   final bool enableRealtime;
+
+  /// Turns the doctor's country code into its name, as the web slip shows it.
+  final Future<String> Function(String code)? countryName;
 
   @override
   State<MyRecordsPage> createState() => _MyRecordsPageState();
@@ -56,6 +58,8 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   late final DocumentSignatureService _signatures =
       widget.signatureService ?? DocumentSignatureService();
   final Set<String> _loadingSignatures = {};
+  // Country names for the opened prescriptions, by the code the API sent.
+  final Map<String, String> _countries = {};
   final _tokenStorage = const TokenStorageService();
   Timer? _refreshTimer;
   DateTime? _lastFetchAt;
@@ -624,15 +628,36 @@ class _MyRecordsPageState extends State<MyRecordsPage>
       subtitle: subtitleParts.join(' · '),
       open: open,
       onDownload: () => _downloadPrescription(record),
-      onExpand: record.isSigned
-          ? () => _loadSignature(SignedDocumentKind.prescription, record.id)
-          : null,
-      child: _PrescriptionSlip(
+      onExpand: () {
+        if (record.isSigned) {
+          _loadSignature(SignedDocumentKind.prescription, record.id);
+        }
+        _loadCountry(_countryCode(record));
+      },
+      child: PrescriptionSlipView(
         record: record,
         patient: _patient,
+        country: _countries[_countryCode(record)] ?? _countryCode(record),
         signature: _signatures.cached(SignedDocumentKind.prescription, record.id),
       ),
     );
+  }
+
+  // The web shows the United States when the doctor has no country.
+  String _countryCode(PrescriptionRecord record) {
+    final code = record.enrollment.country.trim();
+    return code.isEmpty ? 'US' : code;
+  }
+
+  Future<void> _loadCountry(String code) async {
+    if (_countries.containsKey(code)) return;
+    try {
+      final name = await (widget.countryName ?? VisitNotesService().countryName)(
+        code,
+      );
+      // An unresolved code is asked again next time.
+      if (mounted && name != code) setState(() => _countries[code] = name);
+    } catch (_) {}
   }
 
   Widget _buildCertificateCard(MedicalCertificateRecord record) {
@@ -653,7 +678,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
       onExpand: record.isSigned
           ? () => _loadSignature(SignedDocumentKind.certificate, record.id)
           : null,
-      child: _CertificateSlip(
+      child: CertificateSlipView(
         record: record,
         patient: _patient,
         signature: _signatures.cached(SignedDocumentKind.certificate, record.id),
@@ -1091,812 +1116,9 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   }
 }
 
-/// "Digitally signed · 7 Nov 2026, 03:30 PM" (just "Digitally signed" when
-/// the signing time is unknown).
-String _signedCaption(String signedAt, {String separator = '·'}) {
-  final date = DateTime.tryParse(signedAt);
-  if (date == null) return 'Digitally signed';
-  return 'Digitally signed $separator ${DateFormat('d MMM yyyy, hh:mm a').format(date.toLocal())}';
-}
-
 /// Thrown when a signed document's signature could not be loaded for a PDF
 /// export (see `_signatureForExport`).
 class _SignatureUnavailable implements Exception {
   const _SignatureUnavailable();
 }
 
-/// The doctor's signature on a slip: label, the image (56px high) and a
-/// "Digitally signed" caption. While the image is still loading — or if it
-/// could not be loaded — the space is kept empty so the layout doesn't jump.
-class _SignatureBlock extends StatelessWidget {
-  const _SignatureBlock({required this.signedAt, this.signature});
-
-  final String signedAt;
-  final Uint8List? signature;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Signature',
-          style: AppType.body(size: 12, weight: FontWeight.w800)
-              .copyWith(color: _brand),
-        ),
-        const SizedBox(height: 4),
-        SizedBox(
-          height: 56,
-          child: signature == null
-              ? null
-              : Image.memory(
-                  signature!,
-                  height: 56,
-                  fit: BoxFit.contain,
-                  alignment: Alignment.centerLeft,
-                  gaplessPlayback: true,
-                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          _signedCaption(signedAt),
-          style: AppType.body(size: 11).copyWith(color: AppColors.textSecondary),
-        ),
-      ],
-    );
-  }
-}
-
-class _PrescriptionSlip extends StatelessWidget {
-  const _PrescriptionSlip({
-    required this.record,
-    required this.patient,
-    this.signature,
-  });
-
-  final PrescriptionRecord record;
-  final Map<String, String> patient;
-  final Uint8List? signature;
-
-  @override
-  Widget build(BuildContext context) {
-    return _SlipShell(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const _SlipHeader(),
-          _Banner(
-            title: 'Medical Prescription',
-            subtitle: 'Diagnosis - ${record.diagnosis}',
-            code: _code(record.id),
-            date: 'Issued ${_format(record.createdAt)}',
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: _InfoPanel(
-                    label: 'Patient',
-                    rows: [
-                      ['Name', patient['name'] ?? '-'],
-                      ['Age / Sex', _ageSex(patient)],
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _InfoPanel(
-                    label: 'Physician',
-                    rows: [
-                      [
-                        'Name',
-                        'Dr. ${record.doctor.name.isNotEmpty ? record.doctor.name : '-'}',
-                      ],
-                      ['Reg. No.', '-'],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 18, 14, 0),
-            child: Text(
-              'Rx',
-              style: TextStyle(
-                fontSize: 28,
-                color: _brandDeep,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 6, 14, 0),
-            child: _MedicineTable(medicines: record.medicines),
-          ),
-          Container(
-            margin: const EdgeInsets.all(14),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: _brandTint,
-              border: Border(left: BorderSide(color: _brandDeep, width: 3)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _richLine(
-                  'Instructions',
-                  record.instructions.isNotEmpty ? record.instructions : '-',
-                ),
-                const SizedBox(height: 5),
-                _richLine(
-                  'Follow-up date',
-                  record.followUpDate.isNotEmpty
-                      ? _format(record.followUpDate)
-                      : '-',
-                ),
-              ],
-            ),
-          ),
-          if (record.isSigned)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 0, 14, 4),
-              child: _SignatureBlock(
-                signedAt: record.signedAt,
-                signature: signature,
-              ),
-            ),
-          const _SlipFooter(),
-        ],
-      ),
-    );
-  }
-
-  static Widget _richLine(String label, String value) {
-    return RichText(
-      text: TextSpan(
-        style: AppType.body(size: 12.5).copyWith(color: AppColors.textSecondary),
-        children: [
-          TextSpan(
-            text: '$label: ',
-            style: TextStyle(color: _brand, fontWeight: FontWeight.w800),
-          ),
-          TextSpan(text: value),
-        ],
-      ),
-    );
-  }
-
-  static String _format(String value) {
-    final date = DateTime.tryParse(value);
-    if (date == null) return value.trim().isEmpty ? '-' : value;
-    return DateFormat('dd MMM yyyy').format(date.toLocal());
-  }
-
-  static String _ageSex(Map<String, String> patient) {
-    final dob = DateTime.tryParse(patient['dob'] ?? '');
-    final gender = patient['gender'] ?? '';
-    var age = '';
-    if (dob != null) {
-      final now = DateTime.now();
-      var years = now.year - dob.year;
-      if (now.month < dob.month ||
-          (now.month == dob.month && now.day < dob.day)) {
-        years -= 1;
-      }
-      if (years > 0) age = '$years yrs';
-    }
-    final parts = [if (age.isNotEmpty) age, if (gender.isNotEmpty) gender];
-    return parts.isEmpty ? '-' : parts.join(' / ');
-  }
-
-  static String _code(String id) {
-    final suffix = id.length > 8 ? id.substring(id.length - 8) : id;
-    return 'HC-${suffix.toUpperCase()}';
-  }
-}
-
-class _CertificateSlip extends StatelessWidget {
-  const _CertificateSlip({
-    required this.record,
-    required this.patient,
-    this.signature,
-  });
-
-  final MedicalCertificateRecord record;
-  final Map<String, String> patient;
-  final Uint8List? signature;
-
-  @override
-  Widget build(BuildContext context) {
-    final patientName = (patient['name'] ?? '').isNotEmpty
-        ? patient['name']!
-        : 'the patient';
-    final ageSex = _PrescriptionSlip._ageSex(patient);
-    final issuedDate = record.issuedDate.isNotEmpty
-        ? record.issuedDate
-        : record.createdAt;
-
-    return _SlipShell(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const _SlipHeader(),
-          _Banner(
-            title: 'Medical Certificate',
-            subtitle: 'Reason: ${record.diagnosis}',
-            code: _code(record.id),
-            date: 'Issued ${_PrescriptionSlip._format(issuedDate)}',
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
-            child: Wrap(
-              runSpacing: 10,
-              spacing: 10,
-              children: [
-                SizedBox(
-                  width: 280,
-                  child: _InfoPanel(
-                    label: 'Patient',
-                    rows: [
-                      ['Patient Name', patientName],
-                      ['Age / Sex', ageSex],
-                    ],
-                  ),
-                ),
-                SizedBox(
-                  width: 280,
-                  child: _InfoPanel(
-                    label: 'Document',
-                    rows: [
-                      ['Date of Issue', _PrescriptionSlip._format(issuedDate)],
-                      if ((patient['dob'] ?? '').isNotEmpty)
-                        [
-                          'Date of Birth',
-                          _PrescriptionSlip._format(patient['dob']!),
-                        ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Container(
-            margin: const EdgeInsets.fromLTRB(14, 16, 14, 0),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppColors.border, width: 1.4),
-            ),
-            child: Text(
-              'This is to certify that $patientName, $ageSex, has been examined and is suffering from ${record.diagnosis}.',
-              style: AppType.body(size: 13, height: 1.55)
-                  .copyWith(color: AppColors.textPrimary),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
-            child: _CertificateDetailsTable(record: record),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
-            child: _DoctorCertificateBox(record: record, signature: signature),
-          ),
-          Container(
-            margin: const EdgeInsets.fromLTRB(14, 10, 14, 12),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFFBEB),
-              borderRadius: BorderRadius.circular(AppRadius.sm),
-              border: Border.all(color: const Color(0xFFFDE68A)),
-            ),
-            child: Text(
-              'Note: This certificate is issued based on the medical examination conducted via Humancare Connect telehealth platform. It is valid as an official medical document for the purpose stated above.',
-              style: AppType.body(size: 11.5, height: 1.4)
-                  .copyWith(color: const Color(0xFF92400E)),
-            ),
-          ),
-          const _SlipFooter(lightFooter: true),
-        ],
-      ),
-    );
-  }
-
-  static String _code(String id) {
-    final suffix = id.length > 8 ? id.substring(id.length - 8) : id;
-    return 'HC-CERT-${suffix.toUpperCase()}';
-  }
-}
-
-class _SlipShell extends StatelessWidget {
-  const _SlipShell({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: _brandTint,
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-      ),
-      padding: const EdgeInsets.all(10),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Container(
-          width: 760,
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(3),
-            boxShadow: AppShadows.subtle,
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: child,
-        ),
-      ),
-    );
-  }
-}
-
-class _SlipHeader extends StatelessWidget {
-  const _SlipHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(22, 18, 22, 16),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: _brandTint, width: 2)),
-      ),
-      child: Row(
-        children: [
-          Image.asset(
-            'assets/logo-2.png',
-            height: 46,
-            errorBuilder: (_, error, stackTrace) {
-              return Text(
-                'Humancare Connect',
-                style: AppType.display(size: 18, color: _brandDeep),
-              );
-            },
-          ),
-          const Spacer(),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                'Global Health Passport',
-                style: AppType.body(size: 11, weight: FontWeight.w900)
-                    .copyWith(color: _brand, letterSpacing: 1.2),
-              ),
-              const SizedBox(height: 5),
-              SizedBox(
-                width: 48,
-                child: Divider(color: _brand, thickness: 4),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Banner extends StatelessWidget {
-  const _Banner({
-    required this.title,
-    required this.subtitle,
-    required this.code,
-    required this.date,
-  });
-
-  final String title;
-  final String subtitle;
-  final String code;
-  final String date;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: _brandTint,
-      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: AppType.body(size: 14, weight: FontWeight.w900)
-                      .copyWith(color: _brandDeep),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: AppType.body(size: 12)
-                      .copyWith(color: AppColors.textSecondary),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                code,
-                style: AppType.body(size: 12, weight: FontWeight.w900)
-                    .copyWith(color: _brandDeep),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                date,
-                style: AppType.body(size: 11)
-                    .copyWith(color: AppColors.textSecondary),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InfoPanel extends StatelessWidget {
-  const _InfoPanel({required this.label, required this.rows});
-
-  final String label;
-  final List<List<String>> rows;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(border: Border.all(color: _brandTint)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label.toUpperCase(),
-            style: AppType.body(size: 10, weight: FontWeight.w900)
-                .copyWith(color: _brand, letterSpacing: 1),
-          ),
-          const SizedBox(height: 8),
-          ...rows.map(
-            (row) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(
-                children: [
-                  Text(
-                    row[0],
-                    style: AppType.body(size: 12)
-                        .copyWith(color: AppColors.textSecondary),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      row.length > 1 && row[1].isNotEmpty ? row[1] : '-',
-                      textAlign: TextAlign.right,
-                      style: AppType.body(size: 12, weight: FontWeight.w800)
-                          .copyWith(color: _brandDeep),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MedicineTable extends StatelessWidget {
-  const _MedicineTable({required this.medicines});
-
-  final List<PrescriptionMedicine> medicines;
-
-  @override
-  Widget build(BuildContext context) {
-    final rows = medicines.isEmpty
-        ? const [PrescriptionMedicine(name: '-')]
-        : medicines;
-    return Table(
-      columnWidths: const {
-        0: FixedColumnWidth(44),
-        1: FlexColumnWidth(1.6),
-        2: FlexColumnWidth(),
-        3: FlexColumnWidth(),
-        4: FlexColumnWidth(),
-      },
-      border: const TableBorder(
-        horizontalInside: BorderSide(color: AppColors.border),
-      ),
-      children: [
-        TableRow(
-          decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(color: _brandDeep, width: 1.5)),
-          ),
-          children: [
-            'No.',
-            'Medicine',
-            'Frequency',
-            'Duration',
-            'Notes',
-          ].map((text) => _tableHeader(text)).toList(),
-        ),
-        ...rows.indexed.map((entry) {
-          final med = entry.$2;
-          return TableRow(
-            children: [
-              _tableCell('${entry.$1 + 1}'),
-              _tableCell(
-                [med.name, med.dosage].where((e) => e.isNotEmpty).join('\n'),
-                bold: true,
-              ),
-              _tableCell(med.frequency),
-              _tableCell(med.duration),
-              _tableCell(med.notes),
-            ],
-          );
-        }),
-      ],
-    );
-  }
-
-  static Widget _tableHeader(String text) {
-    return Padding(
-      padding: const EdgeInsets.all(8),
-      child: Text(
-        text.toUpperCase(),
-        style: AppType.body(size: 10, weight: FontWeight.w900)
-            .copyWith(color: AppColors.textSecondary),
-      ),
-    );
-  }
-
-  static Widget _tableCell(String text, {bool bold = false}) {
-    return Padding(
-      padding: const EdgeInsets.all(8),
-      child: Text(
-        text.isEmpty ? '-' : text,
-        style: AppType.body(
-          size: 12,
-          weight: bold ? FontWeight.w800 : FontWeight.w500,
-          height: 1.25,
-        ).copyWith(color: bold ? _brandDeep : AppColors.textPrimary),
-      ),
-    );
-  }
-}
-
-class _CertificateDetailsTable extends StatelessWidget {
-  const _CertificateDetailsTable({required this.record});
-
-  final MedicalCertificateRecord record;
-
-  @override
-  Widget build(BuildContext context) {
-    final rows = [
-      ['Diagnosis / Condition', record.diagnosis],
-      if (record.recommendation.isNotEmpty)
-        ['Recommendation', record.recommendation],
-      if (record.restFromDate.isNotEmpty || record.restToDate.isNotEmpty)
-        ['Rest Period', _restPeriod(record.restFromDate, record.restToDate)],
-      if (record.notes.isNotEmpty) ['Additional Notes', record.notes],
-    ];
-
-    return Table(
-      border: TableBorder.all(color: AppColors.border),
-      columnWidths: const {0: FlexColumnWidth(1), 1: FlexColumnWidth(2.2)},
-      children: [
-        TableRow(
-          decoration: BoxDecoration(color: _brand),
-          children: ['Field', 'Details'].map((text) {
-            return Padding(
-              padding: const EdgeInsets.all(9),
-              child: Text(
-                text.toUpperCase(),
-                style: AppType.body(size: 12, weight: FontWeight.w900)
-                    .copyWith(color: Colors.white),
-              ),
-            );
-          }).toList(),
-        ),
-        ...rows.map(
-          (row) =>
-              TableRow(children: [_cell(row[0], bold: true), _cell(row[1])]),
-        ),
-      ],
-    );
-  }
-
-  static Widget _cell(String text, {bool bold = false}) {
-    return Padding(
-      padding: const EdgeInsets.all(10),
-      child: Text(
-        text.isNotEmpty ? text : '-',
-        style: AppType.body(
-          size: 12.5,
-          weight: bold ? FontWeight.w800 : FontWeight.w500,
-          height: 1.35,
-        ).copyWith(color: bold ? _brandDeep : AppColors.textPrimary),
-      ),
-    );
-  }
-
-  static String _restPeriod(String fromDate, String toDate) {
-    if (fromDate.isNotEmpty && toDate.isNotEmpty) {
-      return '${_PrescriptionSlip._format(fromDate)} to ${_PrescriptionSlip._format(toDate)}';
-    }
-    if (fromDate.isNotEmpty) {
-      return 'From ${_PrescriptionSlip._format(fromDate)}';
-    }
-    return 'Until ${_PrescriptionSlip._format(toDate)}';
-  }
-}
-
-class _DoctorCertificateBox extends StatelessWidget {
-  const _DoctorCertificateBox({required this.record, this.signature});
-
-  final MedicalCertificateRecord record;
-  final Uint8List? signature;
-
-  @override
-  Widget build(BuildContext context) {
-    final doctorName = record.doctor.name.isNotEmpty ? record.doctor.name : '-';
-    final enrollment = record.enrollment;
-    final subtitle = [
-      enrollment.specialization,
-      enrollment.qualification,
-    ].where((value) => value.isNotEmpty).join(' - ');
-
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-        border: Border.all(color: _brandTint),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
-          Container(
-            color: _brandTint,
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                CircleAvatar(
-                  radius: 17,
-                  backgroundColor: _brand,
-                  child: Text(
-                    doctorName.substring(0, 1).toUpperCase(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Dr. $doctorName',
-                        style: AppType.body(size: 14, weight: FontWeight.w900)
-                            .copyWith(color: _brandDeep),
-                      ),
-                      if (subtitle.isNotEmpty)
-                        Text(
-                          subtitle,
-                          style: AppType.body(size: 11.5)
-                              .copyWith(color: AppColors.textSecondary),
-                        ),
-                    ],
-                  ),
-                ),
-                if (enrollment.medicalRegistrationNumber.isNotEmpty)
-                  Text(
-                    'Reg. No: ${enrollment.medicalRegistrationNumber}',
-                    style: AppType.body(size: 11)
-                        .copyWith(color: AppColors.textSecondary),
-                  ),
-              ],
-            ),
-          ),
-          Container(
-            color: AppColors.surface,
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    [
-                      enrollment.clinicName.isNotEmpty
-                          ? enrollment.clinicName
-                          : 'Humancare Connect',
-                      enrollment.clinicAddress.isNotEmpty
-                          ? enrollment.clinicAddress
-                          : '4 Peddlers Row #1091 Newark, DE 19702, United States',
-                    ].join('\n'),
-                    style: AppType.body(size: 12, height: 1.5)
-                        .copyWith(color: AppColors.textSecondary),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                if (record.isSigned)
-                  // Signed: the doctor's signature replaces the
-                  // "system-generated" note (as on the web).
-                  SizedBox(
-                    width: 210,
-                    child: _SignatureBlock(
-                      signedAt: record.signedAt,
-                      signature: signature,
-                    ),
-                  )
-                else
-                  SizedBox(
-                    width: 210,
-                    child: Text(
-                      'This is a system-generated certificate and does not require a signature or stamp.',
-                      textAlign: TextAlign.center,
-                      style: AppType.body(
-                        size: 11,
-                        height: 1.45,
-                      ).copyWith(
-                        color: AppColors.textSecondary,
-                        fontStyle: FontStyle.italic,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SlipFooter extends StatelessWidget {
-  const _SlipFooter({this.lightFooter = false});
-
-  final bool lightFooter;
-
-  @override
-  Widget build(BuildContext context) {
-    if (lightFooter) {
-      return Container(
-        padding: const EdgeInsets.all(12),
-        color: _brandTint,
-        child: Row(
-          children: [
-            Icon(Icons.qr_code_2_rounded, color: _brand, size: 46),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Text(
-                '+1 (302) 303-9993\nsupport@humancareconnect.co\n4 Peddlers Row #1091 Newark, DE 19702, United States',
-                style: AppType.body(size: 11.5, height: 1.45)
-                    .copyWith(color: AppColors.textPrimary),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Container(
-      margin: const EdgeInsets.only(top: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      color: _brandDeep,
-      child: Text(
-        'This document is generated electronically and is valid without a physical signature.',
-        textAlign: TextAlign.center,
-        style: AppType.body(size: 11.5).copyWith(color: Colors.white),
-      ),
-    );
-  }
-}

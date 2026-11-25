@@ -104,6 +104,21 @@ flutter:
           weight: 500
         - asset: assets/fonts/Inter-SemiBold.ttf
           weight: 600
+    # The prescription and certificate on screen. Its own family, so adding the
+    # bold faces does not change how bold `Inter` looks anywhere else.
+    - family: InterSlip
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/pdf/Inter-Bold.ttf
+          weight: 700
+        - asset: assets/pdf/Inter-BoldItalic.ttf
+          weight: 700
+          style: italic
     - family: IBM Plex Mono
       fonts:
         - asset: assets/fonts/IBMPlexMono-Medium.ttf
