@@ -51,7 +51,17 @@ class AuthValidators {
     return '';
   }
 
-  static String dobError(String value) {
+  /// Today's date ("YYYY-MM-DD") in India, the calendar the server checks a
+  /// date of birth on (Asia/Kolkata is UTC+5:30 all year).
+  static String todayInIndia([DateTime? now]) => (now ?? DateTime.now())
+      .toUtc()
+      .add(const Duration(hours: 5, minutes: 30))
+      .toIso8601String()
+      .substring(0, 10);
+
+  /// The same rules as the server: "YYYY-MM-DD", a real calendar date, not
+  /// after today in India, not before 1900.
+  static String dobError(String value, {DateTime? now}) {
     final dob = value.trim();
     const minDate = '1900-01-01';
 
@@ -63,13 +73,14 @@ class AuthValidators {
       return 'Enter a valid Date of Birth';
     }
 
-    final parsed = DateTime.tryParse('${dob}T00:00:00');
-    if (parsed == null) {
+    // DateTime rolls an impossible date over (31 February becomes March), so
+    // the parsed date must read back as the same text.
+    final parsed = DateTime.tryParse('${dob}T00:00:00Z');
+    if (parsed == null || parsed.toIso8601String().substring(0, 10) != dob) {
       return 'Enter a valid Date of Birth';
     }
 
-    final today = DateTime.now().toIso8601String().substring(0, 10);
-    if (dob.compareTo(today) > 0) {
+    if (dob.compareTo(todayInIndia(now)) > 0) {
       return 'Date of Birth cannot be in the future';
     }
 
