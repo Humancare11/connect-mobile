@@ -864,7 +864,8 @@ class AuthService {
     String city = '',
     String location = '',
     // When true (the caller has the server's current copy of the profile),
-    // empty optional fields are sent too so the user can clear them.
+    // empty optional location fields are sent too so the user can clear them.
+    // Date of birth and gender are never sent empty: they cannot be removed.
     bool sendEmptyOptionals = false,
   }) async {
     final current = await _tokenStorage.getUserProfile();
@@ -887,9 +888,8 @@ class AuthService {
       'name': name.trim(),
       'email': email.trim().toLowerCase(),
       if (mobile.trim().isNotEmpty) 'mobile': mobile.trim(),
-      if (sendEmptyOptionals || dob.trim().isNotEmpty) 'dob': dob.trim(),
-      if (sendEmptyOptionals || gender.trim().isNotEmpty)
-        'gender': gender.trim(),
+      if (dob.trim().isNotEmpty) 'dob': dob.trim(),
+      if (gender.trim().isNotEmpty) 'gender': gender.trim(),
       if (sendEmptyOptionals || country.trim().isNotEmpty)
         'country': country.trim(),
       if (sendEmptyOptionals || state.trim().isNotEmpty) 'state': state.trim(),

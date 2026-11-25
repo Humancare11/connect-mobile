@@ -6,6 +6,7 @@ import '../config/app_design_system.dart';
 import '../services/auth_service.dart';
 import '../services/auth_validators.dart';
 import '../services/token_storage_service.dart';
+import '../utils/patient_profile.dart';
 import '../widgets/email_verification_dialog.dart';
 import '../widgets/geo_field_style.dart';
 import '../widgets/geo_phone_controller.dart';
@@ -430,20 +431,28 @@ class _EditProfilePageState extends State<EditProfilePage> {
     );
   }
 
+  // Once saved, a date of birth or gender can be changed but not removed (the
+  // server refuses it too).
+  bool get _dobSaved => (originalData['dob'] ?? '').isNotEmpty;
+  bool get _genderSaved => kGenderOptions.contains(originalData['gender']);
+
   Widget _genderField() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label("Gender (optional)"),
+        _label(_genderSaved ? "Gender" : "Gender (optional)"),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
+          // A fresh field when the empty choice goes away, so it never holds
+          // a value that is no longer in the list.
+          key: ValueKey('gender saved=$_genderSaved'),
           initialValue: gender,
           style: AppType.body(size: 14).copyWith(color: AppColors.textPrimary),
-          items: const [
-            DropdownMenuItem(value: "", child: Text("Select gender")),
-            DropdownMenuItem(value: "Male", child: Text("Male")),
-            DropdownMenuItem(value: "Female", child: Text("Female")),
-            DropdownMenuItem(value: "Other", child: Text("Other")),
+          items: [
+            if (!_genderSaved)
+              const DropdownMenuItem(value: "", child: Text("Select gender")),
+            for (final option in kGenderOptions)
+              DropdownMenuItem(value: option, child: Text(option)),
           ],
           onChanged: (v) {
             setState(() {
@@ -461,7 +470,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _label("Date of Birth (optional)"),
+        _label(_dobSaved ? "Date of Birth" : "Date of Birth (optional)"),
         const SizedBox(height: 8),
         InkWell(
           borderRadius: BorderRadius.circular(AppRadius.sm),
@@ -489,7 +498,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                         ),
                   ),
                 ),
-                if (dob != null)
+                if (dob != null && !_dobSaved)
                   InkWell(
                     onTap: () => setState(() {
                       dob = null;
@@ -668,11 +677,19 @@ class _EditProfilePageState extends State<EditProfilePage> {
   }
 
   void _pickDob() async {
+    final firstDate = DateTime(1900);
+    final lastDate = DateTime.now();
+    // Open on the saved date; one the calendar cannot show falls back to 2000.
+    final current = dob == null ? null : DateUtils.dateOnly(dob!);
+    final usable =
+        current != null &&
+        !current.isBefore(firstDate) &&
+        !current.isAfter(lastDate);
     final picked = await showDatePicker(
       context: context,
-      initialDate: DateTime(2000),
-      firstDate: DateTime(1900),
-      lastDate: DateTime.now(),
+      initialDate: usable ? current : DateTime(2000),
+      firstDate: firstDate,
+      lastDate: lastDate,
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(
