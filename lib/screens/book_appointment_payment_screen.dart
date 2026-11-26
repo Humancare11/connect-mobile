@@ -10,6 +10,7 @@ import '../services/appointment_tree_service.dart';
 import '../services/auth_service.dart';
 import '../services/currency_service.dart';
 import '../services/device_time_zone.dart';
+import '../services/payment_in_progress_tracker.dart';
 import '../services/payment_service.dart';
 import '../services/pricing_service.dart';
 import '../services/razorpay_checkout.dart';
@@ -56,6 +57,24 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
   Map<String, dynamic>? _pendingRazorpayArgs;
   num _pendingRazorpayAmount = 0;
 
+  // Holds back the forced-update dialog (see PaymentInProgressTracker) while a
+  // payment is running, and while a paid booking is still unsaved on this
+  // screen: the Stripe reference above lives only in memory.
+  bool _paymentRunning = false;
+  bool _holdingUpdate = false;
+  bool _closed = false;
+
+  void _syncUpdateHold() {
+    final unsaved =
+        !_closed &&
+        (_succeededPaymentIntentId != null || _pendingRazorpay != null);
+    final hold = _paymentRunning || unsaved;
+    if (hold == _holdingUpdate) return;
+    _holdingUpdate = hold;
+    final tracker = PaymentInProgressTracker.instance;
+    hold ? tracker.markActive() : tracker.markInactive();
+  }
+
   // The device's IANA time zone, looked up as soon as the screen opens so the
   // booking write (which happens right after a payment) never waits on it.
   late final Future<String> _timeZone;
@@ -101,6 +120,7 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
       _pendingRazorpayArgs = saved.args;
       _pendingRazorpayAmount = saved.amount;
     });
+    _syncUpdateHold();
   }
 
   Future<void> _clearPendingRazorpay() async {
@@ -116,6 +136,9 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
 
   @override
   void dispose() {
+    // A payment still running keeps its hold until it ends.
+    _closed = true;
+    _syncUpdateHold();
     _currency.removeListener(_onPriceInputsChanged);
     _pricing.removeListener(_onPriceInputsChanged);
     _currencyChanges?.cancel();
@@ -438,6 +461,17 @@ class _AppointmentPaymentPageState extends State<AppointmentPaymentPage> {
   }
 
   Future<void> _payAndCreate(Map<String, dynamic> args) async {
+    _paymentRunning = true;
+    _syncUpdateHold();
+    try {
+      await _runPayment(args);
+    } finally {
+      _paymentRunning = false;
+      _syncUpdateHold();
+    }
+  }
+
+  Future<void> _runPayment(Map<String, dynamic> args) async {
     final priceType = _priceType(args);
     final priceRef = _priceRef(args, priceType);
 

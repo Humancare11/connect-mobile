@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -96,7 +97,7 @@ void main() {
     });
 
     test(
-      'a 426 APP_UPDATE_REQUIRED turns on the blocking update screen',
+      'a 426 APP_UPDATE_REQUIRED requires the update',
       () async {
         final client = ApiClient(
           client: MockClient(
@@ -114,10 +115,24 @@ void main() {
         final result = await client.post('/auth/register', {}, silent: true);
         expect(result.success, isFalse);
         expect(result.statusCode, 426);
-        expect(AppUpdateService.instance.forced, isTrue);
+        expect(AppUpdateService.instance.isRequired, isTrue);
         expect(AppUpdateService.instance.storeUrl, contains('play.google.com'));
       },
     );
+
+    test('a 426 without a store link does not block', () async {
+      final client = ApiClient(
+        client: MockClient(
+          (_) async => http.Response(
+            jsonEncode({'code': 'APP_UPDATE_REQUIRED', 'storeUrl': ''}),
+            426,
+          ),
+        ),
+        tokenStorage: const _Tokens(null),
+      );
+      await client.post('/auth/register', {}, silent: true);
+      expect(AppUpdateService.instance.isRequired, isFalse);
+    });
 
     test('an ordinary 400 does not', () async {
       final client = ApiClient(
@@ -128,116 +143,177 @@ void main() {
         tokenStorage: const _Tokens(null),
       );
       await client.post('/auth/register', {}, silent: true);
-      expect(AppUpdateService.instance.forced, isFalse);
+      expect(AppUpdateService.instance.isRequired, isFalse);
     });
   });
 
   group('decideUpdate', () {
-    UpdateDecision d({
-      int build = 16,
-      int min = 0,
-      int latest = 0,
-      bool loggedIn = false,
-    }) => decideUpdate(
-      build: build,
-      minBuild: min,
-      latestBuild: latest,
-      loggedIn: loggedIn,
-    );
+    UpdateDecision d({int build = 16, int min = 0, int latest = 0}) =>
+        decideUpdate(build: build, minBuild: min, latestBuild: latest);
 
-    test('nothing configured → no prompt', () {
+    test('nothing configured → nothing', () {
       expect(d(), UpdateDecision.none);
     });
 
-    test('below the minimum, signed out → blocked', () {
+    test('below the minimum → required', () {
       expect(d(build: 15, min: 16), UpdateDecision.required);
     });
 
-    test(
-      'below the minimum but signed in → only a suggestion (never locked out mid-care)',
-      () {
-        expect(d(build: 15, min: 16, loggedIn: true), UpdateDecision.optional);
-      },
-    );
-
-    test('at or above the minimum → fine', () {
-      expect(d(build: 16, min: 16), UpdateDecision.none);
+    test('below the latest build → required', () {
+      expect(d(build: 16, min: 10, latest: 18), UpdateDecision.required);
     });
 
-    test('a newer build exists → optional', () {
-      expect(d(build: 16, min: 10, latest: 18), UpdateDecision.optional);
+    test('equal to or newer than both → fine', () {
+      expect(d(build: 18, min: 16, latest: 18), UpdateDecision.none);
+      expect(d(build: 19, min: 16, latest: 18), UpdateDecision.none);
     });
 
-    test('an unknown build never nags', () {
+    test('an unknown build is never blocked', () {
       expect(d(build: 0, min: 99, latest: 99), UpdateDecision.none);
     });
   });
 
   group('AppVersionService', () {
-    AppVersionService service(http.Client client, {String? token}) =>
-        AppVersionService(client: client, tokenStorage: _Tokens(token));
+    AppVersionService service(http.Client client) =>
+        AppVersionService(client: client);
 
-    http.Client answering(Map<String, dynamic> body, {int status = 200}) =>
+    http.Client answering(Object body, {int status = 200}) =>
         MockClient((_) async => http.Response(jsonEncode(body), status));
 
-    const config = {
-      'android': {
-        'minBuild': 16,
-        'latestBuild': 18,
-        'storeUrl': 'https://store/android',
-      },
-      'ios': {'minBuild': 0, 'latestBuild': 0, 'storeUrl': ''},
+    Map<String, Object> entry({
+      Object min = 16,
+      Object latest = 18,
+      String url = 'https://store/android',
+    }) => {'minBuild': min, 'latestBuild': latest, 'storeUrl': url};
+
+    final config = {
+      'android': entry(),
+      'ios': entry(min: 0, latest: 0, url: ''),
     };
 
-    test('old build, signed out → forced update with the store link', () async {
-      AppBuildInfo.setForTest(platform: 'android', version: '1.0.0+15');
-      final decision = await service(answering(config)).check();
-      expect(decision, UpdateDecision.required);
-      expect(AppUpdateService.instance.forced, isTrue);
+    bool isRequired() => AppUpdateService.instance.isRequired;
+
+    void android(int build) =>
+        AppBuildInfo.setForTest(platform: 'android', version: '1.0.0+$build');
+
+    test('below the minimum → required, with the store link', () async {
+      android(15);
+      expect(await service(answering(config)).check(), UpdateDecision.required);
+      expect(isRequired(), isTrue);
       expect(AppUpdateService.instance.storeUrl, 'https://store/android');
     });
 
-    test('old build, signed in → dismissible suggestion only', () async {
-      AppBuildInfo.setForTest(platform: 'android', version: '1.0.0+15');
-      final decision = await service(answering(config), token: 'abc').check();
-      expect(decision, UpdateDecision.optional);
-      expect(AppUpdateService.instance.forced, isFalse);
-      expect(AppUpdateService.instance.optional, isTrue);
+    // The check takes no session at all, so signed in or out is the same.
+    test('below the latest build only → required', () async {
+      android(17);
+      expect(await service(answering(config)).check(), UpdateDecision.required);
+      expect(isRequired(), isTrue);
     });
 
-    test('current build with nothing newer → no prompt', () async {
-      AppBuildInfo.setForTest(platform: 'android', version: '1.0.0+18');
+    test('current build → nothing', () async {
+      android(18);
       expect(await service(answering(config)).check(), UpdateDecision.none);
-      expect(AppUpdateService.instance.forced, isFalse);
-      expect(AppUpdateService.instance.optional, isFalse);
+      expect(isRequired(), isFalse);
     });
 
-    test('uses its own platform entry (iOS min 0 → nothing)', () async {
+    test('uses its own platform entry, on iOS too', () async {
       AppBuildInfo.setForTest(platform: 'ios', version: '1.0.0+1');
       expect(await service(answering(config)).check(), UpdateDecision.none);
+      expect(
+        await service(
+          answering({'ios': entry(url: 'https://apps.apple.com/app/id1')}),
+        ).check(),
+        UpdateDecision.required,
+      );
+      expect(AppUpdateService.instance.storeUrl, contains('apps.apple.com'));
     });
 
-    test('fails open: server error, bad JSON, timeout, no platform', () async {
-      AppBuildInfo.setForTest(platform: 'android', version: '1.0.0+1');
-      expect(
-        await service(answering({}, status: 500)).check(),
-        UpdateDecision.none,
-      );
-      expect(
-        await service(
+    test('an empty store link never blocks, on Android or iOS', () async {
+      for (final platform in ['android', 'ios']) {
+        AppBuildInfo.setForTest(platform: platform, version: '1.0.0+1');
+        expect(
+          await service(answering({platform: entry(url: ' ')})).check(),
+          UpdateDecision.none,
+        );
+        expect(isRequired(), isFalse);
+      }
+    });
+
+    final failures = <String, http.Client Function()>{
+      'server error': () => answering({}, status: 500),
+      'bad JSON': () =>
           MockClient((_) async => http.Response('not json', 200)),
-        ).check(),
-        UpdateDecision.none,
-      );
-      expect(
-        await service(
+      'offline': () =>
           MockClient((_) async => throw http.ClientException('offline')),
-        ).check(),
-        UpdateDecision.none,
+      'no platform entry': () => answering({}),
+      'missing numbers': () => answering({
+        'android': {'storeUrl': 'https://store/android'},
+      }),
+      'unreadable numbers': () =>
+          answering({'android': entry(min: 'x', latest: 'y')}),
+    };
+
+    for (final failure in failures.entries) {
+      test('${failure.key}: neither adds nor removes a block', () async {
+        android(1);
+        expect(await service(failure.value()).check(), UpdateDecision.none);
+        expect(isRequired(), isFalse);
+
+        await service(answering(config)).check();
+        await service(failure.value()).check();
+        expect(isRequired(), isTrue);
+      });
+    }
+
+    test('a timeout does not block', () async {
+      android(1);
+      final slow = AppVersionService(
+        client: MockClient((_) => Completer<http.Response>().future),
+        timeout: const Duration(milliseconds: 10),
       );
-      AppBuildInfo.setForTest(version: '1.0.0+1'); // web/desktop: no platform
-      expect(await service(answering(config)).check(), UpdateDecision.none);
-      expect(AppUpdateService.instance.forced, isFalse);
+      expect(await slow.check(), UpdateDecision.none);
+      expect(isRequired(), isFalse);
+    });
+
+    test('a valid "no update" answer removes the block', () async {
+      android(15);
+      await service(answering(config)).check();
+      await service(
+        answering({'android': entry(min: 0, latest: 0)}),
+      ).check();
+      expect(isRequired(), isFalse);
+    });
+
+    test('no platform (web, desktop) → no request', () async {
+      AppBuildInfo.setForTest(version: '1.0.0+1');
+      var calls = 0;
+      final client = MockClient((_) async {
+        calls++;
+        return http.Response(jsonEncode(config), 200);
+      });
+      expect(await service(client).check(), UpdateDecision.none);
+      expect(calls, 0);
+    });
+
+    test('checkIfDue is throttled; the cold-start check counts', () async {
+      android(18);
+      var calls = 0;
+      var now = DateTime(2030);
+      final throttled = AppVersionService(
+        now: () => now,
+        client: MockClient((_) async {
+          calls++;
+          return http.Response(jsonEncode(config), 200);
+        }),
+      );
+
+      await throttled.check();
+      await throttled.checkIfDue();
+      expect(calls, 1);
+
+      now = now.add(const Duration(minutes: 5));
+      await throttled.checkIfDue();
+      expect(calls, 2);
     });
   });
 }

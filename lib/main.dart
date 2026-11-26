@@ -25,6 +25,8 @@ import 'widgets/session_expired_gate.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Before runApp, so it is asked about the back button before the Navigator.
+  WidgetsBinding.instance.addObserver(UpdateBackBlocker());
 
   // One bundled `.env`, loaded by every build. Local development and release
   // builds all target the production backend — there is no environment switch.
@@ -66,9 +68,10 @@ Future<void> main() async {
 
   runApp(const MyApp());
 
-  // Fail-open minimum-version check (see AppVersionService): never delays
-  // startup, and offline or a slow server just means no prompt.
-  unawaited(AppVersionService().check());
+  // Fail-open forced-update check (see AppVersionService): never delays
+  // startup, and offline or a slow server just means no dialog. AppUpdateGate
+  // repeats it when the app returns from the background.
+  unawaited(AppVersionService.shared.check());
 
   // Deferred until after the first frame is on screen. initialize() ends in
   // requestPermission(), which blocks on the OS notification-permission

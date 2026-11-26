@@ -14,6 +14,7 @@ import '../screens/main_screen.dart';
 import '../screens/my_records_screen.dart';
 import '../screens/video_call_screen.dart';
 import 'api_client.dart';
+import 'app_update_service.dart';
 import 'token_storage_service.dart';
 
 @pragma('vm:entry-point')
@@ -35,7 +36,8 @@ class NotificationService {
   static const String channelDescription =
       'Appointment, medical record, chat, and video call updates.';
 
-  final FirebaseMessaging _messaging = FirebaseMessaging.instance;
+  // Lazy, so tap navigation can be tested without Firebase.
+  late final FirebaseMessaging _messaging = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
   final TokenStorageService _tokenStorage = const TokenStorageService();
@@ -297,11 +299,24 @@ class NotificationService {
     _navigateFromPayload(jsonEncode(data));
   }
 
+  @visibleForTesting
+  Future<void> openTapForTest(Map<String, dynamic> data) =>
+      _navigateFromPayload(jsonEncode(data));
+
   Future<void> _navigateFromPayload(String payload) async {
     try {
       final data = _asStringMap(jsonDecode(payload));
       final authenticated = await _tokenStorage.isAuthenticated();
       final navigator = navigatorKey.currentState;
+
+      // While an update is required, the only tap that goes anywhere is the
+      // one that joins a video consultation.
+      final updateRequired = AppUpdateService.instance.isRequired;
+      final joinsCall =
+          authenticated &&
+          _notificationTarget(data) == _NotificationTarget.videoCall &&
+          _appointmentId(data).isNotEmpty;
+      if (updateRequired && !joinsCall) return;
 
       if (navigator == null) {
         _pendingPayload = payload;
