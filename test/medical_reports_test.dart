@@ -261,8 +261,8 @@ void main() {
       await pumpPage(tester, reports: [_report()]);
 
       expect(find.text('Medical Certificates'), findsOneWidget);
-      // The card title, and the Diagnosis line of its slip.
-      expect(find.text('Migraine'), findsNWidgets(2));
+      // The card title; a closed card draws no slip.
+      expect(find.text('Migraine'), findsOneWidget);
 
       await tester.tap(find.text('Medical Certificates'));
       await tester.pump();
@@ -412,8 +412,8 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Retry'), findsOneWidget);
-      // The card title, and the Diagnosis line of its slip.
-      expect(find.text('Migraine'), findsNWidgets(2));
+      // The card title; a closed card draws no slip.
+      expect(find.text('Migraine'), findsOneWidget);
     });
   });
 }

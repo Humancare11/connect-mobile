@@ -6,7 +6,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:humancare_connect/models/medical_record_models.dart';
 import 'package:humancare_connect/widgets/slips/certificate_slip_view.dart';
-import 'package:humancare_connect/widgets/slips/prescription_slip_view.dart';
 import 'package:humancare_connect/widgets/slips/slip_tokens.dart';
 
 final _png = base64Decode(
@@ -17,31 +16,6 @@ const _patient = {'name': 'Asha Rao', 'gender': 'Female', 'dob': '1990-05-12'};
 
 const _longName =
     'Amoxicillin and Potassium Clavulanate Extended Release Dispersible';
-
-PrescriptionRecord _rx({bool signed = false, int rows = 1, String? name}) =>
-    PrescriptionRecord(
-      id: '66f1a2b3c4d5e6f7a8b9c0d1',
-      diagnosis: 'Seasonal allergic rhinitis with mild cough',
-      doctor: const DoctorSummary(name: 'Meera Nair'),
-      enrollment: const DoctorEnrollment(
-        medicalRegistrationNumber: 'MH-2014-55231',
-        specialization: 'General Physician',
-      ),
-      medicines: [
-        for (var i = 0; i < rows; i++)
-          PrescriptionMedicine(
-            name: name ?? 'Cetirizine',
-            dosage: '10 mg',
-            frequency: 'Morning (01), Night (01) - After Food',
-            duration: '5',
-          ),
-      ],
-      instructions: 'Drink warm fluids and rest.',
-      createdAt: '2026-11-23T10:00:00.000',
-      followUpDate: '2026-12-02T00:00:00.000',
-      isSigned: signed,
-      signedAt: signed ? '2026-11-23T17:42:00.000' : '',
-    );
 
 MedicalCertificateRecord _cert({bool signed = false, bool long = false}) =>
     MedicalCertificateRecord(
@@ -128,111 +102,9 @@ Future<void> _show(
   await tester.pumpAndSettle();
 }
 
-double _top(WidgetTester tester, String text) =>
-    tester.getTopLeft(find.text(text).first).dy;
-
-ScrollableState _tableScroll(WidgetTester tester) => tester.state(
-  find.descendant(
-    of: find.byKey(const ValueKey('medicine table')),
-    matching: find.byType(Scrollable),
-  ),
-);
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(_loadFonts);
-
-  group('prescription', () {
-    Widget view(PrescriptionRecord record) => PrescriptionSlipView(
-      record: record,
-      patient: _patient,
-      country: 'India',
-      signature: record.isSigned ? _png : null,
-    );
-
-    testWidgets('the web labels, in the web order', (tester) async {
-      await _show(tester, view(_rx(signed: true)), screen: 360, width: 288);
-
-      final inOrder = [
-        'prescription',
-        'Date : 23 Nov 2026',
-        'PATIENT NAME',
-        'GENDER',
-        'DOB',
-        'AGE',
-        'Diagnosis :',
-        'Medications',
-        'Rx',
-        'SR. NO',
-        'Advice :',
-        'Allergy :',
-        'Follow-up Date :',
-        'PHYSICIAN DETAILS',
-        "DOCTOR'S NAME",
-        'MEDICAL REG NO',
-        'SPECIALITY',
-        'DATE',
-        'COUNTRY',
-        'SIGNATURE',
-        kSlipPhone,
-        kSlipEmail,
-        kSlipAddress,
-      ];
-      final tops = [for (final text in inOrder) _top(tester, text)];
-      expect(tops, orderedEquals([...tops]..sort()));
-      for (final heading in ['MEDICINE', 'DOSE', 'TIMING', 'NO. OF DAYS']) {
-        expect(find.text(heading), findsOneWidget);
-      }
-      // The stored value, as the web screen shows it.
-      expect(find.text('1990-05-12'), findsOneWidget);
-      expect(
-        find.text('Digitally signed · 23 Nov 2026 05:42 PM'),
-        findsOneWidget,
-      );
-    });
-
-    testWidgets('unsigned: no signature; no patient details: dashes', (
-      tester,
-    ) async {
-      await _show(
-        tester,
-        PrescriptionSlipView(record: _rx(), patient: const {'name': 'Asha'}),
-        screen: 360,
-        width: 288,
-      );
-
-      expect(find.text('SIGNATURE'), findsNothing);
-      expect(find.textContaining('Digitally signed'), findsNothing);
-      expect(find.text('—'), findsNWidgets(3)); // gender, DOB, age
-    });
-
-    for (final screen in [320.0, 360.0, 412.0]) {
-      for (final textScale in [1.0, 1.3]) {
-        testWidgets(
-          'fits a ${screen.toInt()} phone at text size $textScale: long names, '
-          'many rows, signed',
-          (tester) async {
-            await _show(
-              tester,
-              view(_rx(signed: true, rows: 30, name: _longName)),
-              screen: screen,
-              // The record card leaves about this much.
-              width: screen - 56,
-              textScale: textScale,
-            );
-
-            expect(tester.takeException(), isNull);
-            expect(find.text(_longName), findsNWidgets(30));
-            // Only the table scrolls sideways.
-            expect(
-              _tableScroll(tester).position.maxScrollExtent,
-              greaterThan(0),
-            );
-          },
-        );
-      }
-    }
-  });
 
   group('certificate', () {
     Widget view(MedicalCertificateRecord record) => CertificateSlipView(

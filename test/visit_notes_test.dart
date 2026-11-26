@@ -17,6 +17,8 @@ import 'package:humancare_connect/services/token_storage_service.dart';
 import 'package:humancare_connect/services/visit_notes_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'support/fake_document_saver.dart';
+import 'support/fake_slip_renderer.dart';
+import 'support/pdf_text.dart';
 
 /// A real, valid 1x1 PNG.
 final Uint8List _png = base64Decode(
@@ -436,6 +438,7 @@ void main() {
     }
 
     testWidgets('shows the note, physician details, country name and amendments', (tester) async {
+      final renderer = await FakeSlipRenderer.install(tester);
       await pumpDetail(
         tester,
         _FakeService(
@@ -456,24 +459,34 @@ void main() {
       );
 
       expect(find.text('Visit Note Preview'), findsOneWidget);
-      expect(find.text('Report ID : HCR-2026-0001'), findsOneWidget);
       expect(find.text('Download PDF'), findsOneWidget);
-      expect(find.text('Rest'), findsOneWidget);
-      expect(find.text('Note :'), findsOneWidget);
-      expect(find.text('India'), findsOneWidget);
-      expect(find.text('AMENDMENTS'), findsOneWidget);
-      expect(find.byType(Image), findsWidgets);
+      expect(find.byKey(const ValueKey('slip page 1')), findsOneWidget);
+      expect(renderer.builds, hasLength(1), reason: 'drawn once, with extras');
+
+      final text = pdfText(await renderer.lastPdf(tester));
+      for (final part in [
+        'Report ID : HCR-2026-0001',
+        'Rest',
+        'Note :',
+        'India',
+        'AMENDMENTS',
+      ]) {
+        expect(text, contains(part));
+      }
     });
 
     testWidgets('the Note row is hidden when the note is empty', (tester) async {
+      final renderer = await FakeSlipRenderer.install(tester);
       await pumpDetail(
         tester,
         _FakeService(
           one: ApiResult(success: true, message: '', data: VisitNoteReport.fromJson(_report())),
         ),
       );
-      expect(find.text('Note :'), findsNothing);
-      expect(find.text('AMENDMENTS'), findsNothing);
+      final text = pdfText(await renderer.lastPdf(tester));
+      expect(text, contains('Clinical Findings :'));
+      expect(text, isNot(contains('Note :')));
+      expect(text, isNot(contains('AMENDMENTS')));
     });
 
     testWidgets('a 404 shows "Visit Note not found"', (tester) async {

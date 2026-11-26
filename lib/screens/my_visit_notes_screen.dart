@@ -91,7 +91,12 @@ class _MyVisitNotesScreenState extends State<MyVisitNotesScreen> {
         return;
       }
       if (!mounted) return;
-      await announceSaved(ScaffoldMessenger.of(context), _saver, document);
+      await announceSaved(
+        ScaffoldMessenger.of(context),
+        _saver,
+        document,
+        navigator: Navigator.of(context, rootNavigator: true),
+      );
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

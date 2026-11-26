@@ -1,14 +1,17 @@
-import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:humancare_connect/models/api_result.dart';
 import 'package:humancare_connect/models/payment_model.dart';
+import 'package:humancare_connect/screens/pdf_viewer_screen.dart';
 import 'package:humancare_connect/screens/payment_history_screen.dart';
 import 'package:humancare_connect/services/document_saver.dart';
 import 'package:humancare_connect/services/payment_history_service.dart';
+import 'package:open_filex/open_filex.dart';
 
 import 'support/fake_document_saver.dart';
 
@@ -171,6 +174,162 @@ void main() {
       expect(find.text('Saved to Files'), findsOneWidget);
       expect(saver.opened, ['/docs/a.pdf']);
     });
+  });
+
+  group('the copy Open needs (media_store_plus deletes what it is given)', () {
+    late Directory cache;
+    late File kept;
+
+    setUp(() async {
+      cache = await Directory.systemTemp.createTemp('saver');
+      kept = File('${cache.path}/visit-note_HCR-1 (1).pdf');
+      await kept.writeAsString('%PDF-1.4 kept');
+    });
+    tearDown(() => cache.delete(recursive: true));
+
+    test('still exists after the plugin deletes its input', () async {
+      String? given;
+      final result = await DocumentSaver.publishCopy(kept, (path) async {
+        given = path;
+        expect(await File(path).readAsString(), '%PDF-1.4 kept');
+        await File(path).delete();
+        return 'saved';
+      });
+
+      expect(result, 'saved');
+      expect(given, isNot(kept.path));
+      // the plugin names the download after the file it is given
+      expect(Uri.file(given!).pathSegments.last, 'visit-note_HCR-1 (1).pdf');
+      expect(await kept.exists(), isTrue);
+    });
+
+    test('a plugin that only copies leaves no spare file behind', () async {
+      late String given;
+      await DocumentSaver.publishCopy(kept, (path) async => given = path);
+      expect(await File(given).exists(), isFalse);
+      expect(await kept.exists(), isTrue);
+    });
+
+    test('a failed save keeps the file too', () async {
+      await expectLater(
+        DocumentSaver.publishCopy<void>(kept, (_) async => throw Exception('no')),
+        throwsException,
+      );
+      expect(await kept.exists(), isTrue);
+    });
+
+    test('reads the saved file, or null when it is gone', () async {
+      const saver = DocumentSaver();
+      expect(await saver.read(kept.path), isNotEmpty);
+      expect(await saver.read('${cache.path}/missing.pdf'), isNull);
+    });
+  });
+
+  test('what the phone answered', () {
+    expect(DocumentSaver.outcomeOf(ResultType.done), OpenOutcome.opened);
+    expect(DocumentSaver.outcomeOf(ResultType.noAppToOpen), OpenOutcome.noApp);
+    for (final type in [
+      ResultType.fileNotFound,
+      ResultType.permissionDenied,
+      ResultType.error,
+    ]) {
+      expect(DocumentSaver.outcomeOf(type), OpenOutcome.failed);
+    }
+  });
+
+  group('Open', () {
+    const failed = {
+      SavedWhere.downloads:
+          "Couldn't open the file. You can find it in Downloads/Humancare Connect.",
+      SavedWhere.files:
+          "Couldn't open the file. You can find it in the Files app.",
+      SavedWhere.viewOnly:
+          "Couldn't open the file. Please try downloading again.",
+    };
+
+    /// Saves, taps "Open" where there is a snackbar action, and lets the
+    /// result appear.
+    Future<FakeDocumentSaver> open(
+      WidgetTester tester,
+      SavedWhere where,
+      OpenOutcome outcome, {
+      bool readable = true,
+    }) async {
+      // the viewer asks the printing plugin what the phone can do
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        const MethodChannel('net.nfet.printing'),
+        (call) async => call.method == 'printingInfo'
+            ? <String, Object>{'canRaster': false}
+            : null,
+      );
+      final saver = FakeDocumentSaver(
+        where: where,
+        outcome: outcome,
+        readable: readable,
+      );
+      final messenger = GlobalKey<ScaffoldMessengerState>();
+      final navigator = GlobalKey<NavigatorState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          key: UniqueKey(),
+          scaffoldMessengerKey: messenger,
+          navigatorKey: navigator,
+          home: const Scaffold(body: SizedBox()),
+        ),
+      );
+      await announceSaved(
+        messenger.currentState!,
+        saver,
+        SavedDocument(path: '/cache/documents/a.pdf', where: where),
+        navigator: navigator.currentState,
+      );
+      await tester.pump();
+      if (where == SavedWhere.downloads) {
+        await tester.pump(const Duration(milliseconds: 600));
+        await tester.tap(find.text('Open'));
+      }
+      for (var i = 0; i < 8; i++) {
+        await tester.pump(const Duration(milliseconds: 200));
+      }
+      expect(saver.opened, ['/cache/documents/a.pdf']);
+      return saver;
+    }
+
+    for (final where in SavedWhere.values) {
+      testWidgets('${where.name}: opened in another app, nothing more', (
+        tester,
+      ) async {
+        await open(tester, where, OpenOutcome.opened);
+        expect(find.byType(PdfViewerScreen), findsNothing);
+        expect(find.text(failed[where]!), findsNothing);
+      });
+
+      for (final outcome in [OpenOutcome.noApp, OpenOutcome.failed]) {
+        testWidgets('${where.name}, ${outcome.name}: the in-app viewer', (
+          tester,
+        ) async {
+          await open(tester, where, outcome);
+          final viewer = tester.widget<PdfViewerScreen>(
+            find.byType(PdfViewerScreen),
+          );
+          expect(viewer.title, 'a.pdf');
+          expect(viewer.errorText, failed[where]);
+        });
+      }
+
+      testWidgets('${where.name}: nothing to show gives the message', (
+        tester,
+      ) async {
+        await open(tester, where, OpenOutcome.failed, readable: false);
+        expect(find.byType(PdfViewerScreen), findsNothing);
+        // it may wait for an earlier snackbar to leave first
+        final message = find.text(failed[where]!);
+        for (var i = 0; i < 40 && message.evaluate().isEmpty; i++) {
+          await tester.pump(const Duration(milliseconds: 200));
+        }
+        expect(message, findsOneWidget);
+      });
+    }
   });
 
   group('PaymentHistoryScreen invoice download', () {

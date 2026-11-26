@@ -6,6 +6,8 @@ import 'package:humancare_connect/models/medical_record_models.dart';
 import 'package:humancare_connect/models/visit_note_models.dart';
 import 'package:humancare_connect/pdf/slip_pdf.dart';
 
+import 'support/pdf_text.dart';
+
 /// Set SLIP_PDF_OUT to a folder to also save the PDFs for a visual check
 /// against the web PDFs; SLIP_PDF_SIG can point to a signature PNG.
 final String? _out = Platform.environment['SLIP_PDF_OUT'];
@@ -144,6 +146,34 @@ void main() {
         patient: _patient,
       );
       expect(_isPdf(signedNoImage), isTrue);
+    });
+  });
+
+  group('what the prescription and visit note say', () {
+    const patient = {'name': 'Asha', 'dob': '1990-05-01', 'gender': 'Female'};
+
+    test('the date of birth is the stored value, as on the web', () async {
+      final rx = pdfText(await SlipPdf.prescription(_rx(), patient: patient));
+      expect(rx, contains('1990-05-01'));
+      expect(rx, isNot(contains('01 May 1990')));
+
+      final visit = pdfText(
+        await SlipPdf.visitNote(
+          VisitNoteReport.fromJson({
+            '_id': 'r1',
+            'patient': {'name': 'Asha', 'dob': '1990-05-01'},
+          }),
+        ),
+      );
+      expect(visit, contains('1990-05-01'));
+      expect(visit, isNot(contains('01 May 1990')));
+    });
+
+    test('a doctor with no country gets no country', () async {
+      final text = pdfText(await SlipPdf.prescription(_rx(), patient: patient));
+      expect(text, contains('COUNTRY'));
+      // only the clinic's footer address names it
+      expect('United States'.allMatches(text), hasLength(1));
     });
   });
 

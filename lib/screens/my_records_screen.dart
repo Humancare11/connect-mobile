@@ -14,7 +14,7 @@ import '../services/socket_service.dart';
 import '../services/token_storage_service.dart';
 import '../services/visit_notes_service.dart';
 import '../widgets/slips/certificate_slip_view.dart';
-import '../widgets/slips/prescription_slip_view.dart';
+import '../widgets/slips/slip_pdf_view.dart';
 
 enum _RecordsTab { prescriptions, certificates, reports }
 
@@ -58,8 +58,12 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   late final DocumentSignatureService _signatures =
       widget.signatureService ?? DocumentSignatureService();
   final Set<String> _loadingSignatures = {};
-  // Country names for the opened prescriptions, by the code the API sent.
-  final Map<String, String> _countries = {};
+  // Prescriptions drawn on screen without their signature (it did not load),
+  // and how often each has been asked to try again.
+  final Set<String> _drawnWithoutSignature = {};
+  final Map<String, int> _redraws = {};
+  // Kept so the country list is only fetched once.
+  late final VisitNotesService _countryService = VisitNotesService();
   final _tokenStorage = const TokenStorageService();
   Timer? _refreshTimer;
   DateTime? _lastFetchAt;
@@ -86,6 +90,8 @@ class _MyRecordsPageState extends State<MyRecordsPage>
   };
   Map<String, String> _patient = const {};
   String? _expandedId;
+  // The card open before this one: it is still folding away.
+  String? _closingId;
   String _error = '';
   String _downloadingId = '';
   bool _loading = true;
@@ -122,7 +128,7 @@ class _MyRecordsPageState extends State<MyRecordsPage>
     await _loadRecords(withLoader: true);
   }
 
-  /// Fetches the doctor's signature for a signed document (when its card is
+  /// Fetches the doctor's signature for a signed certificate (when its card is
   /// opened). A failure just leaves the slip's signature area empty; opening
   /// the card again retries.
   Future<void> _loadSignature(SignedDocumentKind kind, String id) async {
@@ -628,36 +634,67 @@ class _MyRecordsPageState extends State<MyRecordsPage>
       subtitle: subtitleParts.join(' · '),
       open: open,
       onDownload: () => _downloadPrescription(record),
-      onExpand: () {
-        if (record.isSigned) {
-          _loadSignature(SignedDocumentKind.prescription, record.id);
-        }
-        _loadCountry(_countryCode(record));
-      },
-      child: PrescriptionSlipView(
-        record: record,
-        patient: _patient,
-        country: _countries[_countryCode(record)] ?? _countryCode(record),
-        signature: _signatures.cached(SignedDocumentKind.prescription, record.id),
-      ),
+      onExpand: () => _redrawIfSignatureMissing(record.id),
+      // The same PDF the Download button saves. A card keeps its content even
+      // when closed, so only an opened one is drawn.
+      child: open || _closingId == record.id
+          ? SlipPdfView(
+              key: ValueKey('prescription ${record.id}'),
+              label: 'Prescription',
+              version: _prescriptionVersion(record),
+              buildPdf: () => _screenPrescriptionPdf(record),
+            )
+          : const SizedBox.shrink(),
     );
   }
 
-  // The web shows the United States when the doctor has no country.
-  String _countryCode(PrescriptionRecord record) {
-    final code = record.enrollment.country.trim();
-    return code.isEmpty ? 'US' : code;
+  /// A signature that cannot be loaded leaves its space empty on screen; only
+  /// the download insists on it.
+  Future<Uint8List> _screenPrescriptionPdf(PrescriptionRecord record) async {
+    Uint8List? signature;
+    if (record.isSigned) {
+      signature = await _signatures.fetch(
+        SignedDocumentKind.prescription,
+        record.id,
+      );
+      if (signature == null) _drawnWithoutSignature.add(record.id);
+    }
+    return _prescriptionPdf(record, signature);
   }
 
-  Future<void> _loadCountry(String code) async {
-    if (_countries.containsKey(code)) return;
-    try {
-      final name = await (widget.countryName ?? VisitNotesService().countryName)(
-        code,
-      );
-      // An unresolved code is asked again next time.
-      if (mounted && name != code) setState(() => _countries[code] = name);
-    } catch (_) {}
+  /// Draws the prescription again if its signature was missing last time.
+  void _redrawIfSignatureMissing(String id) {
+    if (!mounted || !_drawnWithoutSignature.remove(id)) return;
+    setState(() => _redraws[id] = (_redraws[id] ?? 0) + 1);
+  }
+
+  /// Everything that shows on the prescription, so a refresh with the same
+  /// content does not draw it again.
+  String _prescriptionVersion(PrescriptionRecord record) {
+    final enrollment = record.enrollment;
+    return [
+      record.id,
+      record.diagnosis,
+      record.doctor.name,
+      enrollment.medicalRegistrationNumber,
+      enrollment.specialization,
+      enrollment.country,
+      for (final m in record.medicines) ...[
+        m.name,
+        m.dosage,
+        m.frequency,
+        m.duration,
+      ],
+      record.instructions,
+      record.followUpDate,
+      record.createdAt,
+      record.isSigned,
+      record.signedAt,
+      _patient['name'],
+      _patient['gender'],
+      _patient['dob'],
+      _redraws[record.id],
+    ].join('\u001f');
   }
 
   Widget _buildCertificateCard(MedicalCertificateRecord record) {
@@ -847,7 +884,12 @@ class _MyRecordsPageState extends State<MyRecordsPage>
         return;
       }
       if (!mounted) return;
-      await announceSaved(ScaffoldMessenger.of(context), _saver, document);
+      await announceSaved(
+        ScaffoldMessenger.of(context),
+        _saver,
+        document,
+        navigator: Navigator.of(context, rootNavigator: true),
+      );
     } finally {
       if (mounted) setState(() => _downloadingId = '');
     }
@@ -877,7 +919,10 @@ class _MyRecordsPageState extends State<MyRecordsPage>
         children: [
           InkWell(
             onTap: () {
-              setState(() => _expandedId = open ? null : id);
+              setState(() {
+                _closingId = _expandedId;
+                _expandedId = open ? null : id;
+              });
               if (!open) onExpand?.call();
             },
             child: Padding(
@@ -1034,7 +1079,12 @@ class _MyRecordsPageState extends State<MyRecordsPage>
         return;
       }
       if (!mounted) return;
-      await announceSaved(ScaffoldMessenger.of(context), _saver, document);
+      await announceSaved(
+        ScaffoldMessenger.of(context),
+        _saver,
+        document,
+        navigator: Navigator.of(context, rootNavigator: true),
+      );
     } on _SignatureUnavailable {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1063,10 +1113,23 @@ class _MyRecordsPageState extends State<MyRecordsPage>
       record.id,
       record.isSigned,
     );
-    // Web shows the country as a name; the API sends the ISO code.
-    String country = record.enrollment.country;
+    // The screen can have it now too.
+    _redrawIfSignatureMissing(record.id);
+    return _prescriptionPdf(record, signature);
+  }
+
+  /// One builder for the screen and the download.
+  Future<Uint8List> _prescriptionPdf(
+    PrescriptionRecord record,
+    Uint8List? signature,
+  ) async {
+    // Web shows the country as a name; the API sends the ISO code. A doctor
+    // with no country gets an empty field.
+    var country = record.enrollment.country.trim();
     try {
-      country = await VisitNotesService().countryName(country);
+      country = await (widget.countryName ?? _countryService.countryName)(
+        country,
+      );
     } catch (_) {}
     return SlipPdf.prescription(
       record,

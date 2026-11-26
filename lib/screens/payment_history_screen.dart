@@ -253,7 +253,12 @@ class _PaymentHistoryScreenState extends State<PaymentHistoryScreen>
         return;
       }
       if (!mounted) return;
-      await announceSaved(ScaffoldMessenger.of(context), _saver, document);
+      await announceSaved(
+        ScaffoldMessenger.of(context),
+        _saver,
+        document,
+        navigator: Navigator.of(context, rootNavigator: true),
+      );
     } finally {
       if (mounted) setState(() => _downloadingId = '');
     }

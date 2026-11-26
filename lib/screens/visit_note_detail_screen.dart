@@ -6,11 +6,12 @@ import '../config/app_design_system.dart';
 import '../models/visit_note_models.dart';
 import '../services/document_saver.dart';
 import '../services/visit_notes_service.dart';
+import '../widgets/slips/slip_pdf_view.dart';
 import '../widgets/visit_note_widgets.dart';
 import 'visit_note_pdf.dart';
 
-/// "Visit Note Preview" for the patient: the signed note laid out as the
-/// letterhead paper, with a Download PDF button. Read only (only the doctor can
+/// "Visit Note Preview" for the patient: the signed note shown as the PDF
+/// paper itself, with a Download PDF button. Read only (only the doctor can
 /// add amendments). Same content as the web `/user/my-visit-notes/:reportId`.
 class VisitNoteDetailScreen extends StatefulWidget {
   const VisitNoteDetailScreen({
@@ -37,6 +38,8 @@ class _VisitNoteDetailScreenState extends State<VisitNoteDetailScreen> {
   VisitNoteReport? _report;
   Uint8List? _signature;
   String _country = '';
+  // The document is drawn once the signature and country have been tried.
+  bool _extrasLoaded = false;
   bool _loading = true;
   bool _notFound = false;
   String _error = '';
@@ -53,6 +56,7 @@ class _VisitNoteDetailScreenState extends State<VisitNoteDetailScreen> {
       _loading = true;
       _notFound = false;
       _error = '';
+      _extrasLoaded = false;
     });
     final result = await _service.fetchOne(widget.reportId, silent: true);
     if (!mounted) return;
@@ -90,11 +94,40 @@ class _VisitNoteDetailScreenState extends State<VisitNoteDetailScreen> {
     setState(() {
       _signature = signature ?? _signature;
       _country = country;
+      _extrasLoaded = true;
     });
   }
 
   late final DocumentSaver _saver =
       widget.documentSaver ?? const DocumentSaver();
+
+  /// Everything that shows on the paper.
+  String _version(VisitNoteReport report) => [
+    report.id,
+    report.reportNumber,
+    report.patientName,
+    report.patientGender,
+    report.patientDob,
+    report.patientAge,
+    report.consultationWhen,
+    report.modeLabel,
+    report.symptoms,
+    report.clinicalFindings,
+    report.plan,
+    report.note,
+    report.physicianName,
+    report.physicianRegistrationNumber,
+    report.physicianSpeciality,
+    report.signedAt,
+    for (final a in report.amendments) ...[
+      a.authorName,
+      a.reason,
+      a.text,
+      a.createdAt,
+    ],
+    _country,
+    _signature != null,
+  ].join('\u001f');
 
   Future<void> _download() async {
     final report = _report;
@@ -125,7 +158,14 @@ class _VisitNoteDetailScreenState extends State<VisitNoteDetailScreen> {
         return;
       }
       if (!mounted) return;
-      await announceSaved(ScaffoldMessenger.of(context), _saver, document);
+      // The screen picks up a signature that only the download got.
+      setState(() => _signature = signature ?? _signature);
+      await announceSaved(
+        ScaffoldMessenger.of(context),
+        _saver,
+        document,
+        navigator: Navigator.of(context, rootNavigator: true),
+      );
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -212,498 +252,23 @@ class _VisitNoteDetailScreenState extends State<VisitNoteDetailScreen> {
             ),
           ),
           const SizedBox(height: 14),
-          _VisitNoteSlip(
-            report: report,
-            signature: _signature,
-            country: _country.isNotEmpty ? _country : report.physicianCountry,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-Color get _brand => AppColors.primary;
-Color get _brandDeep => AppColors.primaryDeep;
-Color get _brandTint => AppColors.primary.withValues(alpha: 0.08);
-
-/// The Visit Note paper: same letterhead, banner and panels as the app's
-/// prescription and certificate slips, with the Visit Note content.
-class _VisitNoteSlip extends StatelessWidget {
-  const _VisitNoteSlip({
-    required this.report,
-    required this.signature,
-    required this.country,
-  });
-
-  final VisitNoteReport report;
-  final Uint8List? signature;
-  final String country;
-
-  @override
-  Widget build(BuildContext context) {
-    final signedAt = formatVisitNoteDateTime(report.signedAt);
-    return Container(
-      decoration: BoxDecoration(
-        color: _brandTint,
-        borderRadius: BorderRadius.circular(AppRadius.sm),
-      ),
-      padding: const EdgeInsets.all(10),
-      child: Container(
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(3),
-          boxShadow: AppShadows.subtle,
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const _SlipHeader(),
-            _Banner(report: report),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _InfoPanel(
-                    label: 'Patient',
-                    rows: [
-                      ['Patient Name', report.patientName],
-                      ['Gender', report.patientGender],
-                      ['DOB', report.patientDob],
-                      ['Age', report.patientAge],
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  _InfoPanel(
-                    label: 'Consultation',
-                    rows: [
-                      ['Consultation', report.consultationWhen],
-                      ['Mode', report.modeLabel],
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  _SymptomsBox(text: report.symptoms),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Consultation Details',
-                    style: AppType.body(
-                      size: 14,
-                      weight: FontWeight.w800,
-                    ).copyWith(color: _brandDeep),
-                  ),
-                  const SizedBox(height: 8),
-                  _DetailRow(
-                    label: 'Clinical Findings :',
-                    value: report.clinicalFindings,
-                    shaded: false,
-                  ),
-                  _DetailRow(
-                    label: 'Plan / Treatment :',
-                    value: report.plan,
-                    shaded: true,
-                  ),
-                  if (report.note.trim().isNotEmpty)
-                    _DetailRow(
-                      label: 'Note :',
-                      value: report.note,
-                      shaded: false,
-                    ),
-                  const SizedBox(height: 16),
-                  _InfoPanel(
-                    label: 'Physician Details',
-                    rows: [
-                      ["Doctor's Name", report.physicianName],
-                      ['Medical Reg No', report.physicianRegistrationNumber],
-                      ['Speciality', report.physicianSpeciality],
-                      ['Country', country],
-                    ],
-                    footer: _SignatureBlock(
-                      signedAt: signedAt,
-                      signature: signature,
-                    ),
-                  ),
-                  if (report.amendments.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    _Amendments(amendments: report.amendments),
-                  ],
-                  const SizedBox(height: 16),
-                ],
+          if (_extrasLoaded)
+            // The same PDF the Download button saves.
+            SlipPdfView(
+              key: ValueKey('visit note ${report.id}'),
+              label: 'Visit Note',
+              version: _version(report),
+              buildPdf: () => VisitNotePdf.build(
+                report,
+                signature: _signature,
+                countryName: _country,
               ),
-            ),
-            const _SlipFooter(),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SlipHeader extends StatelessWidget {
-  const _SlipHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: _brandTint, width: 2)),
-      ),
-      child: Row(
-        children: [
-          Image.asset(
-            'assets/logo-2.png',
-            height: 42,
-            errorBuilder: (_, error, stackTrace) {
-              return Text(
-                'Humancare Connect',
-                style: AppType.display(size: 16, color: _brandDeep),
-              );
-            },
-          ),
-          const Spacer(),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                'Global Health Passport',
-                style: AppType.body(
-                  size: 10,
-                  weight: FontWeight.w900,
-                ).copyWith(color: _brand, letterSpacing: 1.0),
-              ),
-              const SizedBox(height: 5),
-              SizedBox(
-                width: 48,
-                child: Divider(color: _brand, thickness: 4),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Banner extends StatelessWidget {
-  const _Banner({required this.report});
-
-  final VisitNoteReport report;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: _brandTint,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              'Visit Note',
-              style: AppType.body(
-                size: 14,
-                weight: FontWeight.w900,
-              ).copyWith(color: _brandDeep),
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                'Report ID : ${report.reportNumber}',
-                style: AppType.body(
-                  size: 12,
-                  weight: FontWeight.w900,
-                ).copyWith(color: _brandDeep),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                'Date : ${formatVisitNoteDate(report.signedAt)}',
-                style: AppType.body(
-                  size: 11,
-                ).copyWith(color: AppColors.textSecondary),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _InfoPanel extends StatelessWidget {
-  const _InfoPanel({required this.label, required this.rows, this.footer});
-
-  final String label;
-  final List<List<String>> rows;
-  final Widget? footer;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(border: Border.all(color: _brandTint)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label.toUpperCase(),
-            style: AppType.body(
-              size: 10,
-              weight: FontWeight.w900,
-            ).copyWith(color: _brand, letterSpacing: 1),
-          ),
-          const SizedBox(height: 8),
-          ...rows.map(
-            (row) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    row[0],
-                    style: AppType.body(
-                      size: 12,
-                    ).copyWith(color: AppColors.textSecondary),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      row.length > 1 && row[1].trim().isNotEmpty
-                          ? row[1]
-                          : '-',
-                      textAlign: TextAlign.right,
-                      style: AppType.body(
-                        size: 12,
-                        weight: FontWeight.w800,
-                      ).copyWith(color: _brandDeep),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (footer != null) ...[const SizedBox(height: 6), footer!],
-        ],
-      ),
-    );
-  }
-}
-
-class _SymptomsBox extends StatelessWidget {
-  const _SymptomsBox({required this.text});
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(12, 12, 14, 12),
-      decoration: BoxDecoration(
-        color: _brandTint,
-        border: Border(left: BorderSide(color: _brand, width: 4)),
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text.rich(
-        TextSpan(
-          children: [
-            TextSpan(
-              text: 'Symptoms : ',
-              style: AppType.body(
-                size: 13,
-                weight: FontWeight.w800,
-              ).copyWith(color: _brandDeep),
-            ),
-            TextSpan(
-              text: text.trim().isEmpty ? '-' : text,
-              style: AppType.body(
-                size: 13,
-                height: 1.6,
-              ).copyWith(color: AppColors.textPrimary),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _DetailRow extends StatelessWidget {
-  const _DetailRow({
-    required this.label,
-    required this.value,
-    required this.shaded,
-  });
-
-  final String label;
-  final String value;
-  final bool shaded;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: shaded ? _brandTint : AppColors.surface,
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: AppType.body(
-              size: 12,
-              weight: FontWeight.w800,
-            ).copyWith(color: _brandDeep),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value.trim().isEmpty ? '-' : value,
-            style: AppType.body(
-              size: 13,
-              height: 1.5,
-            ).copyWith(color: AppColors.textPrimary),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SignatureBlock extends StatelessWidget {
-  const _SignatureBlock({required this.signedAt, this.signature});
-
-  final String signedAt;
-  final Uint8List? signature;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Signature',
-          style: AppType.body(
-            size: 12,
-            weight: FontWeight.w800,
-          ).copyWith(color: _brand),
-        ),
-        const SizedBox(height: 4),
-        SizedBox(
-          height: 56,
-          child: signature == null
-              ? null
-              : Image.memory(
-                  signature!,
-                  height: 56,
-                  fit: BoxFit.contain,
-                  alignment: Alignment.centerLeft,
-                  gaplessPlayback: true,
-                  errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          signedAt.isEmpty
-              ? 'Digitally signed'
-              : 'Digitally signed · $signedAt',
-          style: AppType.body(
-            size: 11,
-          ).copyWith(color: AppColors.textSecondary),
-        ),
-      ],
-    );
-  }
-}
-
-class _Amendments extends StatelessWidget {
-  const _Amendments({required this.amendments});
-
-  final List<VisitNoteAmendment> amendments;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(border: Border.all(color: _brandTint)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            color: _brandTint,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            child: Text(
-              'AMENDMENTS',
-              style: AppType.body(
-                size: 12,
-                weight: FontWeight.w900,
-              ).copyWith(color: _brandDeep, letterSpacing: 0.6),
-            ),
-          ),
-          for (var i = 0; i < amendments.length; i++)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: i.isOdd ? _brandTint : AppColors.surface,
-                border: i == 0
-                    ? null
-                    : Border(top: BorderSide(color: AppColors.border)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Amendment ${i + 1} · ${amendments[i].authorName} · '
-                    '${formatVisitNoteDateTime(amendments[i].createdAt)}',
-                    style: AppType.body(
-                      size: 11,
-                    ).copyWith(color: AppColors.textSecondary),
-                  ),
-                  const SizedBox(height: 4),
-                  Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(
-                          text: 'Reason : ',
-                          style: AppType.body(
-                            size: 13,
-                            weight: FontWeight.w800,
-                          ).copyWith(color: _brandDeep),
-                        ),
-                        TextSpan(
-                          text: amendments[i].reason,
-                          style: AppType.body(
-                            size: 13,
-                            height: 1.5,
-                          ).copyWith(color: AppColors.textPrimary),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(
-                          text: 'Correction : ',
-                          style: AppType.body(
-                            size: 13,
-                            weight: FontWeight.w800,
-                          ).copyWith(color: _brandDeep),
-                        ),
-                        TextSpan(
-                          text: amendments[i].text,
-                          style: AppType.body(
-                            size: 13,
-                            height: 1.5,
-                          ).copyWith(color: AppColors.textPrimary),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+            )
+          else
+            const Padding(
+              padding: EdgeInsets.all(32),
+              child: Center(
+                child: CircularProgressIndicator(color: AppColors.primary),
               ),
             ),
         ],
@@ -712,20 +277,3 @@ class _Amendments extends StatelessWidget {
   }
 }
 
-class _SlipFooter extends StatelessWidget {
-  const _SlipFooter();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(top: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      color: _brandDeep,
-      child: Text(
-        'This document is generated electronically and is valid without a physical signature.',
-        textAlign: TextAlign.center,
-        style: AppType.body(size: 11.5).copyWith(color: Colors.white),
-      ),
-    );
-  }
-}

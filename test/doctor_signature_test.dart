@@ -17,6 +17,8 @@ import 'package:humancare_connect/services/session_logout.dart';
 import 'package:humancare_connect/services/token_storage_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'support/fake_document_saver.dart';
+import 'support/fake_slip_renderer.dart';
+import 'support/pdf_text.dart';
 
 /// A real, valid 1x1 PNG.
 final Uint8List _png = base64Decode(
@@ -316,11 +318,6 @@ void main() {
       }
     }
 
-    // the signature itself (the slip header's logo is an asset image)
-    final signatureImage = find.byWidgetPredicate(
-      (w) => w is Image && w.image is MemoryImage,
-    );
-
     Future<void> openCard(WidgetTester tester, String title) async {
       await tester.tap(find.text(title).first);
       await tester.pump();
@@ -328,43 +325,81 @@ void main() {
       await tester.pump(const Duration(milliseconds: 250));
     }
 
-    testWidgets('signed prescription: opening it loads the signature and shows the block',
+    // the prescription on screen is the PDF itself
+    int imagesIn(Uint8List pdf) =>
+        RegExp('/Subtype\\s*/Image').allMatches(latin1.decode(pdf)).length;
+
+    testWidgets('signed prescription: opening it loads the signature and draws it',
         (tester) async {
+      final renderer = await FakeSlipRenderer.install(tester);
       final signatures = _FakeSignatures(bytes: _png);
       await pumpPage(tester, prescriptions: [_rx(signed: true)], signatures: signatures);
 
       // nothing is requested until the card is opened
       expect(signatures.calls, isEmpty);
+      expect(renderer.builds, isEmpty);
       await openCard(tester, 'Migraine');
 
-      expect(signatures.calls, ['prescription:rx1']);
-      expect(find.text('SIGNATURE'), findsOneWidget);
-      expect(find.textContaining('Digitally signed'), findsOneWidget);
-      expect(signatureImage, findsOneWidget);
+      expect(renderer.builds, hasLength(1), reason: 'drawn once');
+      final pdf = await renderer.lastPdf(tester);
+      expect(signatures.calls, everyElement('prescription:rx1'));
+      expect(pdfText(pdf), contains('SIGNATURE'));
+      expect(pdfText(pdf), contains('Digitally signed'));
+
+      // the same document, byte for byte in content, as the download
+      await tester.runAsync(() async {
+        await tester.tap(find.text('PDF'));
+        await Future<void>.delayed(const Duration(seconds: 2));
+      });
+      await tester.pump();
+      expect(pdfText(saver.saved.single.$1), pdfText(pdf));
+      expect(imagesIn(saver.saved.single.$1), imagesIn(pdf));
     });
 
     testWidgets('old / unsigned prescription: no signature block, no request',
         (tester) async {
+      final renderer = await FakeSlipRenderer.install(tester);
       final signatures = _FakeSignatures(bytes: _png);
       await pumpPage(tester, prescriptions: [_rx()], signatures: signatures);
 
       await openCard(tester, 'Migraine');
+      final text = pdfText(await renderer.lastPdf(tester));
 
       expect(signatures.calls, isEmpty);
-      expect(find.text('SIGNATURE'), findsNothing);
-      expect(find.textContaining('Digitally signed'), findsNothing);
+      expect(text, contains('PHYSICIAN DETAILS'));
+      expect(text, isNot(contains('SIGNATURE')));
+      expect(text, isNot(contains('Digitally signed')));
     });
 
-    testWidgets('signed but the signature fails to load: empty area with the caption',
+    testWidgets('signed but the signature fails to load: still shown, area empty',
         (tester) async {
+      final renderer = await FakeSlipRenderer.install(tester);
       final signatures = _FakeSignatures(bytes: null);
       await pumpPage(tester, prescriptions: [_rx(signed: true)], signatures: signatures);
-
       await openCard(tester, 'Migraine');
+      final signed = await renderer.lastPdf(tester);
 
-      expect(find.text('SIGNATURE'), findsOneWidget);
-      expect(find.textContaining('Digitally signed'), findsOneWidget);
-      expect(signatureImage, findsNothing);
+      await pumpPage(tester, prescriptions: [_rx()], signatures: signatures);
+      await openCard(tester, 'Migraine');
+      final unsigned = await renderer.lastPdf(tester);
+
+      expect(pdfText(signed), contains('Digitally signed'));
+      expect(imagesIn(signed), imagesIn(unsigned), reason: 'no signature image');
+    });
+
+    testWidgets('a signature that failed is tried again when the card is reopened',
+        (tester) async {
+      final renderer = await FakeSlipRenderer.install(tester);
+      final signatures = _FakeSignatures(bytes: null);
+      await pumpPage(tester, prescriptions: [_rx(signed: true)], signatures: signatures);
+      await openCard(tester, 'Migraine');
+      final without = await renderer.lastPdf(tester);
+
+      signatures.bytes = _png;
+      await openCard(tester, 'Migraine'); // close
+      await openCard(tester, 'Migraine'); // open again
+      expect(renderer.builds, hasLength(2));
+      expect(imagesIn(await renderer.lastPdf(tester)), imagesIn(without) + 2);
     });
 
     testWidgets('certificates: signed replaces the system-generated note, unsigned keeps it',

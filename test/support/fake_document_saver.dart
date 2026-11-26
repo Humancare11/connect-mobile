@@ -9,6 +9,8 @@ class FakeDocumentSaver extends DocumentSaver {
     this.where = SavedWhere.downloads,
     this.failFetch = false,
     this.failSave = false,
+    this.outcome = OpenOutcome.opened,
+    this.readable = true,
     Uint8List? fetchBytes,
   }) : fetchBytes = fetchBytes ?? Uint8List.fromList('%PDF-1.4 fake'.codeUnits);
 
@@ -16,6 +18,10 @@ class FakeDocumentSaver extends DocumentSaver {
   final bool failFetch;
   final bool failSave;
   final Uint8List fetchBytes;
+
+  /// What [open] reports, and whether the saved file can still be read.
+  final OpenOutcome outcome;
+  final bool readable;
 
   final List<Uri> fetched = [];
   final List<(Uint8List, String)> saved = [];
@@ -36,7 +42,11 @@ class FakeDocumentSaver extends DocumentSaver {
   }
 
   @override
-  Future<void> open(String path) async {
+  Future<OpenOutcome> open(String path) async {
     opened.add(path);
+    return outcome;
   }
+
+  @override
+  Future<Uint8List?> read(String path) async => readable ? fetchBytes : null;
 }

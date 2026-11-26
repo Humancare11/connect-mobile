@@ -28,7 +28,7 @@ class SlipPdf {
     Uint8List? signature,
     String country = '',
   }) async {
-    final kit = await _Kit.load(_Scale.rx);
+    final kit = await _Kit.load(_Scale.rx, spaceWords: true);
     final k = kit.s;
     final children = <pw.Widget>[
       ..._rxHeader(kit),
@@ -38,7 +38,7 @@ class SlipPdf {
         k,
         44,
         pw.Padding(
-          padding: pw.EdgeInsets.only(bottom: k.px(12)),
+          padding: pw.EdgeInsets.fromLTRB(0, k.px(1.2), 0, k.px(10)),
           child: _rxFieldRow(kit, 'Diagnosis :', record.diagnosis),
         ),
       ),
@@ -70,7 +70,7 @@ class SlipPdf {
         k,
         44,
         pw.Padding(
-          padding: pw.EdgeInsets.only(bottom: k.px(12)),
+          padding: pw.EdgeInsets.only(bottom: k.px(11.2)),
           child: _rxFieldRow(kit, 'Advice :', record.instructions),
         ),
       ),
@@ -100,8 +100,8 @@ class SlipPdf {
       ..._rxPhysician(kit, record, country, signature),
     ];
     // The web prescription is not a fixed-height page: its footer follows the
-    // content (26 px below it) instead of sitting at the bottom of the paper.
-    return _render(kit, children, _rxFooter(kit), gap: k.px(26), pin: false);
+    // content (the web's gap, measured against its PDF) instead of sitting at the bottom of the paper.
+    return _render(kit, children, _rxFooter(kit), gap: k.px(17.6), pin: false);
   }
 
   static Future<Uint8List> certificate(
@@ -212,7 +212,7 @@ class SlipPdf {
     Uint8List? signature,
     String country = '',
   }) async {
-    final kit = await _Kit.load(_Scale.cert);
+    final kit = await _Kit.load(_Scale.cert, spaceWords: true);
     final k = kit.s;
 
     final detailRows = <List<String>>[
@@ -227,10 +227,13 @@ class SlipPdf {
       ['Country', country],
     ];
     final dob = report.patientDob.trim();
-    final dobText = dob.isEmpty ? '—' : _fmtIn(dob);
+    // The stored value, as the web shows it (e.g. 1990-05-12).
+    final dobText = dob.isEmpty ? '—' : dob;
 
     final children = <pw.Widget>[
-      ..._certHeader(kit),
+      // A touch less letter spacing: the pdf package sets Inter a little
+      // wider than the browser, so this keeps the web's line width.
+      ..._certHeader(kit, taglineSpacing: 1.3),
       _certBand(
         kit,
         title: 'Visit Note',
@@ -241,7 +244,7 @@ class SlipPdf {
         k,
         40,
         pw.Padding(
-          padding: pw.EdgeInsets.fromLTRB(0, k.px(20), 0, k.px(16)),
+          padding: pw.EdgeInsets.fromLTRB(0, k.px(21.6), 0, k.px(16)),
           child: _fieldGrid(kit, [
             ['Patient Name', report.patientName],
             ['Gender', _orDash(report.patientGender)],
@@ -259,7 +262,7 @@ class SlipPdf {
           k,
           40,
           pw.Padding(
-            padding: pw.EdgeInsets.only(bottom: k.px(16)),
+            padding: pw.EdgeInsets.only(bottom: k.px(16.8)),
             child: _accentBox(
               kit,
               kit.rich(
@@ -282,15 +285,15 @@ class SlipPdf {
         k,
         40,
         pw.Padding(
-          padding: pw.EdgeInsets.only(bottom: k.px(8)),
+          padding: pw.EdgeInsets.only(bottom: k.px(8.8)),
           child: kit.tx(
             'Consultation Details',
             style: kit.t(14, w: 700, color: _navy),
           ),
         ),
       ),
-      ..._detailTable(kit, detailRows),
-      pw.SizedBox(height: k.px(16)),
+      ..._detailTable(kit, detailRows, rowPadding: 10.2),
+      pw.SizedBox(height: k.px(16.8)),
       _padded(
         k,
         40,
@@ -411,7 +414,7 @@ class SlipPdf {
               ),
             ),
             pw.Positioned(
-              right: 0,
+              right: k.px(4),
               top: k.px(2),
               child: kit.tx(
                 'Date : $date',
@@ -483,7 +486,8 @@ class SlipPdf {
                 pw.Row(
                   children: [
                     cell('Gender', _orDash(gender)),
-                    cell('DOB', dob.isEmpty ? '—' : _fmtIn(dob)),
+                    // The stored value, as the web shows it.
+                    cell('DOB', _orDash(dob)),
                     cell('Age', _orDash(age), last: true),
                   ],
                 ),
@@ -513,13 +517,15 @@ class SlipPdf {
   }
 
   static pw.Widget _rxFieldRow(_Kit kit, String label, String value) {
+    final k = kit.s;
     return kit.rich(
       text: pw.TextSpan(
         children: [
           pw.TextSpan(
-            text: '$label ',
+            text: label,
             style: kit.t(13, w: 700, color: _navy),
           ),
+          pw.WidgetSpan(child: pw.SizedBox(width: k.px(6))),
           pw.TextSpan(text: value, style: kit.t(13, color: _rxInk)),
         ],
       ),
@@ -664,13 +670,14 @@ class SlipPdf {
               label.toUpperCase(),
               style: kit.t(12, w: 600, color: _rxMuted, ls: 0.4),
             ),
-            pw.SizedBox(height: k.px(2)),
+            // Web: 2 px label margin plus the field's 2 px gap.
+            pw.SizedBox(height: k.px(4)),
             kit.tx(value, style: kit.t(14, w: 500, color: _rxInk)),
           ],
         );
 
     pw.Widget pair(pw.Widget a, pw.Widget b) => pw.Padding(
-          padding: pw.EdgeInsets.only(bottom: k.px(14)),
+          padding: pw.EdgeInsets.only(bottom: k.px(13)),
           child: pw.Row(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
@@ -688,11 +695,12 @@ class SlipPdf {
             record.signedAt,
             labelStyle: kit.t(12, w: 600, color: _rxMuted, ls: 0.4),
             labelText: 'SIGNATURE',
+            labelGap: 5.6,
           )
         : pw.SizedBox();
 
     return [
-      pw.SizedBox(height: k.px(22)),
+      pw.SizedBox(height: k.px(22.8)),
       _padded(
         k,
         44,
@@ -736,7 +744,7 @@ class SlipPdf {
         ),
       ),
       _padded(k, 44, pw.Container(height: k.px(2), color: _rxAccent)),
-      pw.SizedBox(height: k.px(20)),
+      pw.SizedBox(height: k.px(22.4)),
       _padded(
         k,
         44,
@@ -789,7 +797,7 @@ class SlipPdf {
 
   // ── Certificate / Visit Note shared pieces ────────────────────────────────
 
-  static List<pw.Widget> _certHeader(_Kit kit) {
+  static List<pw.Widget> _certHeader(_Kit kit, {double taglineSpacing = 1.5}) {
     final k = kit.s;
     return [
       pw.Container(
@@ -820,7 +828,7 @@ class SlipPdf {
               children: [
                 kit.tx(
                   'GLOBAL HEALTH PASSPORT',
-                  style: kit.t(11, w: 700, color: _navy, ls: 1.5),
+                  style: kit.t(11, w: 700, color: _navy, ls: taglineSpacing),
                 ),
                 pw.SizedBox(height: k.px(4)),
                 pw.Container(
@@ -1024,6 +1032,7 @@ class SlipPdf {
     _Kit kit,
     List<List<String>> rows, {
     List<String>? header,
+    double rowPadding = 10,
   }) {
     final k = kit.s;
     var rowIndex = 0;
@@ -1035,13 +1044,13 @@ class SlipPdf {
       pw.TextStyle style,
       PdfColor fill, {
       PdfColor? edge,
-      double vertical = 10,
+      double? vertical,
     }) {
       final side = pw.BorderSide(color: edge ?? _border, width: k.px(1));
       return pw.Container(
         padding: pw.EdgeInsets.symmetric(
           horizontal: k.px(16),
-          vertical: k.px(vertical),
+          vertical: k.px(vertical ?? rowPadding),
         ),
         decoration: pw.BoxDecoration(
           color: fill,
@@ -1303,7 +1312,7 @@ class SlipPdf {
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
             kit.tx(f[0], style: kit.t(12, w: 700, color: _navy)),
-            pw.SizedBox(height: k.px(2)),
+            pw.SizedBox(height: k.px(1.2)),
             kit.tx(f[1], style: kit.t(13, color: _body)),
           ],
         );
@@ -1312,7 +1321,7 @@ class SlipPdf {
     for (var i = 0; i < fields.length; i += 2) {
       rows.add(
         pw.Padding(
-          padding: pw.EdgeInsets.only(bottom: k.px(12)),
+          padding: pw.EdgeInsets.only(bottom: k.px(11.2)),
           child: pw.Row(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
@@ -1356,9 +1365,11 @@ class SlipPdf {
           ),
           pw.Container(height: k.px(1), color: _border),
           pw.Container(
-            padding: pw.EdgeInsets.symmetric(
-              horizontal: k.px(16),
-              vertical: k.px(14),
+            padding: pw.EdgeInsets.fromLTRB(
+              k.px(16),
+              k.px(13.2),
+              k.px(16),
+              k.px(15.6),
             ),
             decoration: pw.BoxDecoration(
               color: _soft,
@@ -1371,7 +1382,7 @@ class SlipPdf {
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
                 ...rows,
-                _signatureBlock(kit, signature, signedAt),
+                _signatureBlock(kit, signature, signedAt, captionGap: 3.2),
               ],
             ),
           ),
@@ -1497,6 +1508,7 @@ class SlipPdf {
     final iconColor = '#12296B';
 
     pw.Widget line(String icon, String text) => pw.Row(
+          mainAxisSize: pw.MainAxisSize.min,
           children: [
             pw.SvgImage(
               svg: _iconSvg(icon, iconColor),
@@ -1510,9 +1522,20 @@ class SlipPdf {
 
     return pw.Container(
       padding: pw.EdgeInsets.fromLTRB(k.px(30), k.px(10), k.px(30), k.px(10)),
-      decoration: pw.BoxDecoration(color: _rxPanel, border: topBorder),
+      decoration: pw.BoxDecoration(
+        color: _rxPanel,
+        border: topBorder,
+        // The web prescription is a rounded card.
+        borderRadius: isRx
+            ? pw.BorderRadius.only(
+                bottomLeft: pw.Radius.circular(k.px(14)),
+                bottomRight: pw.Radius.circular(k.px(14)),
+              )
+            : null,
+      ),
       child: pw.Row(
         crossAxisAlignment: pw.CrossAxisAlignment.center,
+        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
         children: [
           pw.Container(
             width: k.px(100),
@@ -1525,11 +1548,11 @@ class SlipPdf {
             ),
             child: pw.Image(kit.qr, fit: pw.BoxFit.contain),
           ),
-          pw.SizedBox(width: k.px(20)),
-          pw.Expanded(
+          pw.Padding(
+            padding: pw.EdgeInsets.symmetric(horizontal: k.px(20)),
             child: pw.Column(
+              mainAxisSize: pw.MainAxisSize.min,
               crossAxisAlignment: pw.CrossAxisAlignment.start,
-              mainAxisAlignment: pw.MainAxisAlignment.center,
               children: [
                 line('phone', _phone),
                 line('email', _email),
@@ -1537,7 +1560,6 @@ class SlipPdf {
               ],
             ),
           ),
-          pw.SizedBox(width: k.px(20)),
           pw.Opacity(
             opacity: 0.85,
             child: pw.Image(kit.logo, height: k.px(100)),
@@ -1553,6 +1575,8 @@ class SlipPdf {
     String signedAt, {
     pw.TextStyle? labelStyle,
     String labelText = 'Signature',
+    double labelGap = 4,
+    double captionGap = 4,
   }) {
     final k = kit.s;
     final when = _signedWhen(signedAt);
@@ -1564,7 +1588,7 @@ class SlipPdf {
           labelText,
           style: labelStyle ?? kit.t(12, w: 700, color: _navy),
         ),
-        pw.SizedBox(height: k.px(4)),
+        pw.SizedBox(height: k.px(labelGap)),
         pw.SizedBox(
           height: k.px(56),
           width: k.px(220),
@@ -1576,7 +1600,7 @@ class SlipPdf {
                   alignment: pw.Alignment.centerLeft,
                 ),
         ),
-        pw.SizedBox(height: k.px(4)),
+        pw.SizedBox(height: k.px(captionGap)),
         kit.tx(
           when.isEmpty ? 'Digitally signed' : 'Digitally signed · $when',
           style: kit.t(11, color: _isRxScale(k) ? _rxMuted : _muted),
@@ -1822,9 +1846,11 @@ class _Kit {
     required this.boldItalic,
     required this.logo,
     required this.qr,
+    required this.spaceWords,
   });
 
   final _Scale s;
+  final bool spaceWords;
   final pw.Font regular;
   final pw.Font medium;
   final pw.Font semi;
@@ -1833,7 +1859,7 @@ class _Kit {
   final pw.MemoryImage logo;
   final pw.MemoryImage qr;
 
-  static Future<_Kit> load(_Scale scale) async {
+  static Future<_Kit> load(_Scale scale, {bool spaceWords = false}) async {
     Future<pw.Font> font(String path) async =>
         pw.Font.ttf(await rootBundle.load(path));
     Future<pw.MemoryImage> image(String path) async =>
@@ -1852,6 +1878,7 @@ class _Kit {
     ]);
     return _Kit(
       s: scale,
+      spaceWords: spaceWords,
       regular: fonts[0],
       medium: fonts[1],
       semi: fonts[2],
@@ -1887,6 +1914,9 @@ class _Kit {
       fontSize: size,
       color: color,
       letterSpacing: ls == 0 ? null : s.px(ls),
+      // The pdf package leaves the letter spacing out between words; the web
+      // adds it there too. `_space` is the width of Inter's space.
+      wordSpacing: ls == 0 || !spaceWords ? null : 1 + ls / (px * _space),
       // `height` is only read back by tx/rich below (the pdf package does not
       // use it for layout); lineSpacing is the extra gap between wrapped lines.
       height: lh,
@@ -1897,6 +1927,9 @@ class _Kit {
   /// A line of Inter is about this many times the font size tall in the pdf
   /// package; CSS line-height adds the rest as half-leading above and below.
   static const double _natural = 1.165;
+
+  /// Width of a space in Inter, as a share of the font size.
+  static const double _space = 0.25;
 
   pw.Widget _lead(pw.TextStyle style, pw.Widget child) {
     final size = style.fontSize ?? 12;
