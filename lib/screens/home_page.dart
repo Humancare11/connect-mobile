@@ -6,6 +6,7 @@ import '../widgets/home/search_bar_widget.dart';
 import '../widgets/home/book_appointment_card.dart';
 import '../widgets/home/explore_specialties_section.dart';
 import '../widgets/home/medical_services_section.dart';
+import '../widgets/home/most_popular_section.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -44,6 +45,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 22),
 
+            _Gutter(child: MostPopularSection(searchQuery: _searchQuery)),
             ExploreSpecialtiesSection(searchQuery: _searchQuery),
 
             const SizedBox(height: 22),
